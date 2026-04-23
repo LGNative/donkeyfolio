@@ -47,7 +47,7 @@ export function ConnectFlowDiagram() {
             className="fill-[#504f4f] dark:fill-white/50"
             fontSize="12"
           >
-            Wealthfolio
+            Donkeyfolio
           </text>
           <text
             x="90"

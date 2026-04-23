@@ -74,7 +74,7 @@ function ServiceUnavailableCard({ onRetry, isRetrying }: ServiceUnavailableCardP
             Service Temporarily Unavailable
           </h3>
           <p className="text-muted-foreground mb-4 max-w-sm text-sm">
-            We&apos;re having trouble connecting to Wealthfolio Connect. This is usually temporary
+            We&apos;re having trouble connecting to Donkeyfolio Connect. This is usually temporary
             and should resolve shortly.
           </p>
           <Button variant="outline" onClick={onRetry} disabled={isRetrying}>
@@ -451,7 +451,7 @@ export function ConnectedView() {
             <ActionConfirm
               handleConfirm={handleSignOut}
               isPending={isSigningOut}
-              confirmTitle="Sign out of Wealthfolio Connect?"
+              confirmTitle="Sign out of Donkeyfolio Connect?"
               confirmMessage="You'll need to sign in again to access your synced broker accounts. Your local data will not be affected."
               confirmButtonText="Sign Out"
               pendingText="Signing out..."
@@ -620,7 +620,7 @@ export function ConnectedView() {
       {/* Privacy Footnote */}
       <footer className="border-t pt-4">
         <p className="text-muted-foreground text-center text-xs leading-relaxed">
-          Wealthfolio Connect doesn&apos;t store your brokerage credentials or financial data.
+          Donkeyfolio Connect doesn&apos;t store your brokerage credentials or financial data.
           Everything syncs securely via an aggregator to your local database. Device sync uses
           end-to-end encryption.{" "}
           <ExternalLink
