@@ -49,6 +49,9 @@ donkeyfolio-changes/
 App/
 ideas/
 
+# Auto-generated lefthook config (from rebalancer addon postinstall)
+/lefthook.yml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
