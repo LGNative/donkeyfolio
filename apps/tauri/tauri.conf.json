@@ -17,7 +17,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "copyright": "2026 Teymz Inc.",
+    "copyright": "2026 Luis Goncalves",
     "category": "public.app-category.finance",
     "createUpdaterArtifacts": "v1Compatible",
     "iOS": {
@@ -26,31 +26,26 @@
     },
     "macOS": {
       "bundleVersion": "20260301.1",
-      "signingIdentity": "Apple Distribution: Teymz Inc (DYDJ2RNL5H)",
+      "signingIdentity": "-",
       "minimumSystemVersion": "10.13"
     }
   },
-  "productName": "Wealthfolio",
-  "mainBinaryName": "Wealthfolio",
+  "productName": "Donkeyfolio",
+  "mainBinaryName": "Donkeyfolio",
   "version": "3.2.1",
-  "identifier": "com.teymz.wealthfolio",
+  "identifier": "com.luisgoncalves.donkeyfolio",
   "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RjI4MkRFOUYwRDM3N0QKUldSOU53MmYzb0x5WlBySmErU21wcjVHZFNtMW9zdGcyZTBBRWpVcHRDMkoyKzF1bkQ1VmdKbkYK",
-      "endpoints": ["https://wealthfolio.app/releases/{{target}}/{{arch}}/{{current_version}}"],
-      "windows": {
-        "installMode": "passive"
-      }
-    },
     "deep-link": {
-      "mobile": [
-        { "host": "connect.wealthfolio.app", "pathPrefix": ["/deeplink"] },
-        { "host": "connect-staging.wealthfolio.app", "pathPrefix": ["/deeplink"] }
-      ],
       "desktop": {
-        "schemes": ["wealthfolio"]
+        "schemes": ["donkeyfolio"]
       },
-      "schemes": ["wealthfolio"]
+      "schemes": ["donkeyfolio"]
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/LGNative/donkeyfolio/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY"
     }
   },
   "app": {
@@ -60,10 +55,10 @@
         "dragDropEnabled": false,
         "fullscreen": false,
         "resizable": true,
-        "theme": "Light",
+        "theme": "Dark",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "title": "Wealthfolio",
+        "title": "Donkeyfolio",
         "width": 1440,
         "height": 960
       }

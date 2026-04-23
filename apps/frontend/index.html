@@ -12,7 +12,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <title>Wealthfolio</title>
+    <title>Donkeyfolio</title>
     <style>
       /* Prevent mobile viewport bouncing */
       html,
@@ -23,7 +23,7 @@
 
       /* Simulate a Splash screen before react app mount */
       body {
-        background-color: #09090b;
+        background-color: #0b0c10;
         background-image: url("/logo-gold.png");
         background-repeat: no-repeat;
         background-position: center center;
@@ -40,12 +40,12 @@
     </style>
   </head>
 
-  <body class="overflow-x-hidden font-mono">
+  <body class="overflow-x-hidden font-sans">
     <script>
       // Apply cached theme before first paint to prevent flash on login screen
       (function () {
         try {
-          var theme = localStorage.getItem("wealthfolio-theme") || "system";
+          var theme = localStorage.getItem("donkeyfolio-theme") || "system";
           var resolved =
             theme === "system"
               ? window.matchMedia("(prefers-color-scheme: dark)").matches

@@ -2,13 +2,8 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 @source "../../../packages/ui/src";
-/* Fonts - using variable fonts where available for best performance */
-/* Inter (sans) - variable font: single file for all weights */
-@import "@fontsource-variable/inter";
-/* Merriweather (serif) - selective weights for body/heading use */
-@import "@fontsource/merriweather/400.css";
-@import "@fontsource/merriweather/400-italic.css";
-@import "@fontsource/merriweather/700.css";
+/* Fonts - Plus Jakarta Sans (Delta/eToro style) */
+@import "@fontsource-variable/plus-jakarta-sans";
 /* IBM Plex Mono (mono) - selective weights */
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
@@ -43,8 +38,8 @@
 
 @theme {
   /* Font families */
-  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Merriweather", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-sans: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* Disable default colors to prevent their use; feel free to re-enable as needed. */
@@ -370,28 +365,28 @@
   /* Font size - desktop default */
   --font-size-base: 0.875rem; /* text-sm */
 
-  /* Flexoki Light Theme (HSL numeric components) */
-  --flexoki-bg: 48 100% 97%;
-  --flexoki-bg-2: 51 59% 95%;
-  --flexoki-ui: 51 21% 88%;
-  --flexoki-ui-2: 50 14% 83%;
-  --flexoki-ui-3: 55 10% 79%;
-  --flexoki-tx: 0 3% 6%;
-  --flexoki-tx-2: 50 3% 42%;
-  --flexoki-tx-3: 49 7% 70%;
-  --flexoki-re: 3 62% 42%;
-  --flexoki-gr: 73 84% 27%;
-  --flexoki-ye: 45 99% 34%;
+  /* Donkeyfolio Light Theme - Delta inspired */
+  --flexoki-bg: 220 20% 97%;
+  --flexoki-bg-2: 220 16% 93%;
+  --flexoki-ui: 220 12% 87%;
+  --flexoki-ui-2: 220 10% 80%;
+  --flexoki-ui-3: 220 8% 72%;
+  --flexoki-tx: 220 20% 10%;
+  --flexoki-tx-2: 220 8% 45%;
+  --flexoki-tx-3: 220 6% 62%;
+  --flexoki-re: 0 72% 51%;
+  --flexoki-gr: 152 69% 45%;
+  --flexoki-ye: 45 93% 47%;
 
-  /* Shadcn tokens as full HSL colors */
+  /* Shadcn tokens - Delta-inspired light theme */
   --background: hsl(var(--flexoki-bg));
   --foreground: hsl(var(--flexoki-tx));
   --card: hsl(var(--flexoki-bg-2));
   --card-foreground: hsl(var(--flexoki-tx));
   --popover: hsl(var(--flexoki-bg-2));
   --popover-foreground: hsl(var(--flexoki-tx));
-  --primary: hsl(var(--flexoki-tx));
-  --primary-foreground: hsl(var(--flexoki-bg));
+  --primary: hsl(152 69% 45%);
+  --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(var(--flexoki-ui-2));
   --secondary-foreground: hsl(var(--flexoki-tx-2));
   --muted: hsl(var(--flexoki-ui));
@@ -399,26 +394,26 @@
   --accent: hsl(var(--flexoki-ui));
   --accent-foreground: hsl(var(--flexoki-tx-2));
   --destructive: hsl(var(--flexoki-re));
-  --destructive-foreground: hsl(var(--flexoki-bg));
+  --destructive-foreground: hsl(0 0% 100%);
   --success: hsl(var(--flexoki-gr));
-  --success-foreground: hsl(var(--flexoki-bg));
+  --success-foreground: hsl(0 0% 100%);
   --warning: hsl(var(--flexoki-ye));
-  --warning-foreground: hsl(var(--flexoki-bg));
+  --warning-foreground: hsl(var(--flexoki-tx));
   --border: hsl(var(--flexoki-ui));
   --input: hsl(var(--flexoki-ui));
   --input-bg: hsl(var(--flexoki-bg));
-  --ring: hsl(var(--flexoki-ui-3));
+  --ring: hsl(152 69% 45%);
 
-  /* Charts (full hsl colors) */
-  --chart-1: hsl(40 3% 20%);
-  --chart-2: hsl(45 2% 33%);
-  --chart-3: hsl(50 3% 42%);
-  --chart-4: hsl(43 3% 52%);
-  --chart-5: hsl(47 4% 61%);
-  --chart-6: hsl(49 7% 70%);
-  --chart-7: hsl(55 10% 79%);
-  --chart-8: hsl(50 14% 83%);
-  --chart-9: hsl(51 21% 88%);
+  /* Charts (full hsl colors) - green-based palette */
+  --chart-1: hsl(152 69% 35%);
+  --chart-2: hsl(152 55% 42%);
+  --chart-3: hsl(160 45% 48%);
+  --chart-4: hsl(170 40% 52%);
+  --chart-5: hsl(180 35% 55%);
+  --chart-6: hsl(200 30% 50%);
+  --chart-7: hsl(220 25% 55%);
+  --chart-8: hsl(240 20% 60%);
+  --chart-9: hsl(260 18% 65%);
 
   /* Sidebar (full hsl colors) */
   --sidebar: hsl(var(--flexoki-bg));
@@ -460,29 +455,33 @@
 }
 
 .dark {
-  /* Flexoki Dark Theme (HSL numeric components) */
-  --flexoki-bg: 0 3% 6%;
-  --flexoki-bg-2: 30 4% 11%;
-  --flexoki-ui: 30 3% 15%;
-  --flexoki-ui-2: 40 3% 20%;
-  --flexoki-ui-3: 30 3% 24%;
-  --flexoki-tx: 55 10% 79%;
-  --flexoki-tx-2: 43 3% 52%;
-  --flexoki-tx-3: 45 2% 33%;
-  --flexoki-re: 5 61% 54%;
-  --flexoki-gr: 72 46% 41%;
-  --flexoki-ye: 45 82% 45%;
+  /* Donkeyfolio Dark Theme - Delta inspired (very dark, green accent) */
+  --flexoki-bg: 230 15% 5%;
+  --flexoki-bg-2: 230 12% 9%;
+  --flexoki-ui: 230 10% 14%;
+  --flexoki-ui-2: 230 8% 19%;
+  --flexoki-ui-3: 230 6% 25%;
+  --flexoki-tx: 220 15% 90%;
+  --flexoki-tx-2: 220 8% 58%;
+  --flexoki-tx-3: 220 6% 38%;
+  --flexoki-re: 0 72% 58%;
+  --flexoki-gr: 152 69% 50%;
+  --flexoki-ye: 45 93% 52%;
 
-  /* Dark chart palette (full hsl colors) */
-  --chart-1: hsl(25 92% 72%);
-  --chart-2: hsl(24 81% 61%);
-  --chart-3: hsl(23 70% 51%);
-  --chart-4: hsl(23 73% 46%);
-  --chart-5: hsl(22 80% 41%);
-  --chart-6: hsl(22 82% 34%);
-  --chart-7: hsl(22 79% 25%);
-  --chart-8: hsl(22 75% 20%);
-  --chart-9: hsl(22 70% 15%);
+  --primary: hsl(152 69% 50%);
+  --primary-foreground: hsl(230 15% 5%);
+  --ring: hsl(152 69% 50%);
+
+  /* Dark chart palette - green gradient for Delta feel */
+  --chart-1: hsl(152 69% 55%);
+  --chart-2: hsl(152 60% 45%);
+  --chart-3: hsl(160 50% 40%);
+  --chart-4: hsl(170 45% 35%);
+  --chart-5: hsl(180 40% 30%);
+  --chart-6: hsl(190 35% 28%);
+  --chart-7: hsl(200 30% 25%);
+  --chart-8: hsl(210 25% 22%);
+  --chart-9: hsl(220 20% 18%);
 
   /* Sonner toast overrides for dark mode - solid backgrounds for better readability */
   --toast-bg: hsl(var(--flexoki-bg-2));

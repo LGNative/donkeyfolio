@@ -12,7 +12,7 @@ export default function ConnectSettingsPage() {
     return (
       <div className="space-y-6">
         <SettingsHeader
-          heading="Wealthfolio Connect"
+          heading="Donkeyfolio Connect"
           text="Connect your broker accounts through our cloud service."
         />
         <Separator />
@@ -22,7 +22,7 @@ export default function ConnectSettingsPage() {
               <Icons.CloudOff className="text-muted-foreground h-6 w-6" />
             </div>
             <CardTitle>Not Configured</CardTitle>
-            <CardDescription>Wealthfolio Connect is not configured for this build.</CardDescription>
+            <CardDescription>Donkeyfolio Connect is not configured for this build.</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -33,7 +33,7 @@ export default function ConnectSettingsPage() {
     return (
       <div className="space-y-6">
         <SettingsHeader
-          heading="Wealthfolio Connect"
+          heading="Donkeyfolio Connect"
           text="Connect your broker accounts through our cloud service."
         />
         <Separator />
@@ -47,7 +47,7 @@ export default function ConnectSettingsPage() {
   return (
     <div className="space-y-6">
       <SettingsHeader
-        heading="Wealthfolio Connect"
+        heading="Donkeyfolio Connect"
         text="Connect your broker accounts and devices through our cloud service."
       />
       <Separator />

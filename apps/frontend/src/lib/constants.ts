@@ -4,7 +4,7 @@ import { z } from "zod";
 export const DECIMAL_PRECISION = 8;
 export const DISPLAY_DECIMAL_PRECISION = 2;
 
-// Wealthfolio Connect Portal URL - centralized configuration
+// Donkeyfolio Connect Portal URL - centralized configuration
 export const WEALTHFOLIO_CONNECT_PORTAL_URL = "https://connect.wealthfolio.app";
 
 export const PORTFOLIO_ACCOUNT_ID = "TOTAL";

@@ -1,9 +1,9 @@
 [package]
-name = "wealthfolio-app"
+name = "donkeyfolio"
 version.workspace = true
 edition.workspace = true
 description = "Portfolio tracker"
-authors = ["Aziz Fadil"]
+authors = ["Luis Goncalves"]
 license = "AGPL-3.0"
 repository = ""
 

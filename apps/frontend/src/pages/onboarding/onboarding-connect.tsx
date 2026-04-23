@@ -47,7 +47,7 @@ export const OnboardingConnect: React.FC = () => {
           <Icons.Sparkles className="h-3.5 w-3.5" />
           Optional
         </div>
-        <h2 className="mb-2 text-xl font-semibold">Wealthfolio Connect</h2>
+        <h2 className="mb-2 text-xl font-semibold">Donkeyfolio</h2>
         <p className="text-muted-foreground text-sm">
           Automatically sync your brokers while keeping your data private.
         </p>

@@ -317,7 +317,7 @@ export const confirmPairingWithBootstrap = async (
 };
 
 // ============================================================================
-// Wealthfolio Connect Auth Commands
+// Donkeyfolio Connect Auth Commands
 // ============================================================================
 
 export const restoreSyncSession = async (): Promise<{

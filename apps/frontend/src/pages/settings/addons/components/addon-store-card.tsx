@@ -58,12 +58,8 @@ export function AddonStoreCard({
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {/* Author & Stats */}
-        <div className="text-muted-foreground flex items-center justify-between text-sm">
-          <div className="flex items-center gap-1">
-            <Icons.Users className="h-3 w-3" />
-            <span>By {listing.author}</span>
-          </div>
+        {/* Stats */}
+        <div className="text-muted-foreground flex items-center justify-end text-sm">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Icons.Download className="h-3 w-3" />
@@ -339,10 +335,6 @@ export function AddonStoreCard({
                       showText={true}
                     />
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">Author</p>
-                  <p className="text-muted-foreground text-sm">{listing.author}</p>
                 </div>
               </div>
 

@@ -50,7 +50,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                 >
                   <Link to="/">
                     <img
-                      className={`h-10 w-10 rounded-full bg-transparent shadow-lg transition-transform duration-700 ease-in-out [transform-style:preserve-3d] hover:[transform:rotateY(-180deg)] ${
+                      className={`h-10 w-10 bg-transparent transition-transform duration-700 ease-in-out [transform-style:preserve-3d] hover:[transform:rotateY(-180deg)] ${
                         collapsed ? "[transform:rotateY(180deg)]" : ""
                       }`}
                       aria-hidden="true"
@@ -67,7 +67,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                       },
                     )}
                   >
-                    Wealthfolio
+                    Donkeyfolio
                   </span>
                 </div>
 

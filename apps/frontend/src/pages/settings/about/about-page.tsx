@@ -68,9 +68,9 @@ export default function AboutSettingsPage() {
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-4">
-          <img src="/logo.svg" alt="Wealthfolio logo" className="h-12 w-12 rounded-md shadow" />
+          <img src="/logo.png" alt="Donkeyfolio logo" className="h-12 w-12 rounded-md shadow" />
           <div className="flex flex-col">
-            <CardTitle className="text-xl">Wealthfolio</CardTitle>
+            <CardTitle className="text-xl">Donkeyfolio</CardTitle>
             <CardDescription>Version {version || "N/A"}</CardDescription>
           </div>
         </CardHeader>

@@ -1,3 +1,6 @@
+# Signing keys (NEVER commit private keys)
+.tauri/
+
 # Logs
 logs
 *.log
@@ -24,11 +27,27 @@ out
 coverage
 .nyc_output
 
-# Environment files
+# Environment files & Secrets - NEVER commit these
 .env
 .env.*
 !.env.example
 !.env.web.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets.json
+credentials.json
+service-account*.json
+
+# Donkeyfolio changes reference (safe to keep but not needed in prod)
+donkeyfolio-changes/
+
+# Personal/project planning content (not for commit)
+App/
+ideas/
 
 # Editor directories and files
 .vscode/*

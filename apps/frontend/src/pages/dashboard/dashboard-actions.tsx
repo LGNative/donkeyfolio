@@ -29,7 +29,7 @@ export function DashboardActions({ onAddAsset, onAddLiability }: DashboardAction
   const recalculatePortfolioMutation = useRecalculatePortfolioMutation();
   const runHealthChecksMutation = useRunHealthChecks({ navigate });
 
-  // Wealthfolio Connect sync
+  // Donkeyfolio Connect sync
   const { isEnabled, isConnected, userInfo } = useWealthfolioConnect();
   const { mutate: syncBrokerData } = useSyncBrokerData();
   const showSyncAction = isEnabled && isConnected && hasBrokerSync(userInfo);

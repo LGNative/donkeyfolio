@@ -2,7 +2,7 @@
  * Chat runtime hook for @assistant-ui/react integration.
  *
  * Uses useExternalStoreRuntime to integrate with database-backed thread storage.
- * Adapts the Wealthfolio AI streaming API to work with external message persistence.
+ * Adapts the Donkeyfolio AI streaming API to work with external message persistence.
  */
 
 import {
@@ -404,7 +404,7 @@ function convertMessage(msg: ExternalMessage): ThreadMessageLike {
  *
  * Uses useExternalStoreRuntime to integrate with database-backed threads.
  * Messages are loaded from DB when switching threads and new messages are
- * streamed through the Wealthfolio AI API.
+ * streamed through the Donkeyfolio AI API.
  *
  * @param config - Optional model configuration (provider and model selection)
  * @returns A runtime instance for use with AssistantRuntimeProvider

@@ -138,7 +138,7 @@ const applySettingsToDocument = (newSettings: Settings) => {
 
   // Cache theme/font in localStorage for pre-auth usage (login screen)
   try {
-    localStorage.setItem("wealthfolio-theme", newSettings.theme);
+    localStorage.setItem("donkeyfolio-theme", newSettings.theme);
   } catch {
     // noop – localStorage may be unavailable
   }

@@ -43,7 +43,7 @@ const AppLayoutContent = () => {
         className="flex h-screen items-center justify-center"
         style={{ backgroundColor: "#09090b" }}
       >
-        <img src="/logo-gold.png" alt="Wealthfolio" className="h-[100px] w-auto" />
+        <img src="/logo-gold.png" alt="Donkeyfolio" className="h-[100px] w-auto" />
       </div>
     );
   }
