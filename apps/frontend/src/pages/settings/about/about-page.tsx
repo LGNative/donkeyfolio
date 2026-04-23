@@ -114,7 +114,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="https://github.com/afadil/wealthfolio">
+                <ExternalLink href="https://github.com/LGNative/donkeyfolio">
                   <Icons.ExternalLink className="h-4 w-4" />
                   GitHub
                 </ExternalLink>
@@ -174,7 +174,9 @@ export default function AboutSettingsPage() {
           <div className="space-y-4">
             <p className="text-muted-foreground text-sm">
               Have questions or found a bug? Please email us at{" "}
-              <span className="select-all font-mono font-semibold">support@wealthfolio.app</span>
+              <span className="select-all font-mono font-semibold">
+                peauntidonky.digital@gmail.com
+              </span>
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -183,7 +185,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="mailto:support@wealthfolio.app">
+                <ExternalLink href="mailto:peauntidonky.digital@gmail.com">
                   <Icons.ExternalLink className="h-4 w-4" />
                   Email Us
                 </ExternalLink>
@@ -194,7 +196,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="https://github.com/afadil/wealthfolio/issues">
+                <ExternalLink href="https://github.com/LGNative/donkeyfolio/issues">
                   <Icons.AlertCircle className="h-4 w-4" />
                   Report Issue
                 </ExternalLink>

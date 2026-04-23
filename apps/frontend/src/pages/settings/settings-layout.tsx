@@ -78,7 +78,7 @@ const settingsSections = [
     title: "Connections",
     items: [
       {
-        title: "Wealthfolio Connect",
+        title: "Donkeyfolio Connect",
         href: "connect",
         subtitle: "Broker and device linking",
         icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
