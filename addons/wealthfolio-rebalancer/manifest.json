@@ -1,0 +1,46 @@
+{
+  "id": "rebalancer",
+  "name": "rebalancer",
+  "version": "3.0.0",
+  "description": "Rebalancer calculates the exact trades you need to keep your portfolio on target, on demand.",
+  "author": "Ivan Balboteo",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.0.0",
+  "enabled": true,
+  "permissions": [
+    {
+      "category": "ui",
+      "functions": [
+        "sidebar.addItem",
+        "router.add"
+      ],
+      "purpose": "Add navigation items and routes to the sidebar"
+    },
+    {
+      "category": "accounts",
+      "functions": [
+        "getAll"
+      ],
+      "purpose": "Access account information for portfolio rebalancing"
+    },
+    {
+      "category": "portfolio",
+      "functions": [
+        "getHoldings"
+      ],
+      "purpose": "Read portfolio holdings to calculate rebalancing recommendations"
+    },
+    {
+      "category": "navigation",
+      "functions": [
+        "navigate"
+      ],
+      "purpose": "Navigate to activities page for transaction management"
+    }
+  ],
+  "keywords": [
+    "wealthfolio",
+    "addon"
+  ],
+  "license": "MIT"
+}

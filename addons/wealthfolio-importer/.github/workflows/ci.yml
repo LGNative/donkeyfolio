@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches-ignore: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: addon/package-lock.json
+
+      - name: Install dependencies
+        working-directory: addon
+        run: npm ci
+
+      - name: Build addon
+        working-directory: addon
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-importer
+          path: |
+            addon/manifest.json
+            addon/dist/
+            addon/README.md

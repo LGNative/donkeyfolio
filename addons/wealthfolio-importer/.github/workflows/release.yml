@@ -1,0 +1,39 @@
+name: Release Addon
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: addon/package-lock.json
+
+      - name: Install dependencies
+        working-directory: addon
+        run: npm ci
+
+      - name: Build addon
+        working-directory: addon
+        run: npm run build
+
+      - name: Create release ZIP
+        working-directory: addon
+        run: zip -r ai-importer.zip manifest.json dist/ README.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: addon/ai-importer.zip
+          generate_release_notes: true
