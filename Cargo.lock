@@ -1644,6 +1644,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "donkeyfolio"
+version = "3.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "chrono",
+ "diesel",
+ "dotenvy",
+ "futures",
+ "hkdf",
+ "hostname",
+ "keyring",
+ "local-ip-address",
+ "log",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-barcode-scanner",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-haptics",
+ "tauri-plugin-log",
+ "tauri-plugin-mobile-share",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tauri-plugin-web-auth",
+ "tauri-plugin-window-state",
+ "tokio",
+ "urlencoding",
+ "uuid",
+ "wealthfolio-ai",
+ "wealthfolio-connect",
+ "wealthfolio-core",
+ "wealthfolio-device-sync",
+ "wealthfolio-market-data",
+ "wealthfolio-storage-sqlite",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8022,55 +8071,6 @@ dependencies = [
  "tokio-stream",
  "uuid",
  "wealthfolio-core",
-]
-
-[[package]]
-name = "wealthfolio-app"
-version = "3.2.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chacha20poly1305",
- "chrono",
- "diesel",
- "dotenvy",
- "futures",
- "hkdf",
- "hostname",
- "keyring",
- "local-ip-address",
- "log",
- "rand 0.8.5",
- "reqwest 0.12.28",
- "rust_decimal",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-barcode-scanner",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-haptics",
- "tauri-plugin-log",
- "tauri-plugin-mobile-share",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tauri-plugin-web-auth",
- "tauri-plugin-window-state",
- "tokio",
- "urlencoding",
- "uuid",
- "wealthfolio-ai",
- "wealthfolio-connect",
- "wealthfolio-core",
- "wealthfolio-device-sync",
- "wealthfolio-market-data",
- "wealthfolio-storage-sqlite",
- "x25519-dalek",
 ]
 
 [[package]]

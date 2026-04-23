@@ -45,7 +45,7 @@
       "endpoints": [
         "https://github.com/LGNative/donkeyfolio/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4NjRGMzJEODY3MDMxQTcKUldTbk1YQ0dMZk5rNkt0Smx1MktPazdQZ3FIQW50K2dIZXNTbFpSb3JEaHlJZjZIVFNQSS9UbTEK"
     }
   },
   "app": {
