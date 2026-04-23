@@ -8,7 +8,11 @@ use super::addon_traits::AddonServiceTrait;
 use super::models::*;
 
 // Constants
-pub const ADDON_STORE_API_BASE_URL: &str = "https://wealthfolio.app/api/addons";
+// Donkeyfolio: custom addon store (static JSON).
+// Serves first-party Wealthfolio addons + curated community addons.
+// Updated via docs/addons.json in the public repo (cached by jsDelivr).
+pub const ADDON_STORE_API_BASE_URL: &str =
+    "https://cdn.jsdelivr.net/gh/LGNative/donkeyfolio@main/docs/addons.json";
 
 /// Helper function to create a request with common headers
 fn create_request_with_headers(
@@ -834,28 +838,59 @@ pub fn read_addon_files_recursive(
     Ok(())
 }
 
-/// Check for addon updates from the API server
+/// Check for addon updates from the store listings.
+///
+/// Donkeyfolio: the store endpoint is a static JSON containing all addons.
+/// We derive the update result by finding the addon in the listings and
+/// comparing versions client-side.
 pub async fn check_addon_update_from_api(
     addon_id: &str,
     current_version: &str,
     instance_id: Option<&str>,
 ) -> Result<AddonUpdateCheckResult, String> {
-    let api_url = format!(
-        "{}/update-check?addonId={}&currentVersion={}",
-        ADDON_STORE_API_BASE_URL, addon_id, current_version
-    );
+    let listings = fetch_addon_store_listings(instance_id).await?;
 
-    let client = reqwest::Client::new();
-    let response =
-        create_request_with_headers(&client, reqwest::Method::GET, &api_url, instance_id)
-            .send()
-            .await
-            .map_err(|e| {
-                log::error!("Failed to fetch addon info from API: {}", e);
-                format!("Failed to fetch addon info from API: {}", e)
-            })?;
+    let addon = listings
+        .iter()
+        .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(addon_id))
+        .ok_or_else(|| format!("Addon '{}' not found in store listings", addon_id))?;
 
-    handle_api_response(response, "Update check").await
+    let latest_version = addon
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or(current_version)
+        .to_string();
+
+    let update_available = latest_version != current_version;
+
+    let get_str = |key: &str| -> Option<String> {
+        addon
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+    let get_bool = |key: &str| -> Option<bool> {
+        addon
+            .get(key)
+            .and_then(|v| v.as_bool().or_else(|| v.as_i64().map(|n| n != 0)))
+    };
+
+    Ok(AddonUpdateCheckResult {
+        addon_id: addon_id.to_string(),
+        update_info: super::models::AddonUpdateInfo {
+            current_version: current_version.to_string(),
+            latest_version,
+            update_available,
+            download_url: get_str("downloadUrl"),
+            release_notes: get_str("releaseNotes"),
+            release_date: get_str("lastUpdated"),
+            changelog_url: get_str("changelogUrl"),
+            is_critical: get_bool("isCritical"),
+            has_breaking_changes: get_bool("hasBreakingChanges"),
+            min_wealthfolio_version: get_str("minWealthfolioVersion"),
+        },
+        error: None,
+    })
 }
 
 /// Download addon package from URL
@@ -954,12 +989,26 @@ pub fn clear_staging_directory(base_dir: impl AsRef<Path>) -> Result<(), String>
     Ok(())
 }
 
-/// Download addon from store using GET request
+/// Download addon from store using GET request.
+///
+/// Donkeyfolio: the store is a static JSON listing, so we look up the
+/// addon's `downloadUrl` from the listings instead of constructing
+/// `{base}/{id}/download` (which no longer exists on a static endpoint).
 pub async fn download_addon_from_store(
     addon_id: &str,
     instance_id: &str,
 ) -> Result<Vec<u8>, String> {
-    let download_api_url = format!("{}/{}/download", ADDON_STORE_API_BASE_URL, addon_id);
+    let listings = fetch_addon_store_listings(Some(instance_id)).await?;
+    let addon = listings
+        .iter()
+        .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(addon_id))
+        .ok_or_else(|| format!("Addon '{}' not found in store listings", addon_id))?;
+
+    let download_api_url = addon
+        .get("downloadUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("Addon '{}' has no downloadUrl", addon_id))?
+        .to_string();
 
     log::info!(
         "Calling download API for addon '{}' at URL: {}",
