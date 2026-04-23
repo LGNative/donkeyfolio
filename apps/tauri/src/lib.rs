@@ -70,6 +70,9 @@ mod desktop {
         // Make context available to all commands
         handle.manage(Arc::clone(&context));
 
+        // Trade Republic connector state
+        handle.manage(Arc::new(commands::trade_republic::TradeRepublicState::new()));
+
         // Start the domain event queue worker now that context is managed
         // This must be done in an async context since it spawns a tokio task
         let worker_handle = handle.clone();
@@ -157,6 +160,7 @@ mod mobile {
                     let event_receiver = init_result.event_receiver;
 
                     handle.manage(Arc::clone(&context));
+                    handle.manage(Arc::new(commands::trade_republic::TradeRepublicState::new()));
 
                     // Start the domain event queue worker now that context is managed
                     domain_events::TauriDomainEventSink::start_queue_worker(
@@ -598,6 +602,14 @@ pub fn run() {
             commands::health::execute_health_fix,
             commands::health::get_health_config,
             commands::health::update_health_config,
+            // Trade Republic commands
+            commands::trade_republic::tr_get_status,
+            commands::trade_republic::tr_save_credentials,
+            commands::trade_republic::tr_delete_credentials,
+            commands::trade_republic::tr_start_login,
+            commands::trade_republic::tr_confirm_login,
+            commands::trade_republic::tr_sync_portfolio,
+            commands::trade_republic::tr_disconnect,
             // FIRE planner commands
             commands::fire::get_fire_settings,
             commands::fire::save_fire_settings,

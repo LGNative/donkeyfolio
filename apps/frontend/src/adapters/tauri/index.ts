@@ -103,6 +103,9 @@ export * from "../shared/secrets";
 // Connect Commands (Broker + Device Sync + Auth)
 export * from "../shared/connect";
 
+// Trade Republic Commands
+export * from "../shared/trade-republic";
+
 // AI Providers Commands
 export * from "../shared/ai-providers";
 

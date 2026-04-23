@@ -1,0 +1,38 @@
+[package]
+name = "trade-republic-connector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Trade Republic broker connector — local-first, no cloud intermediary"
+
+[dependencies]
+# Workspace deps
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+async-trait = { workspace = true }
+log = { workspace = true }
+futures = { workspace = true }
+zeroize = { version = "1.8", features = ["derive"] }
+
+# HTTP with TLS fingerprint impersonation (Chrome) to evade TR's AWS WAF.
+# Same technique as pytr (curl_cffi) — avoids detection as a bot client.
+rquest = { version = "5.1", default-features = false, features = [
+    "cookies",
+    "json",
+    "webpki-roots",
+] }
+rquest-util = { version = "2.2", features = ["emulation-serde"] }
+
+# WebSocket (session-authenticated, WAF fingerprint less critical here)
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+
+# Core (for SecretStore trait + activity types)
+wealthfolio-core = { workspace = true }
+
+[lints]
+workspace = true

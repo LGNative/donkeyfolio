@@ -39,6 +39,7 @@ import TaxonomiesPage from "./pages/settings/taxonomies/taxonomies-page";
 import ConnectSettingsPage from "./pages/settings/wealthfolio-connect/connect-settings-page";
 import FirePlannerPage from "./pages/fire-planner/fire-planner-page";
 import FirePlannerSettingsPage from "./pages/settings/fire-planner/fire-planner-settings-page";
+import TradeRepublicSettingsPage from "./pages/settings/trade-republic/trade-republic-settings-page";
 
 export function AppRoutes() {
   const [dynamicRoutes, setDynamicRoutes] = useState<
@@ -124,6 +125,7 @@ export function AppRoutes() {
             <Route path="taxonomies" element={<TaxonomiesPage />} />
             <Route path="connect" element={<ConnectSettingsPage />} />
             <Route path="ai-providers" element={<AiProvidersPage />} />
+            <Route path="trade-republic" element={<TradeRepublicSettingsPage />} />
             <Route path="addons" element={<AddonSettingsPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />

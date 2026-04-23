@@ -26,6 +26,7 @@ pub mod settings;
 #[cfg(feature = "device-sync")]
 pub mod sync_crypto;
 pub mod taxonomy;
+pub mod trade_republic;
 pub mod utilities;
 #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
 pub mod wealthfolio_connect;

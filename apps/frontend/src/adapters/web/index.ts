@@ -265,6 +265,17 @@ export {
   updateDevice,
 } from "../shared/connect";
 
+// Trade Republic Commands
+export {
+  trGetStatus,
+  trSaveCredentials,
+  trDeleteCredentials,
+  trStartLogin,
+  trConfirmLogin,
+  trSyncPortfolio,
+  trDisconnect,
+} from "../shared/trade-republic";
+
 // AI Providers Commands
 export {
   getAiProviders,
