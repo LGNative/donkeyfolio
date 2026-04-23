@@ -1,50 +1,26 @@
 <div align="center">
-  <a href="https://github.com/afadil/wealthfolio">
-    <img src="apps/frontend/public/logo.svg" alt="Logo" width="80" height="80">
-  </a>
+  <img src="apps/frontend/public/logo.png" alt="Logo" width="80" height="80">
 
-  <h3 align="center">Wealthfolio</h3>
+  <h3 align="center">Donkeyfolio</h3>
 
   <p align="center">
-    A Beautiful and Boring Desktop Investment Tracker
+    A Beautiful Desktop Investment Tracker
     <br />
     <br />
-    <a href="https://wealthfolio.app">Website</a>
-    ·
-    <a href="https://discord.gg/WDMCY6aPWK">Discord</a>
-    ·
-    <a href="https://x.com/intent/follow?screen_name=WealthfolioApp">Twitter</a>
-    ·
-    <a href="https://github.com/afadil/wealthfolio/releases">Releases</a>
+    <a href="https://github.com/LGNative/donkeyfolio/releases">Releases</a>
   </p>
-</div>
-<div align="center">
-
-[<img src="./apps/frontend/public/button-buy-me-a-coffee.png" width="180" alt="Buy me a coffee button"/>](https://www.buymeacoffee.com/afadil)
-
-</div>
-
-<div align="center">
-<a href="https://news.ycombinator.com/item?id=41465735">
-  <img
-    alt="Featured on Hacker News"
-    src="https://hackerbadge.now.sh/api?id=41465735"
-    style="width: 250px; height: 55px;" width="250" height="55"
-  />
-</a>
-  <a href="https://www.producthunt.com/posts/wealthfolio?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_souce=badge-wealthfolio" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=461640&amp;theme=light" alt="Wealthfolio - A boring, Local first, desktop Investment Tracking app | Product Hunt" class="h-[55px] w-[250px]" width="250" height="55"></a>
-
-  <a href="https://trendshift.io/repositories/11701" target="_blank">
-  <img src="https://trendshift.io/api/badge/repositories/11701" alt="afadil%2Fwealthfolio | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
 </div>
 
 ## Introduction
 
-**Wealthfolio App** is a Beautiful and Boring Investment Tracker, with Local
-Data Storage. No Subscriptions, No Cloud.
+**Donkeyfolio** is a personal finance and investment portfolio tracker with
+local data storage. No subscriptions, no cloud.
 
-Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
+> Donkeyfolio is a rebranded fork of
+> [Wealthfolio](https://github.com/afadil/wealthfolio) (AGPL-3.0). All core
+> functionality comes from the excellent upstream project. This fork adds
+> personal branding, a curated community addon store, and experimental Trade
+> Republic integration.
 
 ![Screenshot](apps/frontend/public/screenshot.webp)
 
@@ -65,8 +41,8 @@ Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
 
 ### 🧩 Addon System
 
-Wealthfolio features a powerful addon system that allows developers to extend
-functionality:
+Donkeyfolio features a powerful addon system (inherited from Wealthfolio) that
+allows developers to extend functionality:
 
 - **🔌 Easy Development** - TypeScript SDK with full type safety and hot reload
 - **🔒 Secure** - Comprehensive permission system with user consent
@@ -135,8 +111,8 @@ Ensure you have the following installed on your machine:
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/afadil/wealthfolio.git
-   cd wealthfolio
+   git clone https://github.com/LGNative/donkeyfolio.git
+   cd donkeyfolio
    ```
 
 2. **Install dependencies using pnpm**:
@@ -507,8 +483,8 @@ steps and provides an isolated environment with all necessary dependencies.
 
 1. **Clone the repository** (if you haven't already):
    ```bash
-   git clone https://github.com/afadil/wealthfolio.git
-   cd wealthfolio
+   git clone https://github.com/LGNative/donkeyfolio.git
+   cd donkeyfolio
    ```
 2. **Open in VS Code**:
    - Open VS Code
@@ -718,8 +694,4 @@ Brand assets in `assets/brand/` are trademarks; see
 Wealthfolio and the Wealthfolio logo are trademarks of Teymz Inc. The code is
 licensed under AGPL-3.0; trademarks are not granted under that license.
 
-## 🌟 Star History
-
-## [![Star History Chart](https://api.star-history.com/svg?repos=afadil/wealthfolio&type=Timeline)](https://star-history.com/#afadil/wealthfolio&Date)
-
-Enjoy managing your wealth with **Wealthfolio**! 🚀
+Enjoy managing your wealth with **Donkeyfolio**! 🚀
