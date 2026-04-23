@@ -95,14 +95,6 @@ const settingsSections = [
         subtitle: "Configure AI for portfolio insights",
         icon: <Icons.SparklesOutline className="size-5" />,
       },
-      // ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-      {
-        title: "Trade Republic",
-        href: "trade-republic",
-        subtitle: "Direct broker connection (local-first)",
-        icon: <Icons.Link className="size-5" />,
-      },
-      // ─── End Donkeyfolio extensions ───
     ],
   },
   {

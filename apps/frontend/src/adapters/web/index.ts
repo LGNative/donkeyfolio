@@ -400,16 +400,3 @@ export {
   syncHashPairingCode,
   syncHmacSha256,
 } from "./crypto";
-
-// ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-// Trade Republic Commands
-export {
-  trGetStatus,
-  trSaveCredentials,
-  trDeleteCredentials,
-  trStartLogin,
-  trConfirmLogin,
-  trSyncPortfolio,
-  trDisconnect,
-} from "../shared/trade-republic";
-// ─── End Donkeyfolio extensions ───

@@ -123,10 +123,6 @@ mod desktop {
             });
         }
 
-        // ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-        handle.manage(Arc::new(commands::trade_republic::TradeRepublicState::new()));
-        // ─── End Donkeyfolio extensions ───
-
         Ok(())
     }
 }
@@ -173,10 +169,6 @@ mod mobile {
                     // The frontend will trigger the initial portfolio update after it's mounted
                     // For mobile, foreground sync is triggered from frontend via app lifecycle events
                     emit_app_ready(&handle);
-
-                    // ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-                    handle.manage(Arc::new(commands::trade_republic::TradeRepublicState::new()));
-                    // ─── End Donkeyfolio extensions ───
                 }
                 Err(e) => {
                     error!("Failed to initialize context on mobile: {}", e);
@@ -615,15 +607,6 @@ pub fn run() {
             commands::fire::run_fire_sorr,
             commands::fire::run_fire_sensitivity,
             commands::fire::run_fire_strategy_comparison,
-            // ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-            commands::trade_republic::tr_get_status,
-            commands::trade_republic::tr_save_credentials,
-            commands::trade_republic::tr_delete_credentials,
-            commands::trade_republic::tr_start_login,
-            commands::trade_republic::tr_confirm_login,
-            commands::trade_republic::tr_sync_portfolio,
-            commands::trade_republic::tr_disconnect,
-            // ─── End Donkeyfolio extensions ───
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build Wealthfolio application")

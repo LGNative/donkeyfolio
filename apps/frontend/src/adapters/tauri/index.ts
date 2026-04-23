@@ -214,8 +214,3 @@ export {
   runFireSensitivity,
   runFireStrategyComparison,
 } from "./fire-planner";
-
-// ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
-// Trade Republic Commands
-export * from "../shared/trade-republic";
-// ─── End Donkeyfolio extensions ───

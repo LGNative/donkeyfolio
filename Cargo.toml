@@ -4,7 +4,6 @@ members = [
     "apps/tauri",
     "apps/server",
     "crates/*",
-    "addons/trade-republic-connector/crate",
 ]
 
 [workspace.package]

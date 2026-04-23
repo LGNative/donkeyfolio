@@ -39,7 +39,6 @@ import TaxonomiesPage from "./pages/settings/taxonomies/taxonomies-page";
 import ConnectSettingsPage from "./pages/settings/wealthfolio-connect/connect-settings-page";
 import FirePlannerPage from "./pages/fire-planner/fire-planner-page";
 import FirePlannerSettingsPage from "./pages/settings/fire-planner/fire-planner-settings-page";
-import TradeRepublicSettingsPage from "./pages/settings/trade-republic/trade-republic-settings-page";
 
 export function AppRoutes() {
   const [dynamicRoutes, setDynamicRoutes] = useState<
@@ -126,8 +125,6 @@ export function AppRoutes() {
             <Route path="connect" element={<ConnectSettingsPage />} />
             <Route path="ai-providers" element={<AiProvidersPage />} />
             <Route path="addons" element={<AddonSettingsPage />} />
-            {/* ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ─── */}
-            <Route path="trade-republic" element={<TradeRepublicSettingsPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />
         </Route>

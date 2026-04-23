@@ -18,7 +18,6 @@ wealthfolio-connect = { workspace = true }
 wealthfolio-storage-sqlite = { workspace = true }
 wealthfolio-device-sync = { workspace = true }
 wealthfolio-ai = { workspace = true }
-trade-republic-connector = { path = "../../addons/trade-republic-connector/crate" }
 
 # Tauri
 tauri = { version = "2.10", features = [] }
