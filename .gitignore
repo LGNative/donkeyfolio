@@ -110,3 +110,4 @@ db/
 apps/db/
 apps/tauri/db/
 tasks
+**/*.local.md
