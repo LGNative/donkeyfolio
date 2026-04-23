@@ -103,9 +103,6 @@ export * from "../shared/secrets";
 // Connect Commands (Broker + Device Sync + Auth)
 export * from "../shared/connect";
 
-// Trade Republic Commands
-export * from "../shared/trade-republic";
-
 // AI Providers Commands
 export * from "../shared/ai-providers";
 
@@ -217,3 +214,8 @@ export {
   runFireSensitivity,
   runFireStrategyComparison,
 } from "./fire-planner";
+
+// ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ───
+// Trade Republic Commands
+export * from "../shared/trade-republic";
+// ─── End Donkeyfolio extensions ───

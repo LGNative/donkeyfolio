@@ -125,8 +125,9 @@ export function AppRoutes() {
             <Route path="taxonomies" element={<TaxonomiesPage />} />
             <Route path="connect" element={<ConnectSettingsPage />} />
             <Route path="ai-providers" element={<AiProvidersPage />} />
-            <Route path="trade-republic" element={<TradeRepublicSettingsPage />} />
             <Route path="addons" element={<AddonSettingsPage />} />
+            {/* ─── Donkeyfolio extensions (keep at end to minimize upstream merge conflicts) ─── */}
+            <Route path="trade-republic" element={<TradeRepublicSettingsPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />
         </Route>
