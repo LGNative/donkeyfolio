@@ -125,6 +125,27 @@
       "isCritical": 0,
       "hasBreakingChanges": 0,
       "minWealthfolioVersion": "3.0.0"
+    },
+    {
+      "id": "tr-pdf-converter-addon",
+      "name": "TR PDF Converter",
+      "version": "1.0.0",
+      "description": "Convert Trade Republic PDF statements to CSV/Excel/JSON with charts and analytics. 100% local — no uploads.",
+      "author": "Donkeyfolio (vendored from jcmpagel)",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-1.0.0.zip",
+      "downloads": 0,
+      "rating": 0,
+      "reviewCount": 0,
+      "tags": ["trade-republic", "pdf", "import", "community"],
+      "status": "active",
+      "isFeatured": 1,
+      "lastUpdated": "2026-04-23 00:00:00",
+      "images": [],
+      "releaseNotes": "Vendors the open-source TR PDF converter by @jcmpagel. All credit to original author.",
+      "changelogUrl": "https://github.com/jcmpagel/Trade-Republic-CSV-Excel",
+      "isCritical": 0,
+      "hasBreakingChanges": 0,
+      "minWealthfolioVersion": "3.0.0"
     }
   ]
 }
