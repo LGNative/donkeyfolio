@@ -87,26 +87,24 @@ export default function AboutSettingsPage() {
                 </Button>
               )}
               <Button
-                asChild
                 variant="outline"
                 size="sm"
                 className="inline-flex items-center gap-2"
+                disabled
+                title="Coming soon"
               >
-                <ExternalLink href="https://wealthfolio.app">
-                  <Icons.Globe className="h-4 w-4" />
-                  Website
-                </ExternalLink>
+                <Icons.Globe className="h-4 w-4" />
+                Website
               </Button>
               <Button
-                asChild
                 variant="outline"
                 size="sm"
                 className="inline-flex items-center gap-2"
+                disabled
+                title="Coming soon"
               >
-                <ExternalLink href="https://wealthfolio.app/docs/introduction/">
-                  <Icons.FileText className="h-4 w-4" />
-                  Docs
-                </ExternalLink>
+                <Icons.FileText className="h-4 w-4" />
+                Docs
               </Button>
               <Button
                 asChild
@@ -206,26 +204,17 @@ export default function AboutSettingsPage() {
             <Separator />
 
             <p className="text-muted-foreground text-sm">
-              <ExternalLink
-                href="https://wealthfolio.app/legal/privacy-policy"
-                className="hover:text-foreground underline underline-offset-4"
-              >
+              <span className="opacity-60" title="Coming soon">
                 Privacy Policy
-              </ExternalLink>
+              </span>
               <span className="mx-2">•</span>
-              <ExternalLink
-                href="https://wealthfolio.app/legal/terms-of-use"
-                className="hover:text-foreground underline underline-offset-4"
-              >
+              <span className="opacity-60" title="Coming soon">
                 Terms of Use
-              </ExternalLink>
+              </span>
               <span className="mx-2">•</span>
-              <ExternalLink
-                href="https://wealthfolio.app"
-                className="hover:text-foreground underline underline-offset-4"
-              >
+              <span className="opacity-60" title="Coming soon">
                 Website
-              </ExternalLink>
+              </span>
             </p>
           </div>
         </CardContent>
