@@ -2,69 +2,10 @@ import type { AddonContext, AddonEnableFunction } from "@wealthfolio/addon-sdk";
 import { Icons } from "@wealthfolio/ui";
 import React from "react";
 
-// Injected at build time by vite.config.ts — full self-contained English
-// HTML bundle (from /en/ on kontoauszug.jonathanpagel.com + vendored JS).
-// Tracking/upsell scripts are stripped during build.
-declare const __VENDOR_HTML__: string;
-
-const SOURCE_REPO = "https://github.com/jcmpagel/Trade-Republic-CSV-Excel";
-const SOURCE_SITE = "https://kontoauszug.jonathanpagel.com/en/";
-
-function TrPdfConverterPage() {
-  // Create a Blob URL once per mount — no external fetch at runtime.
-  // Blob URL avoids srcdoc size limits and allows the iframe to act like a
-  // normal same-origin-ish document (internal relative navigation works).
-  const iframeSrc = React.useMemo(() => {
-    const blob = new Blob([__VENDOR_HTML__], { type: "text/html" });
-    return URL.createObjectURL(blob);
-  }, []);
-
-  React.useEffect(() => {
-    return () => URL.revokeObjectURL(iframeSrc);
-  }, [iframeSrc]);
-
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
-      <div className="min-h-0 flex-1">
-        <iframe
-          src={iframeSrc}
-          title="Trade Republic PDF Converter"
-          className="h-full w-full border-0"
-          sandbox="allow-scripts allow-downloads allow-forms allow-same-origin allow-popups"
-          allow="clipboard-write"
-          style={{ colorScheme: "light" }}
-        />
-      </div>
-
-      <div className="border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
-        <span>
-          Built on{" "}
-          <a
-            href={SOURCE_SITE}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline hover:no-underline"
-          >
-            kontoauszug.jonathanpagel.com
-          </a>{" "}
-          by{" "}
-          <a
-            href={SOURCE_REPO}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline hover:no-underline"
-          >
-            @jcmpagel
-          </a>{" "}
-          · after exporting CSV, go to <em>Activities → Import</em> in Donkeyfolio.
-        </span>
-      </div>
-    </div>
-  );
-}
+import TrConverterPage from "./pages/tr-converter-page";
 
 const enable: AddonEnableFunction = (context: AddonContext) => {
-  context.api.logger.info("📄 TR PDF Converter addon enabling...");
+  context.api.logger.info("📄 TR PDF Converter (native) enabling...");
 
   const added: Array<{ remove: () => void }> = [];
 
@@ -82,12 +23,12 @@ const enable: AddonEnableFunction = (context: AddonContext) => {
       path: "/addons/tr-pdf-converter",
       component: React.lazy(() =>
         Promise.resolve({
-          default: TrPdfConverterPage,
+          default: TrConverterPage,
         }),
       ),
     });
 
-    context.api.logger.info("📄 TR PDF Converter addon enabled");
+    context.api.logger.info("📄 TR PDF Converter enabled (v2 native)");
   } catch (error) {
     context.api.logger.error(`Failed to enable TR PDF Converter: ${(error as Error).message}`);
     added.forEach((item) => item.remove());
@@ -97,7 +38,7 @@ const enable: AddonEnableFunction = (context: AddonContext) => {
   return {
     disable: () => {
       added.forEach((item) => item.remove());
-      context.api.logger.info("📄 TR PDF Converter addon disabled");
+      context.api.logger.info("📄 TR PDF Converter disabled");
     },
   };
 };

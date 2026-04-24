@@ -1,8 +1,8 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "1.0.3",
-  "description": "Convert Trade Republic PDF statements to CSV/Excel/JSON with charts and analytics. Embeds the excellent open-source tool by jcmpagel (kontoauszug.jonathanpagel.com) inside Donkeyfolio.",
+  "version": "2.0.0",
+  "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Ported from @jcmpagel's open-source converter with a React UI integrated into Donkeyfolio.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
   "sdkVersion": "3.0.3",
@@ -11,7 +11,7 @@
     {
       "category": "ui",
       "functions": ["sidebar.addItem", "router.add"],
-      "purpose": "Add a sidebar entry and a route to host the embedded converter UI"
+      "purpose": "Add a sidebar entry and a route for the TR PDF converter page"
     }
   ],
   "keywords": ["donkeyfolio", "addon", "trade-republic", "pdf", "csv"],
