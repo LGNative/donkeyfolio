@@ -76,6 +76,42 @@ const STATUS_EN: Record<string, string> = {
 };
 const translateStatus = (s: string | undefined): string => (s && STATUS_EN[s]) || s || "";
 
+// German TR transaction types → English (for older/mixed TR statement formats)
+const TYPE_EN: Record<string, string> = {
+  Handel: "Trade",
+  Kartenzahlung: "Card payment",
+  Karte: "Card",
+  Sparplan: "Savings plan",
+  Überweisung: "Transfer",
+  Einzahlung: "Deposit",
+  Auszahlung: "Withdrawal",
+  Lastschrift: "Direct debit",
+  Zinsen: "Interest",
+  Dividende: "Dividend",
+  Dividenden: "Dividends",
+  Steuern: "Taxes",
+  Steuer: "Tax",
+  Gebühr: "Fee",
+  Gebühren: "Fees",
+  Umbuchung: "Rebooking",
+  Rundung: "Rounding",
+  Prämie: "Bonus",
+  Rückzahlung: "Repayment",
+  Ausgleich: "Settlement",
+  Erstattung: "Refund",
+  Zahlung: "Payment",
+  Kauf: "Buy",
+  Verkauf: "Sell",
+  Ertrag: "Income",
+};
+const translateType = (s: string | undefined): string => {
+  if (!s) return "";
+  return s
+    .split(/\s+/)
+    .map((w) => TYPE_EN[w] ?? w)
+    .join(" ");
+};
+
 // Map jcmpagel cash transaction shape → analytics shape used by parseTradingTransactions
 function toAnalyticsShape(tx: CashTransaction) {
   return {
@@ -688,7 +724,7 @@ function CashTable({ rows }: { rows: CashTransaction[] }) {
                 title={r._sanityCheckOk === false ? "Balance sanity check failed" : undefined}
               >
                 <TableCell className="font-mono text-xs">{r.datum}</TableCell>
-                <TableCell>{r.typ}</TableCell>
+                <TableCell>{translateType(r.typ)}</TableCell>
                 <TableCell className="max-w-md truncate" title={r.beschreibung}>
                   {r.beschreibung}
                 </TableCell>
@@ -728,7 +764,7 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
             {rows.map((r, i) => (
               <TableRow key={i}>
                 <TableCell className="font-mono text-xs">{r.datum}</TableCell>
-                <TableCell>{r.zahlungsart}</TableCell>
+                <TableCell>{translateType(r.zahlungsart)}</TableCell>
                 <TableCell className="max-w-md truncate" title={r.geldmarktfonds}>
                   {r.geldmarktfonds}
                 </TableCell>
