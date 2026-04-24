@@ -17,11 +17,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "copyright": "2026 Luis Goncalves",
+    "copyright": "${DONKEYFOLIO_COPYRIGHT}",
     "category": "public.app-category.finance",
     "createUpdaterArtifacts": "v1Compatible",
     "iOS": {
-      "developmentTeam": "DYDJ2RNL5H",
+      "developmentTeam": "${DONKEYFOLIO_APPLE_TEAM_ID}",
       "infoPlist": "Info.ios.plist"
     },
     "macOS": {
@@ -30,22 +30,20 @@
       "minimumSystemVersion": "10.13"
     }
   },
-  "productName": "Donkeyfolio",
-  "mainBinaryName": "Donkeyfolio",
+  "productName": "${DONKEYFOLIO_APP_NAME}",
+  "mainBinaryName": "${DONKEYFOLIO_APP_NAME}",
   "version": "3.2.1",
-  "identifier": "com.luisgoncalves.donkeyfolio",
+  "identifier": "${DONKEYFOLIO_BUNDLE_ID}",
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["donkeyfolio"]
+        "schemes": ["${DONKEYFOLIO_DEEP_LINK_SCHEME}"]
       },
-      "schemes": ["donkeyfolio"]
+      "schemes": ["${DONKEYFOLIO_DEEP_LINK_SCHEME}"]
     },
     "updater": {
-      "endpoints": [
-        "https://github.com/LGNative/donkeyfolio/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4NjRGMzJEODY3MDMxQTcKUldTbk1YQ0dMZk5rNkt0Smx1MktPazdQZ3FIQW50K2dIZXNTbFpSb3JEaHlJZjZIVFNQSS9UbTEK"
+      "endpoints": ["${DONKEYFOLIO_UPDATER_ENDPOINT}"],
+      "pubkey": "${DONKEYFOLIO_UPDATER_PUBKEY}"
     }
   },
   "app": {
@@ -58,7 +56,7 @@
         "theme": "Dark",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "title": "Donkeyfolio",
+        "title": "${DONKEYFOLIO_APP_NAME}",
         "width": 1440,
         "height": 960
       }

@@ -96,9 +96,11 @@ const enable: AddonEnableFunction = (context: AddonContext) => {
     throw error;
   }
 
-  return () => {
-    added.forEach((item) => item.remove());
-    context.api.logger.info("📄 TR PDF Converter addon disabled");
+  return {
+    disable: () => {
+      added.forEach((item) => item.remove());
+      context.api.logger.info("📄 TR PDF Converter addon disabled");
+    },
   };
 };
 

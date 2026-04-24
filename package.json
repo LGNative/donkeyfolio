@@ -20,7 +20,7 @@
     "build:addons": "pnpm -r --filter './addons/*' build",
     "bundle:addons": "pnpm -r --filter './addons/*' bundle",
     "preview": "pnpm --filter frontend preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri-wrapper.mjs",
     "test": "pnpm --filter frontend test",
     "test:watch": "pnpm --filter frontend test:watch",
     "test:ui": "pnpm --filter frontend test:ui",

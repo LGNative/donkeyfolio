@@ -17,6 +17,14 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
 import { SettingsHeader } from "../settings-header";
 
+// Fork identity resolved at build time from .env.local via Vite (envPrefix
+// includes DONKEYFOLIO_). No hardcoded URLs/emails in this component.
+const GITHUB_OWNER = import.meta.env.DONKEYFOLIO_GITHUB_OWNER ?? "afadil";
+const GITHUB_REPO = import.meta.env.DONKEYFOLIO_GITHUB_REPO ?? "wealthfolio";
+const SUPPORT_EMAIL = import.meta.env.DONKEYFOLIO_SUPPORT_EMAIL ?? "support@wealthfolio.app";
+const REPO_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`;
+const ISSUES_URL = `${REPO_URL}/issues`;
+
 export default function AboutSettingsPage() {
   const [version, setVersion] = useState<string>("");
   const [dbPath, setDbPath] = useState<string>("");
@@ -112,7 +120,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="https://github.com/LGNative/donkeyfolio">
+                <ExternalLink href={REPO_URL}>
                   <Icons.ExternalLink className="h-4 w-4" />
                   GitHub
                 </ExternalLink>
@@ -172,9 +180,7 @@ export default function AboutSettingsPage() {
           <div className="space-y-4">
             <p className="text-muted-foreground text-sm">
               Have questions or found a bug? Please email us at{" "}
-              <span className="select-all font-mono font-semibold">
-                peauntidonky.digital@gmail.com
-              </span>
+              <span className="select-all font-mono font-semibold">{SUPPORT_EMAIL}</span>
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -183,7 +189,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="mailto:peauntidonky.digital@gmail.com">
+                <ExternalLink href={`mailto:${SUPPORT_EMAIL}`}>
                   <Icons.ExternalLink className="h-4 w-4" />
                   Email Us
                 </ExternalLink>
@@ -194,7 +200,7 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
-                <ExternalLink href="https://github.com/LGNative/donkeyfolio/issues">
+                <ExternalLink href={ISSUES_URL}>
                   <Icons.AlertCircle className="h-4 w-4" />
                   Report Issue
                 </ExternalLink>

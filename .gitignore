@@ -52,6 +52,11 @@ ideas/
 # Auto-generated lefthook config (from rebalancer addon postinstall)
 /lefthook.yml
 
+# Generated from tauri.conf.template.json by scripts/gen-tauri-conf.mjs
+# (committed value would be hardcoded fork-specific data — we generate
+#  from .env.local at build time instead)
+/apps/tauri/tauri.conf.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

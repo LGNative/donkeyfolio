@@ -8,11 +8,14 @@ use super::addon_traits::AddonServiceTrait;
 use super::models::*;
 
 // Constants
-// Donkeyfolio: custom addon store (static JSON).
-// Serves first-party Wealthfolio addons + curated community addons.
-// Updated via docs/addons.json in the public repo (cached by jsDelivr).
-pub const ADDON_STORE_API_BASE_URL: &str =
-    "https://cdn.jsdelivr.net/gh/LGNative/donkeyfolio@main/docs/addons.json";
+// Addon store endpoint. Resolved at compile time from DONKEYFOLIO_ADDON_STORE_URL
+// (set by scripts/tauri-wrapper.mjs from .env.local). Falls back to the upstream
+// Wealthfolio store if the env var is unset — this keeps plain `cargo build`
+// working for CI lint / tests without needing a .env file.
+pub const ADDON_STORE_API_BASE_URL: &str = match option_env!("DONKEYFOLIO_ADDON_STORE_URL") {
+    Some(v) => v,
+    None => "https://wealthfolio.app/api/addons",
+};
 
 /// Helper function to create a request with common headers
 fn create_request_with_headers(
