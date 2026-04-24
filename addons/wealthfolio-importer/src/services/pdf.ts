@@ -1,7 +1,7 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import * as pdfjsLib from "pdfjs-dist";
+import type { TextItem } from "pdfjs-dist/types/src/display/api";
 // @ts-expect-error -- Vite ?raw import has no type declaration
-import pdfjsWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?raw';
+import pdfjsWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?raw";
 
 const MAX_PAGES = 100;
 export const LARGE_DOC_THRESHOLD = 50;
@@ -16,16 +16,16 @@ const SPACE_PER_UNIT = 4;
 
 // Blob URL from inlined worker source — must remain alive for the app lifetime
 // so pdf.js can spawn workers on demand. Intentionally never revoked.
-const workerBlob = new Blob([pdfjsWorkerSrc], { type: 'application/javascript' });
+const workerBlob = new Blob([pdfjsWorkerSrc], { type: "application/javascript" });
 pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
 
 // --- Types ---
 
-type ImageMediaType = 'image/jpeg' | 'image/png';
+type ImageMediaType = "image/jpeg" | "image/png";
 
 export type PageContent =
-  | { mode: 'text'; text: string; pageNumber: number }
-  | { mode: 'image'; base64: string; mediaType: ImageMediaType; pageNumber: number };
+  | { mode: "text"; text: string; pageNumber: number }
+  | { mode: "image"; base64: string; mediaType: ImageMediaType; pageNumber: number };
 
 interface PositionedTextItem {
   str: string;
@@ -37,14 +37,14 @@ interface PositionedTextItem {
 // --- Text extraction ---
 
 function isGarbled(text: string): boolean {
-  const stripped = text.replace(/\s/g, '');
+  const stripped = text.replace(/\s/g, "");
   if (stripped.length === 0) return true;
-  const printable = stripped.replace(/[\x20-\x7E\u00A0-\u00FF\u20AC\u00A3\u00A5]/g, '');
+  const printable = stripped.replace(/[\x20-\x7E\u00A0-\u00FF\u20AC\u00A3\u00A5]/g, "");
   return printable.length / stripped.length > GARBLE_THRESHOLD;
 }
 
 function reconstructLayout(items: PositionedTextItem[]): string {
-  if (items.length === 0) return '';
+  if (items.length === 0) return "";
 
   // Sort by Y descending (top of page first in PDF coordinate space)
   const sorted = [...items].sort((a, b) => b.y - a.y);
@@ -69,19 +69,19 @@ function reconstructLayout(items: PositionedTextItem[]): string {
   const lines: string[] = [];
   for (const row of rows) {
     row.sort((a, b) => a.x - b.x);
-    let line = '';
+    let line = "";
     for (let i = 0; i < row.length; i++) {
       if (i > 0) {
         const gap = row[i].x - (row[i - 1].x + row[i - 1].width);
         const spaces = Math.max(1, Math.round(gap / SPACE_PER_UNIT));
-        line += ' '.repeat(spaces);
+        line += " ".repeat(spaces);
       }
       line += row[i].str;
     }
     lines.push(line);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 async function extractPageText(page: pdfjsLib.PDFPageProxy): Promise<string | null> {
@@ -102,7 +102,10 @@ async function extractPageText(page: pdfjsLib.PDFPageProxy): Promise<string | nu
   if (items.length === 0) return null;
 
   // Strip zero-width and control characters that could be used for prompt injection
-  const text = reconstructLayout(items).replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+  const text = reconstructLayout(items).replace(
+    /[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,
+    "",
+  );
   if (text.length < MIN_TEXT_LENGTH) return null;
   if (isGarbled(text)) return null;
 
@@ -122,7 +125,7 @@ async function classifyPage(
     const text = await extractPageText(page);
     if (text) {
       page.cleanup();
-      return { mode: 'text', text, pageNumber };
+      return { mode: "text", text, pageNumber };
     }
   } catch {
     // Text extraction failed — fall back to image
@@ -132,11 +135,12 @@ async function classifyPage(
   const viewport = page.getViewport({ scale: RENDER_SCALE });
   canvas.width = viewport.width;
   canvas.height = viewport.height;
-  await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-  const base64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY).split(',')[1];
+  // pdf.js 4.x API: no `canvas` field — it's inferred from canvasContext.
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  const base64 = canvas.toDataURL("image/jpeg", JPEG_QUALITY).split(",")[1];
   page.cleanup();
 
-  return { mode: 'image', base64, mediaType: 'image/jpeg', pageNumber };
+  return { mode: "image", base64, mediaType: "image/jpeg", pageNumber };
 }
 
 // --- Public API ---
@@ -152,9 +156,9 @@ export async function pdfToContent(file: File): Promise<{ pages: PageContent[] }
   }
 
   const pages: PageContent[] = [];
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Failed to create canvas 2D context.');
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Failed to create canvas 2D context.");
 
   for (let i = 1; i <= pageCount; i++) {
     const page = await pdf.getPage(i);
@@ -173,19 +177,19 @@ export function imageToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        reject(new Error('Unexpected reader result type.'));
+      if (typeof reader.result !== "string") {
+        reject(new Error("Unexpected reader result type."));
         return;
       }
-      resolve(reader.result.split(',')[1]);
+      resolve(reader.result.split(",")[1]);
     };
-    reader.onerror = () => reject(new Error('Failed to read image file.'));
+    reader.onerror = () => reject(new Error("Failed to read image file."));
     reader.readAsDataURL(file);
   });
 }
 
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 
 export function getMediaType(file: File): ImageMediaType {
-  return ALLOWED_IMAGE_TYPES.has(file.type) ? (file.type as ImageMediaType) : 'image/jpeg';
+  return ALLOWED_IMAGE_TYPES.has(file.type) ? (file.type as ImageMediaType) : "image/jpeg";
 }
