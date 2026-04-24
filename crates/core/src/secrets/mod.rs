@@ -2,7 +2,15 @@ use crate::errors::Result;
 
 /// Prefix applied to all secret identifiers to avoid collisions with other
 /// applications that may share the same underlying credential store.
-pub const SERVICE_PREFIX: &str = "wealthfolio_";
+///
+/// Resolved at compile time from DONKEYFOLIO_SECRET_PREFIX (set by
+/// scripts/tauri-wrapper.mjs from .env.local). Falls back to "wealthfolio_"
+/// to stay compatible with upstream Wealthfolio keychain entries if the
+/// env var is unset.
+pub const SERVICE_PREFIX: &str = match option_env!("DONKEYFOLIO_SECRET_PREFIX") {
+    Some(v) => v,
+    None => "wealthfolio_",
+};
 
 /// Format a service identifier into the canonical form expected by the
 /// platform-specific secret stores.
