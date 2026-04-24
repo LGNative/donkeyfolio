@@ -68,6 +68,19 @@ function buildVendorHtml(): string {
   // Strip the stripe-buy-button element (pricing upsell)
   html = html.replace(/<stripe-buy-button[\s\S]*?<\/stripe-buy-button>/gi, "");
 
+  // Strip marketing sections — keep only #tool (upload) and #workspace (results).
+  html = html.replace(/<header[\s\S]*?<\/header>/i, "");
+  html = html.replace(/<footer[\s\S]*?<\/footer>/i, "");
+  const keepIds = new Set(["tool", "workspace"]);
+  html = html.replace(/<section\s+id="([^"]+)"[\s\S]*?<\/section>\s*/g, (match, id) =>
+    keepIds.has(id) ? match : "",
+  );
+  // Tighten the remaining container to use the full iframe width.
+  html = html.replace(
+    /<main\s+class="[^"]*"/i,
+    '<main class="mx-auto max-w-6xl space-y-6 px-4 py-4"',
+  );
+
   // Rewrite local vendor lib paths → public CDN URLs.
   // The /en/ HTML references ../js/vendor/pdf.min.js etc., which are served
   // from kontoauszug.jonathanpagel.com at runtime. In our Blob URL context

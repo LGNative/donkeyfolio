@@ -129,10 +129,10 @@
     {
       "id": "tr-pdf-converter-addon",
       "name": "TR PDF Converter",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Convert Trade Republic PDF statements to CSV/Excel/JSON with charts and analytics. 100% local — no uploads.",
       "author": "Donkeyfolio (vendored from jcmpagel)",
-      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-1.0.2.zip",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-1.0.3.zip",
       "downloads": 0,
       "rating": 0,
       "reviewCount": 0,
