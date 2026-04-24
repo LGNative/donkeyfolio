@@ -1,71 +1,940 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Trade Republic PDF Konverter (Open Source)</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
-  <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
-  <script src="https://unpkg.com/feather-icons" defer></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trade Republic Account Statement to Excel/CSV Export - Free Converter</title>
+    <meta name="description" content="Trade Republic account statement CSV/Excel export: free converter for PDF to Excel, CSV, JSON. Export transactions - 100% local, no signup. Convert now!">
+    <link rel="canonical" href="https://kontoauszug.jonathanpagel.com/en/">
+    <link rel="alternate" hreflang="de" href="https://kontoauszug.jonathanpagel.com/">
+    <link rel="alternate" hreflang="en" href="https://kontoauszug.jonathanpagel.com/en/">
+    <link rel="alternate" hreflang="x-default" href="https://kontoauszug.jonathanpagel.com/">
+
+    <!-- Open Graph / Facebook Meta Tags -->
+    <meta property="og:type" content="website"> 
+    <meta property="og:url" content="https://kontoauszug.jonathanpagel.com/en/">
+    <meta property="og:title" content="Trade Republic Account Statement to Excel/CSV Export - Free Converter">
+    <meta property="og:description" content="Trade Republic account statement CSV/Excel export: free converter for PDF to Excel, CSV, JSON. Export transactions - 100% local.">
+    <meta property="og:image" content="https://kontoauszug.jonathanpagel.com/TradeRepublic_PDF_zu_Excel.webp">
+    <meta property="og:image:width" content="800">
+    <meta property="og:image:height" content="402">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:locale:alternate" content="de_DE">
+
+    <!-- Twitter Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://kontoauszug.jonathanpagel.com/en/">
+    <meta name="twitter:title" content="Trade Republic Account Statement to Excel/CSV Export - Free Converter">
+    <meta name="twitter:description" content="Trade Republic CSV/Excel export: PDF statements to Excel, CSV, and JSON. 100% local, no data transfer.">
+    <meta name="twitter:image" content="https://kontoauszug.jonathanpagel.com/TradeRepublic_PDF_zu_Excel.webp">
+
+    <!-- Umami Analytics (Cloudflare-safe) -->
+    <script data-cfasync="false" defer src="https://cloud.umami.is/script.js" data-website-id="7a95a920-a197-4339-b545-964a8767fb38" data-auto-track="false"></script>
+
+    <!-- Preload pdf.js so offline use works immediately after load -->
+    <link rel="preload" as="script" href="../js/vendor/pdf.min.js" fetchpriority="high">
+    <link rel="preload" as="script" href="../js/vendor/pdf.worker.min.js" fetchpriority="high">
+    <link rel="preload" as="script" href="../js/vendor/xlsx.full.min.js" fetchpriority="high">
+    <script src="../js/vendor/pdf.min.js" defer></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                200: '#c7d2fe',
+                300: '#a5b4fc',
+                400: '#818cf8',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            },
+            fontFamily: {
+              sans: ['"Inter"', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif']
+            }
+          }
+        }
+      };
+    </script>
+
+    <!-- Feather Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="../styles.css">
+
+    <!-- Schema Markup -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Trade Republic CSV/Excel Export Converter",
+      "description": "Free converter for Trade Republic account statements to Excel, CSV, and JSON",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Web Browser",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "EUR"
+      },
+      "featureList": [
+        "Convert PDF to Excel",
+        "CSV export",
+        "JSON export",
+        "Local processing",
+        "No signup required"
+      ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How do I export my Trade Republic transactions?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Choose your statement, wait for the automatic scan, and then use the export button for CSV, Excel, or JSON. You do not need to install or upload anything."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I get the Trade Republic statement on the web or PC?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Statements are only available in the mobile app. Trade Republic kontoauszug PC access is not available. Download the PDF there and then convert it here."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the tool work with older statements?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, the PDF layout is detected automatically. You can process multiple documents in a row to build full-year overviews."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which formats are available?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You get CSV, Excel (XLSX), and JSON. Choose the format that fits your workflow - all options are free."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the export really secure?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. All data stays in your browser. You can even turn off Wi-Fi after the page loads - conversion works completely offline."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Are there any costs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The export is permanently free. If the tool helps you, you can optionally donate in the support section."
+          }
+        }
+      ]
+    }
+    </script>
 </head>
-<body class="bg-slate-100 text-slate-900 antialiased">
-  <main class="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10">
-    <header class="space-y-2">
-      <h1 class="text-3xl font-semibold tracking-tight">Trade Republic Kontoauszug Konverter</h1>
-      <p class="max-w-2xl text-sm text-slate-600">
-        Wandle deine Trade-Republic-Kontoauszüge vollständig lokal in strukturierte CSV-, Excel- oder JSON-Dateien um. Keine Telemetrie, keine Zahlungsaufrufe.
-      </p>
+<body class="bg-slate-100 font-sans text-slate-900 antialiased">
+  <div class="min-h-screen">
+    <header class="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <div class="mx-auto max-w-6xl px-6 py-5">
+        <div class="flex items-center justify-between gap-4">
+          <a href="#tool" class="flex items-center gap-2 text-slate-900">
+            <span class="hidden text-sm font-medium text-slate-500 sm:inline">Statement Converter</span>
+          </a>
+          <button type="button" class="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white p-2 text-slate-600 transition hover:border-slate-300 hover:text-slate-900 sm:hidden" aria-expanded="false" data-mobile-menu-toggle>
+            <span class="sr-only">Open menu</span>
+            <i data-feather="menu"></i>
+          </button>
+          <nav id="main-nav" class="hidden flex-1 items-center justify-between gap-6 sm:flex">
+            <div class="flex items-center gap-6 text-sm font-medium text-slate-600">
+              <a href="#tool" class="transition hover:text-slate-900">Tool</a>
+              <a href="#quickstart" class="transition hover:text-slate-900">How it works</a>
+              <a href="#why" class="transition hover:text-slate-900">Benefits</a>
+              <a href="#faq-section" class="transition hover:text-slate-900">FAQ</a>
+              <a href="#support" class="transition hover:text-slate-900">Support</a>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                <a href="/" class="rounded-full px-2 py-1 text-slate-600 transition hover:text-slate-900">DE</a>
+                <a href="/en/" class="rounded-full bg-slate-900 px-2 py-1 text-white" aria-current="page">EN</a>
+              </div>
+              <a href="https://github.com/jcmpagel/Trade-Republic-CSV-Excel" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">
+                <i data-feather="github"></i>
+                GitHub
+              </a>
+              <a href="https://forms.gle/cmrXaqDZd2pZFdau6" target="_blank" rel="noopener" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">Join beta</a>
+              <button type="button" class="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0" onclick="focusDonationView()">Buy me a coffee</button>
+            </div>
+          </nav>
+        </div>
+        <div id="mobile-nav" class="hidden flex-col gap-2 border-t border-slate-200 pt-4 text-sm text-slate-700 sm:hidden">
+          <!-- Language switcher -->
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-xs font-medium uppercase tracking-wide text-slate-500">Language</span>
+            <div class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+              <a href="/" class="rounded-full px-2 py-1 text-slate-600 transition hover:text-slate-900">DE</a>
+              <a href="/en/" class="rounded-full bg-slate-900 px-2 py-1 text-white" aria-current="page">EN</a>
+            </div>
+          </div>
+          
+          <!-- Navigation links -->
+          <nav class="flex flex-col gap-1 border-t border-slate-100 pt-3">
+            <a href="#tool" class="rounded-lg px-3 py-2.5 font-medium transition hover:bg-slate-100">Tool</a>
+            <a href="#quickstart" class="rounded-lg px-3 py-2.5 font-medium transition hover:bg-slate-100">How it works</a>
+            <a href="#why" class="rounded-lg px-3 py-2.5 font-medium transition hover:bg-slate-100">Benefits</a>
+            <a href="#faq-section" class="rounded-lg px-3 py-2.5 font-medium transition hover:bg-slate-100">FAQ</a>
+            <a href="#support" class="rounded-lg px-3 py-2.5 font-medium transition hover:bg-slate-100">Support</a>
+          </nav>
+          
+          <!-- Action buttons -->
+          <div class="mt-2 flex flex-col gap-2 border-t border-slate-100 pt-3">
+            <a href="https://github.com/jcmpagel/Trade-Republic-CSV-Excel" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">
+              <i data-feather="github"></i>
+              GitHub
+            </a>
+            <a href="https://forms.gle/cmrXaqDZd2pZFdau6" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">Join beta</a>
+            <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0" onclick="focusDonationView()">☕ Buy me a coffee</button>
+          </div>
+        </div>
+      </div>
     </header>
 
-    <section class="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <input type="file" id="file" accept="application/pdf" class="sr-only" />
-        <label for="file" class="inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-md border border-transparent bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">
-          <i data-feather="upload-cloud"></i>
-          PDF auswählen
-        </label>
-        <button type="button" id="run" class="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">
-          <i data-feather="refresh-cw"></i>
-          Analyse erneut starten
-        </button>
-      </div>
-      <p class="text-xs text-slate-500">
-        Nach der Auswahl startet die Verarbeitung automatisch. Der Button „Analyse erneut starten“ führt die Analyse für das aktuell geladene PDF erneut aus.
-      </p>
-      <div id="status" class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
-        Bereit. Bitte PDF auswählen.
-      </div>
-    </section>
+    <main class="mx-auto max-w-6xl space-y-12 px-6 py-12">
+      <section id="tool" class="rounded-2xl border border-slate-200 bg-white/90 shadow-sm backdrop-blur">
+        <div class="grid gap-10 p-6 md:grid-cols-[1.2fr,1fr] md:items-start md:p-10">
+          <div class="space-y-6">
+            <span class="inline-flex items-center gap-2 rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-700">
+              <i data-feather="shield"></i>
+              100% local · No login
+            </span>
+            <h1 class="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Export Trade Republic account statements to Excel, CSV, or JSON</h1>
+            <p class="text-lg leading-relaxed text-slate-700">Turn your statements into structured tables - perfect for tax, analysis, or your personal finance overview. Processing runs entirely in your browser.</p>
+            <a href="#kontoauszug-anleitung" class="inline-flex items-center gap-2 text-sm font-semibold text-orange-600 transition hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-200 focus:ring-offset-2">
+              <i data-feather="compass"></i>
+              Find the statement in the app
+            </a>
+            <div class="space-y-3" id="upload-zone">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <label for="file" class="inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-md border border-transparent bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2" role="button" id="file-label" data-umami-event="upload_dialog_open" data-umami-event-location="controls">
+                  <i data-feather="file-text"></i>
+                  Choose PDF
+                </label>
+                <a href="#quickstart" class="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0">
+                  <i data-feather="book-open"></i>
+                  Quick guide
+                </a>
+              </div>
+              <a href="../dashboard.html" class="flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm transition hover:border-brand-300 hover:bg-brand-100" data-umami-event="open_dashboard" data-umami-event-location="hero">
+                <span class="mt-0.5 inline-flex h-8 w-8 flex-none items-center justify-center rounded-full bg-brand-600 text-white">
+                  <i data-feather="bar-chart-2"></i>
+                </span>
+                <span class="flex-1">
+                  <span class="block font-semibold text-brand-900">New: Transaction Export Dashboard (beta)</span>
+                  <span class="mt-0.5 block text-xs text-brand-800">Got the <strong>Excel/CSV export</strong> from the TR app? Drop it into the new dashboard: MCC spending categories, FIFO P&amp;L, dividend heatmap, subscription detection, 15+ charts – all local.</span>
+                  <span class="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-700">Open dashboard <i data-feather="arrow-right" class="h-3 w-3"></i></span>
+                </span>
+              </a>
+              <a href="../dashboard.html?demo=1" class="-mt-1 inline-flex items-center gap-2 px-1 text-xs font-semibold text-slate-600 transition hover:text-slate-900" data-umami-event="open_demo" data-umami-event-location="hero">
+                <i data-feather="play-circle" class="h-3.5 w-3.5"></i>
+                Or: try the dashboard with demo data (no file needed)
+              </a>
+              <button type="button" class="inline-flex items-center justify-center gap-2 text-sm font-semibold text-orange-600 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-0" onclick="window.location.href='mailto:contact@jonathanpagel.com?subject=Language%20support%20for%20Trade%20Republic%20Exporter'">
+                <i data-feather="message-circle"></i>
+                Language not working? Email me: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="2645494852474552664c494847524e4748564741434a0845494b">[email&#160;protected]</a> (tested: German, Italian, English)
+              </button>
+              <p class="text-xs text-slate-500">Analysis starts right after selection. Once the page is loaded, you can use it completely offline.</p>
+            </div>
+            <input type="file" id="file" accept="application/pdf" class="sr-only" />
+          </div>
+          <div class="flex flex-col items-end gap-4">
+            <div class="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm">
+              <a href="https://www.linkedin.com/in/jonathan-pagel/" target="_blank" rel="noopener" class="inline-flex items-center gap-2 transition hover:text-slate-900">
+                <i data-feather="linkedin"></i>
+                LinkedIn
+              </a>
+              <span class="h-4 w-px bg-slate-200"></span>
+              <a href="https://jonathanpagel.com/" target="_blank" rel="noopener" class="inline-flex items-center gap-2 transition hover:text-slate-900">
+                <i data-feather="link"></i>
+                jonathanpagel.com
+              </a>
+            </div>
+            <figure class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" itemscope itemtype="http://schema.org/ImageObject">
+              <img src="../TradeRepublic_PDF_zu_Excel.webp" alt="Trade Republic account statement CSV/Excel export converter - convert PDF to Excel" class="w-full object-cover" itemprop="contentUrl" width="800" height="402">
+              <figcaption class="mt-3 text-xs text-slate-500">Convert Trade Republic statements in just a few clicks.</figcaption>
+            </figure>
+          </div>
+          <ul class="md:col-span-2 grid gap-4 sm:grid-cols-2">
+            <li class="flex items-start gap-3 text-sm text-slate-700">
+              <span class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"><i data-feather="lock"></i></span>
+              <span>No server upload - your data stays strictly local.</span>
+            </li>
+            <li class="flex items-start gap-3 text-sm text-slate-700">
+              <span class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"><i data-feather="file-text"></i></span>
+              <span>Export structured tables as Excel (XLSX), CSV, or JSON.</span>
+            </li>
+            <li class="flex items-start gap-3 text-sm text-slate-700">
+              <span class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"><i data-feather="trending-up"></i></span>
+              <span>Get automatic summaries for cash, money market funds, and trading.</span>
+            </li>
+            <li class="flex items-start gap-3 text-sm text-slate-700">
+              <span class="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"><i data-feather="refresh-ccw"></i></span>
+              <span>Process any number of PDFs in a row - ideal for full-year archives.</span>
+            </li>
+          </ul>
+        </div>
+      </section>
 
-    <section class="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div id="out" class="space-y-10"></div>
-      <details class="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700" open>
-        <summary class="cursor-pointer font-semibold text-slate-900">Debug-Ausgabe anzeigen</summary>
-        <div id="debug" class="mt-3 space-y-1 text-xs text-slate-600 font-mono max-h-96 overflow-y-auto bg-white p-3 rounded border"></div>
-      </details>
-    </section>
-  </main>
+      <section id="quickstart" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="space-y-4">
+          <div class="space-y-2">
+            <h2 class="text-xl font-semibold text-slate-900">Get started in three steps</h2>
+            <p class="text-sm text-slate-600">Most statements are analyzed in under a minute.</p>
+          </div>
+          <div class="grid gap-6 md:grid-cols-3">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-5">
+              <span class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Step 1</span>
+              <h3 class="mt-2 text-base font-semibold text-slate-900">Choose PDF</h3>
+              <p class="mt-2 text-sm text-slate-600">Upload your Trade Republic statement using the "Choose PDF" button.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-5">
+              <span class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Step 2</span>
+              <h3 class="mt-2 text-base font-semibold text-slate-900">Wait for analysis</h3>
+              <p class="mt-2 text-sm text-slate-600">Processing starts automatically. You will see the progress for each page.</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-5">
+              <span class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Step 3</span>
+              <h3 class="mt-2 text-base font-semibold text-slate-900">Start export</h3>
+              <p class="mt-2 text-sm text-slate-600">Download structured data as Excel, CSV, or JSON and continue with charts.</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
-  <script src="js/utils.js" defer></script>
-  <script src="js/statistics.js" defer></script>
-  <script src="js/trading.js" defer></script>
-  <script src="js/pricefeed.js" defer></script>
-  <script src="js/parser.js" defer></script>
-  <script src="js/ui.js" defer></script>
-  <script src="js/export.js" defer></script>
-  <script src="js/app.js" defer></script>
+      <section id="kontoauszug-anleitung" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="space-y-2">
+            <h2 class="text-xl font-semibold text-slate-900">Get the account statement in the Trade Republic app</h2>
+            <p class="text-sm text-slate-600">Follow the app steps, save the statement as PDF, and upload it above to convert.</p>
+          </div>
+          <div class="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-700">
+            <i data-feather="smartphone"></i>
+            5 steps
+          </div>
+        </div>
+        <ol class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <li class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-orange-600">1</span>
+              Open profile
+            </div>
+            <p class="text-sm text-slate-700">In the "Wealth" tab, tap your profile photo in the top right to access your personal area.</p>
+            <figure class="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <picture>
+                <source srcset="../IMG_7577.webp" type="image/webp">
+                <img src="../IMG_7577.PNG" loading="lazy" decoding="async" alt="Trade Republic Wealth view with highlighted profile button in the top right" class="h-auto w-full object-cover" width="1170" height="2532">
+              </picture>
+            </figure>
+          </li>
+          <li class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-orange-600">2</span>
+              Select the "Statements" section
+            </div>
+            <p class="text-sm text-slate-700">Scroll in your profile to "Statements" and tap the entry.</p>
+            <figure class="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <picture>
+                <source srcset="../IMG_7578.webp" type="image/webp">
+                <img src="../IMG_7578.PNG" loading="lazy" decoding="async" alt="Trade Republic app profile overview with the Statements menu item highlighted" class="h-auto w-full object-cover" width="1170" height="2532">
+              </picture>
+            </figure>
+          </li>
+          <li class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-orange-600">3</span>
+              Open the account statement
+            </div>
+            <p class="text-sm text-slate-700">In the document list, tap "Account statement".</p>
+            <figure class="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <picture>
+                <source srcset="../IMG_7579.webp" type="image/webp">
+                <img src="../IMG_7579.PNG" loading="lazy" decoding="async" alt="Statements list in the Trade Republic app with the Account statement item highlighted" class="h-auto w-full object-cover" width="1170" height="2532">
+              </picture>
+            </figure>
+          </li>
+          <li class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-orange-600">4</span>
+              Choose a time range
+            </div>
+            <p class="text-sm text-slate-700">Select a range (e.g., month, 3 or 6 months) or tap "..." for a custom range.</p>
+            <figure class="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <picture>
+                <source srcset="../IMG_7580.webp" type="image/webp">
+                <img src="../IMG_7580.PNG" loading="lazy" decoding="async" alt="Statement time range selection with Month, 3 Months, 6 Months and a custom range option" class="h-auto w-full object-cover" width="1170" height="2532">
+              </picture>
+            </figure>
+          </li>
+          <li class="flex flex-col gap-3 rounded-lg border border-slate-200 p-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-orange-600">5</span>
+              Set start and end date
+            </div>
+            <p class="text-sm text-slate-700">Choose the desired range and tap "Next" to get the PDF statement, then export it here.</p>
+            <figure class="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+              <picture>
+                <source srcset="../IMG_7581.webp" type="image/webp">
+                <img src="../IMG_7581.PNG" loading="lazy" decoding="async" alt="Custom date range selection for statements with start and end date" class="h-auto w-full object-cover" width="1170" height="2532">
+              </picture>
+            </figure>
+          </li>
+        </ol>
+      </section>
+
+      <section id="workspace" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="space-y-4">
+          <div id="status" class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">Please choose a PDF - analysis starts automatically.</div>
+          <div id="out" class="space-y-10"></div>
+        </div>
+      </section>
+
+      <section id="why" class="grid gap-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:grid-cols-2 md:p-8">
+        <div class="space-y-4">
+          <h2 class="text-xl font-semibold text-slate-900">Why this converter?</h2>
+          <p class="text-sm text-slate-600">Optimized specifically for Trade Republic statements - from cash transactions to trading P&amp;L.</p>
+          <ul class="space-y-3 text-sm text-slate-700">
+            <li class="flex items-start gap-3">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-brand-700"><i data-feather="cpu"></i></span>
+              <span>Robust parser logic for the dynamic PDF layout, including plausibility checks.</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-brand-700"><i data-feather="table"></i></span>
+              <span>Clean column names, euro formats, and clear data types for immediate analysis.</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-brand-700"><i data-feather="activity"></i></span>
+              <span>Interactive visualizations for cashflows, interest, and performance.</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-100 text-brand-700"><i data-feather="download"></i></span>
+              <span>Use it as often as you like - no limits, no tracking, no hidden costs.</span>
+            </li>
+          </ul>
+        </div>
+        <div class="space-y-4 rounded-xl border border-slate-100 bg-slate-50 p-6">
+          <h3 class="text-base font-semibold text-slate-900">What data is detected?</h3>
+          <ul class="space-y-2 text-sm text-slate-700">
+            <li><strong>Cash transactions:</strong> date, type, description, inflows, outflows, balances</li>
+            <li><strong>Money market funds:</strong> fund name, ISIN, quantity, price, amounts</li>
+            <li><strong>Trading P&amp;L:</strong> buys, sells, and realized gains/losses</li>
+            <li><strong>Transfers:</strong> deposits, withdrawals, and references</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="details" class="space-y-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="space-y-3">
+          <h2 id="csv-export" class="text-xl font-semibold text-slate-900">Trade Republic CSV export - overview</h2>
+          <p class="text-sm text-slate-700">The converter turns your PDF statements into structured tables. Processing runs entirely in your browser - you can review the code anytime or use the page offline.</p>
+        </div>
+        <div class="grid gap-6 md:grid-cols-2">
+          <div class="space-y-3">
+            <h3 id="transaktionen-exportieren" class="text-base font-semibold text-slate-900">Export transactions</h3>
+            <p class="text-sm text-slate-700">Capture all movements in your Trade Republic account: cash, interest, savings plans, and securities trading.</p>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li>Save all activity as CSV or Excel</li>
+              <li>Prepare statement data for taxes or budget tracking</li>
+              <li>Track cashflows and portfolio movements transparently</li>
+            </ul>
+          </div>
+          <div class="space-y-3">
+            <h3 id="excel-export" class="text-base font-semibold text-slate-900">Excel export for analysis</h3>
+            <p class="text-sm text-slate-700">Use pivot tables, charts, or your own dashboards. All files work instantly in Excel, Google Sheets, or BI tools.</p>
+            <ul class="space-y-2 text-sm text-slate-700">
+              <li>Clean columns and data types</li>
+              <li>Direct processing in your favorite tool</li>
+              <li>Optional JSON for automated workflows</li>
+            </ul>
+          </div>
+        </div>
+        <div class="grid gap-6 md:grid-cols-2">
+          <div class="space-y-3">
+            <h3 class="text-base font-semibold text-slate-900">Why export?</h3>
+            <p class="text-sm text-slate-700">Trade Republic provides statements only as PDF. For tax filings, financial planning, or performance tracking, table formats are far more efficient - especially if you combine multiple statements.</p>
+          </div>
+          <div class="space-y-3">
+            <h3 class="text-base font-semibold text-slate-900">Trading P&amp;L included</h3>
+            <p class="text-sm text-slate-700">The trading module shows realized gains and losses. If you optionally upload your portfolio PDF, you also get current values and unrealized P&amp;L.</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <h3 class="text-base font-semibold text-slate-900">Feedback welcome</h3>
+          <p class="text-sm text-slate-700">Want a new feature or need support for other brokers? Reach out via <a href="https://jonathanpagel.com" target="_blank" rel="noopener" class="text-slate-900 underline underline-offset-2">jonathanpagel.com</a>.</p>
+        </div>
+      </section>
+
+      <section id="faq-section" class="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="space-y-2">
+          <h2 class="text-xl font-semibold text-slate-900">Frequently asked questions</h2>
+          <p class="text-sm text-slate-600">Short answers to the most important topics around Trade Republic export.</p>
+        </div>
+        <div class="space-y-3">
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              How do I export my Trade Republic transactions?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">Choose your statement, wait for the automatic scan, and then use the export button for CSV, Excel, or JSON. You do not need to install or upload anything.</p>
+          </details>
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              Can I get the Trade Republic statement on the web or PC?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">No. Statements are only available in the mobile app. Trade Republic kontoauszug PC access is not available. Download the PDF there and then convert it here.</p>
+          </details>
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              Does the tool work with older statements?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">Yes, the PDF layout is detected automatically. You can process multiple documents in a row to build full-year overviews.</p>
+          </details>
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              Which formats are available?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">You get CSV, Excel (XLSX), and JSON. Choose the format that fits your workflow - all options are free.</p>
+          </details>
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              Is the export really secure?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">Yes. All data stays in your browser. You can even turn off Wi-Fi after the page loads - conversion works completely offline.</p>
+          </details>
+          <details class="group rounded-lg border border-slate-200 bg-slate-50 p-5 [&_summary]:cursor-pointer">
+            <summary class="flex items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+              Are there any costs?
+              <i data-feather="chevron-down" class="text-slate-400 transition duration-200 group-open:rotate-180"></i>
+            </summary>
+            <p class="mt-3 text-sm text-slate-700">The export is permanently free. If the tool helps you, you can optionally donate in the support section.</p>
+          </details>
+        </div>
+      </section>
+
+      <section id="support" class="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <div class="space-y-2">
+          <h2 class="text-xl font-semibold text-slate-900">Support &amp; Updates</h2>
+          <p class="text-sm text-slate-600">I continuously improve the converter - from new parsers to banking automation.</p>
+        </div>
+        
+        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-6">
+          <h3 class="flex items-center gap-2 text-base font-semibold text-emerald-900">
+            <i data-feather="check-circle" class="text-emerald-600"></i>
+            Latest bug fixes (last 2 months)
+          </h3>
+          <ul class="mt-4 space-y-2 text-sm text-emerald-900">
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Descriptions with trailing "null" are now cleaned up automatically</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Dates across 3 lines are now detected correctly</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Last page is fully captured</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Italian now works flawlessly</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>English is fully supported</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Fix: English split headers "MONEY IN / MONEY OUT" are now detected correctly</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <i data-feather="check" class="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600"></i>
+              <span>Fix: Currency values in EU and US formats (e.g. 1.234,56 and 1,234.56) are now parsed correctly</span>
+            </li>
+          </ul>
+        </div>
+        
+        <div class="grid gap-6 md:grid-cols-2">
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+            <h3 class="text-base font-semibold text-slate-900">Beta for banking automation</h3>
+            <p class="mt-3 text-sm text-slate-700">I am building a web app, an Excel add-in, and a Google Sheets add-on that fetch transactions from many European banks hourly - including visualizations, pivots, and automations.</p>
+            <p class="mt-2 text-sm text-slate-700">Sounds interesting? Join the beta.</p>
+            <a href="https://forms.gle/cmrXaqDZd2pZFdau6" target="_blank" rel="noopener" class="mt-4 inline-flex items-center justify-center rounded-md border border-transparent bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">Join the beta</a>
+          </div>
+          <details id="donation-section" class="results-donation group overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm" open>
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-6 py-4 text-left text-sm font-semibold text-slate-900">
+              <span>Support the project</span>
+              <span class="text-xs font-normal text-slate-500">Help with hosting &amp; development</span>
+            </summary>
+            <div class="border-t border-slate-200 bg-white px-6 py-5 text-sm text-slate-700 space-y-4">
+              <p>If the tool helps you, I appreciate a contribution to ongoing costs.</p>
+              
+              <div class="space-y-3">
+                <div>
+                  <p class="font-semibold text-slate-900">Bank transfer</p>
+                  <p class="mt-1">IBAN: DE46100110012996618337 · N26 · Jonathan Pagel</p>
+                </div>
+                
+                <div>
+                  <p class="font-semibold text-slate-900">PayPal</p>
+                  <p class="mt-1">
+                    <a href="https://www.paypal.com/paypalme/jcmpagel" target="_blank" rel="noopener" class="text-brand-600 hover:text-brand-700 underline">paypal.me/jcmpagel</a> or <a href="/cdn-cgi/l/email-protection#aac0c9c7dacbcdcfc6eacdc7cbc3c684c9c5c7" class="text-brand-600 hover:text-brand-700 underline"><span class="__cf_email__" data-cfemail="68020b0518090f0d04280f05090104460b0705">[email&#160;protected]</span></a>
+                  </p>
+                </div>
+                
+                <div class="pt-2">
+                  <p class="font-semibold text-slate-900">Credit card (Stripe)</p>
+                  <p class="mt-1 mb-3 text-slate-600">Secure payment by credit card - your data stays with Stripe.</p>
+                  <div class="w-full max-w-xs">
+                    <stripe-buy-button
+                      buy-button-id="buy_btn_1SAFTYLeVNsm3uzhDFVFFIDC"
+                      publishable-key="pk_live_51Q6DYuLeVNsm3uzhnS4snqrEuRASQEL6ftPyEVx1GifDoGj1D0yHWIzquqHmkfWPt224KfERBdMER6GIGH7DYKBz004QstZ3nh"
+                    ></stripe-buy-button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section id="seo-content" class="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+        <article id="info" class="prose prose-slate max-w-none">
+        <h2 id="csv-export">Trade Republic CSV export - how it works</h2>
+            <p>
+              Our free <strong>Trade Republic CSV export</strong> converter turns your PDF account statements into Excel, CSV, or JSON in just a few clicks.
+              The entire process runs directly in your browser - no cloud uploads, no data sharing, no signup required.
+              If you're looking for <strong>trade republic pdf to csv</strong>, this is exactly what the tool delivers.
+            </p>
+
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm space-y-4">
+              <h2 id="transaktionen-exportieren">Export Trade Republic transactions - all options</h2>
+              <p>With our tool you can <strong>export Trade Republic transactions</strong> and your account activity. Whether you need a <strong>CSV export</strong> or <strong>Excel export</strong>, the converter supports all common formats for your financial analysis.</p>
+      
+              <h3>Which data can I export?</h3>
+              <ul>
+                <li><strong>All transactions</strong> as CSV or Excel</li>
+                <li><strong>Income and expenses</strong> in a structured export</li>
+                <li><strong>Statement data</strong> prepared for tax advisors</li>
+                <li><strong>Portfolio movements</strong> analyzed in detail</li>
+                <li><strong>Money market fund activity</strong> evaluated separately</li>
+              </ul>
+              </div>
+            <h2 id="excel-export">Trade Republic Excel export - professional financial analysis</h2>
+            <p>
+              The <strong>Trade Republic Excel export</strong> is ideal for anyone who wants to analyze financial data professionally.
+              Trade Republic does not provide a direct export of your transactions into tabular formats.
+              For financial planning, tax filings, or portfolio analysis, Excel and CSV files are often essential.
+              That is where our converter comes in.
+            </p>
+
+            <h3>Why export Trade Republic data?</h3>
+            <ul>
+              <li><strong>Optimize tax advice:</strong> Structured data for efficient processing</li>
+              <li><strong>Portfolio analysis:</strong> Detailed evaluation of your investments</li>
+              <li><strong>Categorize spending:</strong> Better overview of inflows and outflows</li>
+              <li><strong>Keep a household budget:</strong> Integrate into your overall financial planning</li>
+            </ul>
+
+            <h2 id="anleitung">Guide: export Trade Republic transactions</h2>
+            <p>
+              <strong>Exporting Trade Republic activity</strong> has never been easier. Follow this step-by-step guide:
+            </p>
+
+            <h3>How the converter works - in three simple steps:</h3>
+            <ol>
+              <li><strong>Choose PDF (no upload required)</strong> - select your Trade Republic statement as a PDF (all data stays local in your browser)</li>
+              <li><strong>Analyze</strong> - with one click, all transaction data is extracted and structured automatically</li>
+              <li><strong>Export</strong> - save the results as Excel, CSV, or JSON on your device</li>
+            </ol>
+
+            <h2>How to find your Trade Republic account statement</h2>
+            <p>
+              You can easily download the statement in the Trade Republic app:
+            </p>
+            <ol>
+              <li>Open the Trade Republic app on your smartphone</li>
+              <li>Tap your profile icon in the bottom right (or the "Profile" menu item)</li>
+              <li>Scroll down to the "Documents" or "More" section</li>
+              <li>Tap "Statements" or "Account statements"</li>
+              <li>Select the desired time range and download the PDF</li>
+              <li>Transfer the PDF to your computer or use the tool directly on your mobile device</li>
+            </ol>
+
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-5 space-y-3">
+              <h3>What makes this Trade Republic export converter special?</h3>
+              <ul>
+                <li><strong>100% local processing:</strong> Your sensitive financial data never leaves your browser</li>
+                <li><strong>Intelligent extraction:</strong> Detects both cash transactions and money market fund activity</li>
+                <li><strong>No registration:</strong> No accounts, no email address, no user profiles - just use it</li>
+                <li><strong>Multiple export formats:</strong> CSV export, Excel export, or JSON - ideal for different use cases</li>
+                <li><strong>Clear visualization:</strong> Clean charts give you an instant overview of your financial movements</li>
+                <li><strong>Transparent and free:</strong> No hidden fees, no ads, no usage limits</li>
+              </ul>
+            </div>
+
+            <h2>Benefits of export for your financial management</h2>
+            <p>
+              With the exported data from the <strong>Trade Republic CSV export</strong> you can do much more than with a static PDF:
+            </p>
+            <ul>
+              <li><strong>Optimize tax advice:</strong> Provide your tax advisor with structured data for faster processing</li>
+              <li><strong>Run portfolio analysis:</strong> Import transactions into analysis tools for deeper insights</li>
+              <li><strong>Export expenses:</strong> Sort and group inflows and outflows by your own criteria</li>
+              <li><strong>Create your own reports:</strong> Use Excel formulas and pivot tables for custom reporting</li>
+              <li><strong>Keep a household budget:</strong> Integrate Trade Republic transactions into your overall planning</li>
+            </ul>
+
+            <h2>Supported data formats for Trade Republic export</h2>
+            <p>
+              The converter extracts all key information from your Trade Republic statements:
+            </p>
+            <ul>
+              <li><strong>Cash transactions:</strong> date, transaction type, description, inflow, outflow, balance</li>
+              <li><strong>Money market funds (MMF):</strong> date, transaction type, fund name, ISIN, quantity, price, amount</li>
+              <li><strong>Securities trading:</strong> buy and sell details with product identifier and amounts</li>
+              <li><strong>Deposits and withdrawals:</strong> all transfers with full reference information</li>
+            </ul>
+
+            <h2>Feedback and support</h2>
+            <p>
+              If you run into problems,
+              have suggestions, or want the tool adapted for other brokers,
+              contact me via <a href="https://jonathanpagel.com" target="_blank">jonathanpagel.com</a>. I would also appreciate a coffee: <a href="https://jonathanpagel.com/donate/" target="_blank">buy me a coffee</a>.
+            </p>
+
+            <h2 id="faq">Frequently asked questions - Trade Republic export</h2>
+
+            <h3>How can I export Trade Republic transactions?</h3>
+            <p>
+              Upload your PDF statement and click "Extract transactions". All transactions are detected automatically and can be exported as CSV or Excel. The entire <strong>Trade Republic export</strong> process takes only a few seconds.
+            </p>
+
+            <h3>Can I export my Trade Republic activity?</h3>
+            <p>
+              Yes, the converter detects all income and expenses from your statement and prepares them for export. You can export individual transactions or all activity.
+            </p>
+
+            <h3>Which formats does the Trade Republic CSV export support?</h3>
+            <p>
+              The converter supports <strong>CSV export</strong>, <strong>Excel export</strong> (XLSX), and JSON. All formats are compatible with common analysis tools and spreadsheets.
+            </p>
+
+            <h3>Is the tool really completely free?</h3>
+            <p>
+              Yes, usage is 100% free with no restrictions. There is no premium version or hidden features for the <strong>Trade Republic export</strong>.
+            </p>
+
+            <h3>Is it safe to upload my statements?</h3>
+            <p>
+              Absolutely. All processing happens locally in your browser. The PDFs and their content are never transmitted to a server.
+              You can even inspect the source code of this page. Or just turn off Wi-Fi, upload the statement, and convert it - once the page is loaded, it does not need the internet.
+            </p>
+
+            <h3>Can I convert historical statements as well?</h3>
+            <p>
+              Yes, the tool works with all <strong>Trade Republic statements</strong>, regardless of date. You can even upload multiple Trade Republic PDF statements in a row to <strong>convert</strong> them to <strong>Excel</strong> or <strong>CSV</strong> and <strong>export</strong> them.
+            </p>
+
+            <h3>Can I export all Trade Republic transactions at once?</h3>
+            <p>
+              Yes, if you have multiple statements you can process them one after another and export all transactions. The tool automatically detects all movements in your account.
+            </p>
+
+            <h3>Does the tool support converting other PDFs besides Trade Republic?</h3>
+            <p>
+              No, this converter is optimized specifically for <strong>converting</strong> Trade Republic statements to <strong>Excel</strong> and <strong>CSV</strong> and currently only supports exporting data from Trade Republic PDFs.
+            </p>
+
+            <h3>Do I need to download the Trade Republic Excel/CSV export?</h3>
+            <p>
+              The data extracted from your Trade Republic statement is displayed in a clear table on this page.
+              For further processing, we recommend exporting as Excel, CSV, or JSON.
+            </p>
+
+            <h3>Can I export my Trade Republic expenses?</h3>
+            <p>
+              Yes, all expenses and income are captured during export. You can export your Trade Republic expenses and analyze them further in Excel or other programs.
+            </p>
+        </article>
+      </section>
+    </main>
+
+
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto max-w-6xl px-6 py-6 text-center text-sm text-slate-500">
+        <a href="https://jonathanpagel.com/privacy-policy/" target="_blank" class="hover:text-slate-700">Privacy Policy</a>
+        <span class="mx-2 text-slate-300">•</span>
+        <a href="https://jonathanpagel.com/impressum/" target="_blank" class="hover:text-slate-700">Imprint (Impressum)</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- JavaScript Modules -->
+    <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+    <script async src="https://js.stripe.com/v3/buy-button.js"></script>
+  <script src="../js/vendor/xlsx.full.min.js" defer></script>
+  <script src="../js/utils.js" defer></script>
+  <script src="../js/statistics.js" defer></script>
+  <script src="../js/trading.js" defer></script>
+  <script src="../js/parser.js" defer></script>
+  <script src="../js/ui.js" defer></script>
+  <script src="../js/export.js" defer></script>
+  <script src="../js/app.js" defer></script>
+
+  <!-- Initialize Feather Icons -->
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const runBtn = document.getElementById('run');
-      if (runBtn && typeof runAnalysis === 'function') {
-        runBtn.addEventListener('click', () => runAnalysis());
+    let umamiSessionInitialized = false;
+
+    async function waitForUmami(maxWaitMs = 7000, intervalMs = 100) {
+      const start = Date.now();
+      while (Date.now() - start < maxWaitMs) {
+        if (
+          window.umami &&
+          typeof window.umami.identify === 'function' &&
+          typeof window.umami.track === 'function'
+        ) {
+          return window.umami;
+        }
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
       }
+      return null;
+    }
+
+    async function initUmamiSession() {
+      if (umamiSessionInitialized) return;
+      umamiSessionInitialized = true;
+
+      const umami = await waitForUmami();
+      if (!umami) return;
+
+      let asn = 'unknown';
+      let asOrganization = 'unknown';
+
+      try {
+        const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        if (!isLocalhost) {
+          const response = await fetch('/api/asn', { cache: 'no-store' });
+          if (response.ok) {
+            const data = await response.json();
+            if (Number.isFinite(data.asn)) {
+              asn = String(data.asn);
+            }
+            if (typeof data.asOrganization === 'string' && data.asOrganization.trim()) {
+              asOrganization = data.asOrganization.trim();
+            }
+          }
+        }
+      } catch (err) {}
+
+      try {
+        umami.identify({ asn, asOrganization });
+      } catch (err) {}
+
+      try {
+        umami.track();
+      } catch (err) {}
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      void initUmamiSession();
+
       if (typeof feather !== 'undefined') {
         feather.replace();
       }
+
+      const menuToggle = document.querySelector('[data-mobile-menu-toggle]');
+      const mobileNav = document.getElementById('mobile-nav');
+      if (menuToggle && mobileNav) {
+        menuToggle.addEventListener('click', () => {
+          const isHidden = mobileNav.classList.toggle('hidden');
+          menuToggle.setAttribute('aria-expanded', String(!isHidden));
+          if (!isHidden && typeof feather !== 'undefined') {
+            feather.replace();
+          }
+        });
+
+        mobileNav.querySelectorAll('a[href^="#"]').forEach(link => {
+          link.addEventListener('click', () => {
+            mobileNav.classList.add('hidden');
+            menuToggle.setAttribute('aria-expanded', 'false');
+          });
+        });
+      }
     });
+    function openFilePicker(source) {
+      const fileInput = document.getElementById('file');
+      if (!fileInput) return;
+      if (window.umami && typeof window.umami.track === 'function') {
+        try {
+          window.umami.track('upload_dialog_open', { location: source || 'unknown' });
+        } catch (err) {}
+      }
+      fileInput.click();
+      const uploadZone = document.getElementById('upload-zone');
+      if (uploadZone) {
+        const header = document.querySelector('header');
+        const offset = header ? header.offsetHeight + 16 : 0;
+        const top = uploadZone.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({ top, behavior: 'smooth' });
+      }
+    }
+    function focusDonationView() {
+      const resultsDonation = document.querySelector('.results-donation');
+      if (resultsDonation) {
+        resultsDonation.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        resultsDonation.classList.add('ring-2', 'ring-slate-300');
+        setTimeout(() => resultsDonation.classList.remove('ring-2', 'ring-slate-300'), 1500);
+        return;
+      }
+      const donationDetails = document.getElementById('donation-section');
+      if (donationDetails) {
+        donationDetails.open = true;
+        donationDetails.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+    
+    // Add title to Stripe iframe for accessibility
+    function addStripeTitles() {
+      document.querySelectorAll('stripe-buy-button iframe').forEach(iframe => {
+        if (!iframe.title) {
+          iframe.title = 'Stripe payment button';
+        }
+      });
+    }
+    // Run after Stripe loads its iframes
+    setTimeout(addStripeTitles, 2000);
+    window.addEventListener('load', () => setTimeout(addStripeTitles, 1000));
   </script>
 </body>
 </html>

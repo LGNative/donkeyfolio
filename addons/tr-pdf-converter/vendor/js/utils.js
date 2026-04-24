@@ -15,34 +15,87 @@ const strip = (s = "") =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
+const normalizeMonthKey = (value = "") =>
+  strip(value)
+    .replace(/\.$/, "")
+    .toLowerCase();
+
 const month = {
   // German
-  Jan: 0, Januar: 0,
-  Feb: 1, Februar: 1,
-  Mär: 2, März: 2, Mrz: 2, Marz: 2,
-  Apr: 3, April: 3,
-  Mai: 4,
-  Jun: 5, Juni: 5,
-  Jul: 6, Juli: 6,
-  Aug: 7, August: 7,
-  Sep: 8, Sept: 8, September: 8,
-  Okt: 9, Oktober: 9,
-  Nov: 10, November: 10,
-  Dez: 11, Dezember: 11,
+  jan: 0, januar: 0,
+  feb: 1, februar: 1,
+  mar: 2, mär: 2, maerz: 2, marz: 2, mrz: 2, maer: 2,
+  apr: 3, april: 3,
+  mai: 4,
+  jun: 5, juni: 5,
+  jul: 6, juli: 6,
+  aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8,
+  okt: 9, oct: 9, oktober: 9,
+  nov: 10, november: 10,
+  dez: 11, dezember: 11,
   // Italian (abbrev and full)
-  Gen: 0, Gennaio: 0,
-  Febb: 1, Febbraio: 1, Feb: 1,
-  Mar: 2, Marzo: 2,
-  Aprile: 3, Apr: 3,
-  Mag: 4, Maggio: 4,
-  Giu: 5, Giugno: 5,
-  Lug: 6, Luglio: 6,
-  Ago: 7, Agosto: 7,
-  Set: 8, Sett: 8, Settembre: 8,
-  Ott: 9, Ottobre: 9,
-  Nov: 10, Novembre: 10,
-  Dic: 11, Dicembre: 11,
+  gen: 0, gennaio: 0,
+  febb: 1, febbraio: 1,
+  marzo: 2,
+  aprile: 3,
+  mag: 4, maggio: 4,
+  giu: 5, giugno: 5,
+  lug: 6, luglio: 6,
+  ago: 7, agosto: 7,
+  set: 8, sett: 8, settembre: 8,
+  ott: 9, ottobre: 9,
+  dicembre: 11, dic: 11,
+  // English
+  january: 0,
+  february: 1,
+  march: 2,
+  may: 4,
+  june: 5,
+  july: 6,
+  october: 9,
+  december: 11,
+  // French
+  janvier: 0, janv: 0,
+  fevrier: 1, fevr: 1, fev: 1,
+  mars: 2,
+  avril: 3,
+  juin: 5,
+  juillet: 6, juil: 6,
+  aout: 7,
+  octobre: 9,
+  novembre: 10,
+  decembre: 11, dec: 11,
+  // Spanish
+  ene: 0, enero: 0,
+  febrero: 1,
+  abr: 3,
+  mayo: 4,
+  junio: 5,
+  julio: 6,
+  agosto: 7,
+  septiembre: 8,
+  octubre: 9,
+  noviembre: 10,
+  dic: 11, diciembre: 11,
 };
+
+function getMonthIndex(value) {
+  const normalized = normalizeMonthKey(value);
+  if (!normalized) return null;
+  return Object.prototype.hasOwnProperty.call(month, normalized) ? month[normalized] : null;
+}
+
+function parseStatementDate(dateStr) {
+  const match = String(dateStr || '').match(/(\d{1,2})\s+([^\s.]+)\.?\s+(\d{4})/);
+  if (!match) return null;
+
+  const [, day, monthName, year] = match;
+  const monthIndex = getMonthIndex(monthName);
+  if (monthIndex == null) return null;
+
+  return new Date(parseInt(year, 10), monthIndex, parseInt(day, 10));
+}
 
 // Debug toggle functionality (kept for backwards compatibility)
 const dbgToggle = $("dbg");
@@ -67,12 +120,48 @@ const moneyKeys = [
   "saldo",
   "kurs",
   "betrag",
-  "pricePerUnit",
-  "marketValueEUR",
 ];
 
 /* ===================== PDF.js Init ===================== */
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js";
+function resolvePdfWorkerPath() {
+  try {
+    // Build worker URL relative to this script file so it works for:
+    // - production root (/js/...)
+    // - language routes (/en/ -> ../js/...)
+    // - local subfolder hosting (/traderepublic/js/...)
+    if (document.currentScript && document.currentScript.src) {
+      return new URL('vendor/pdf.worker.min.js', document.currentScript.src).toString();
+    }
+  } catch (_) {}
+
+  // Fallback if currentScript is unavailable for any reason.
+  return new URL('js/vendor/pdf.worker.min.js', window.location.origin + '/').toString();
+}
+
+const pdfWorkerPath = resolvePdfWorkerPath();
+let pdfWorkerBlobUrl = null;
+const pdfWorkerReady = (async () => {
+  if (!window.pdfjsLib) return false;
+  try {
+    const res = await fetch(pdfWorkerPath, { cache: "force-cache" });
+    if (!res.ok) throw new Error(`Worker fetch failed: ${res.status}`);
+    const blob = await res.blob();
+    pdfWorkerBlobUrl = URL.createObjectURL(blob);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerBlobUrl;
+    return true;
+  } catch (err) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerPath;
+    console.warn("PDF worker preload failed, falling back to path.", err);
+    return false;
+  }
+})();
+
+function ensurePdfWorkerReady() {
+  return pdfWorkerReady;
+}
+
+window.ensurePdfWorkerReady = ensurePdfWorkerReady;
+window.parseStatementDate = parseStatementDate;
 
 /* ===================== PDF Processing Functions ===================== */
 async function items(pn) {

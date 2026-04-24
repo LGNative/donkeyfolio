@@ -214,26 +214,57 @@ function enrichTradingDataWithSecurities(tradingData, securities) {
 
 function parseTradingTransactions(cashTransactions) {
   const tradingTxs = [];
+
+  const normalizeTradeText = (value = '') => strip(String(value || '')).toLowerCase();
+  const isTradingType = (value) => {
+    const normalized = normalizeTradeText(value);
+    return normalized === 'handel' || normalized === 'operar' || normalized === 'trade';
+  };
+  const parseTradeDetails = (description) => {
+    const desc = String(description || '').replace(/\s+/g, ' ').trim();
+    const isinMatch = desc.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/);
+    if (!isinMatch) return null;
+
+    const actionMatch = desc.match(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta)\b/i);
+    if (!actionMatch) return null;
+
+    const rawAction = normalizeTradeText(actionMatch[1]);
+    const isBuy = rawAction === 'kauf' || rawAction === 'buy' || rawAction === 'compra';
+    const tradeIdMatch = desc.match(/(\d+)\s*$/);
+    const isin = isinMatch[1];
+
+    let stockName = (desc.split(isin)[1] || '').trim();
+    if (tradeIdMatch) {
+      stockName = stockName.replace(new RegExp(`\\s+${tradeIdMatch[1]}\\s*$`), '');
+    }
+    stockName = stockName
+      .replace(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta)\b/gi, ' ')
+      .replace(/\b(quantity|cantidad)\s*:\s*[\d.,]+\b.*$/i, '')
+      .replace(/^[-–\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      isin,
+      action: isBuy ? 'Kauf' : 'Verkauf',
+      isBuy,
+      stockName,
+      tradeId: tradeIdMatch ? tradeIdMatch[1] : ''
+    };
+  };
   
   cashTransactions.forEach(tx => {
-    if (tx.type !== 'Handel') return;
+    if (!isTradingType(tx.type)) return;
     
     const desc = tx.description || '';
-    
-    // Extract trading information from description
-    // Pattern: "Ausführung Handel Direktkauf Kauf/Verkauf [ISIN] [STOCK NAME] [ID]"
-    const tradeMatch = desc.match(/Ausführung Handel Direkt(kauf|verkauf)\s+(Kauf|Verkauf)\s+([A-Z0-9]{12})\s+(.+?)\s+(\d+)$/);
-    
-    if (!tradeMatch) return;
-    
-    const [, , action, isin, stockName, tradeId] = tradeMatch;
-    const isBuy = action === 'Kauf';
+    const trade = parseTradeDetails(desc);
+    if (!trade) return;
     
     // Parse amount - incoming for sells, outgoing for buys
     let amount = 0;
-    if (isBuy && tx.outgoing) {
+    if (trade.isBuy && tx.outgoing) {
       amount = parseFloat(tx.outgoing.replace(/\./g, '').replace(',', '.').replace('€', '').trim()) || 0;
-    } else if (!isBuy && tx.incoming) {
+    } else if (!trade.isBuy && tx.incoming) {
       amount = parseFloat(tx.incoming.replace(/\./g, '').replace(',', '.').replace('€', '').trim()) || 0;
     }
     
@@ -241,12 +272,12 @@ function parseTradingTransactions(cashTransactions) {
     
     tradingTxs.push({
       date: tx.date,
-      isin,
-      stockName: stockName.trim(),
-      action,
-      isBuy,
+      isin: trade.isin,
+      stockName: trade.stockName,
+      action: trade.action,
+      isBuy: trade.isBuy,
       amount,
-      tradeId,
+      tradeId: trade.tradeId,
       balance: tx.balance
     });
   });
@@ -364,6 +395,11 @@ function calculatePnL(tradingTransactions) {
 }
 
 function parseGermanDate(dateStr) {
+  if (typeof parseStatementDate === 'function') {
+    const parsed = parseStatementDate(dateStr);
+    if (parsed) return parsed;
+  }
+
   // Parse dates like "04 März 2021"
   const months = {
     'Januar': 0, 'Februar': 1, 'März': 2, 'April': 3, 'Mai': 4, 'Juni': 5,

@@ -22,8 +22,6 @@ function createTabNavigationWithTrading(configOrCash, mmfComponent, tradingCompo
     cash,
     charts,
     mmf,
-    portfolio,
-    crypto,
     trading,
     support,
     onChartsActivate
@@ -35,10 +33,8 @@ function createTabNavigationWithTrading(configOrCash, mmfComponent, tradingCompo
     { label: 'Cash-Transaktionen', content: cash },
     { label: 'Diagramme', content: charts, onActivate: onChartsActivate },
     { label: 'Geldmarktfonds', content: mmf },
-    { label: 'Portfolio', content: portfolio },
-    { label: 'Crypto', content: crypto },
     { label: 'Trading P&L (Beta)', content: trading },
-    { label: 'Ergebnisübersicht', content: support }
+    { label: 'Support & Spenden', content: support }
   ].filter(def => def && def.content);
 
   if (tabDefinitions.length === 0) return null;
@@ -229,7 +225,7 @@ function renderTradingComponent(tradingData, tradingTransactions) {
 function renderComponent(title, rows, prefix, options = {}) {
   const container = document.createElement('div');
   container.className = 'space-y-4';
-  container.appendChild(buttonBar(rows, prefix));
+  container.appendChild(buttonBar(rows, prefix, { showLexware: prefix === 'cash' }));
   
   // Simplified statistics for this table
   const detailStats = document.createElement('div');
@@ -252,30 +248,82 @@ function renderComponent(title, rows, prefix, options = {}) {
   return container;
 }
 
-function renderSupportComponent({ cashCount = 0, mmfCount = 0, portfolioCount = 0, cryptoCount = 0, tradingCount = 0, failedChecks = 0 } = {}) {
+function renderSupportComponent({ cashCount = 0, mmfCount = 0, tradingCount = 0, failedChecks = 0 } = {}) {
   const container = document.createElement('div');
   container.className = 'space-y-6';
 
   const summary = document.createElement('div');
-  summary.className = 'rounded-xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-700';
-  const total = cashCount + mmfCount + portfolioCount + cryptoCount + tradingCount;
+  summary.className = 'rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-900';
+  const total = cashCount + mmfCount + tradingCount;
   summary.innerHTML = `
-    <h3 class="text-base font-semibold text-slate-900">Analyse abgeschlossen</h3>
+    <h3 class="text-base font-semibold text-emerald-700">Konvertierung abgeschlossen</h3>
     <p class="mt-2 leading-relaxed">Es wurden <strong>${total}</strong> Datensätze erkannt${
       failedChecks > 0
         ? ` – bitte prüfe <strong>${failedChecks}</strong> markierte Salden in den Tabellen.`
-        : '.'
-    } Du kannst die Daten jederzeit erneut exportieren oder weitere PDFs verarbeiten.</p>
+        : ' und alle Salden sind konsistent.'
+    } Lade deine Dateien über die Buttons in den Tabs herunter oder exportiere sie mehrmals für weitere PDFs.</p>
   `;
   container.appendChild(summary);
 
-  const info = document.createElement('div');
-  info.className = 'rounded-xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-700';
-  info.innerHTML = `
-    <p>Diese Open-Source-Version enthält ausschließlich die Kernfunktionen zum Hochladen, Analysieren und Exportieren deiner Kontoauszüge. Alle Verarbeitungsschritte laufen lokal in deinem Browser.</p>
-    <p class="mt-2">Forke das Projekt, passe es an eigene Workflows an oder erweitere die Exportformate nach Bedarf.</p>
+  const actions = document.createElement('div');
+  actions.className = 'flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm text-sm text-slate-700 md:flex-row md:items-center md:justify-between';
+  actions.innerHTML = `
+    <div class="space-y-1">
+      <h4 class="text-base font-semibold text-slate-900">Feedback &amp; Beta</h4>
+      <p>Hilf mit, neue Features zu testen oder schick mir deine Ideen.</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="mailto:jcmpagel@gmail.com?subject=Feedback%20zum%20Trade%20Republic%20Konverter" class="${BUTTON_BASE_CLASSES}">Feedback senden</a>
+      <a href="https://forms.gle/cmrXaqDZd2pZFdau6" target="_blank" rel="noopener" class="${BUTTON_PRIMARY_CLASSES}">Beta testen</a>
+    </div>
   `;
-  container.appendChild(info);
+  container.appendChild(actions);
+
+  const lexwareHelp = document.createElement('div');
+  lexwareHelp.className = 'rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900';
+  lexwareHelp.innerHTML = `
+    <h4 class="text-base font-semibold text-amber-800">Lexware / FinanzManager Import</h4>
+    <p class="mt-2 leading-relaxed">Wenn der normale CSV-Export in FinanzManager scheitert, nutze im Cash-Tab den <strong>Lexware CSV (Beta)</strong>-Button. Die Datei ist headerlos, nutzt <code>dd.MM.yyyy</code> und enthält einen signierten Betrag statt getrennter Ein- und Ausgänge.</p>
+    <p class="mt-2 leading-relaxed">Falls dein Import trotzdem fehlschlägt, teste zuerst mit zwei Zeilen. Für manuelle Rettung im bestehenden CSV: Kopfzeile entfernen, Datum auf <code>dd.MM.yyyy</code> umstellen und Ein-/Ausgang in eine Betrags-Spalte zusammenführen.</p>
+  `;
+  container.appendChild(lexwareHelp);
+
+  const donationSection = document.createElement('section');
+  donationSection.className = 'results-donation rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition-shadow';
+  donationSection.innerHTML = `
+    <div class="space-y-5">
+      <header class="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <span class="text-base font-semibold text-slate-900">Projekt unterstützen</span>
+        <span class="text-xs uppercase tracking-wide text-slate-500">Spenden helfen beim Hosting &amp; der Weiterentwicklung</span>
+      </header>
+      <p class="text-sm text-slate-700">Wenn dir das Tool hilft, freue ich mich über einen Beitrag zu den laufenden Kosten.</p>
+      <div class="grid gap-4 md:grid-cols-3">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-500">Banküberweisung</p>
+          <ul class="mt-3 space-y-1 text-sm text-slate-700">
+            <li><strong>IBAN:</strong> DE46100110012996618337</li>
+            <li><strong>Bank:</strong> N26</li>
+            <li><strong>Empfänger:</strong> Jonathan Pagel</li>
+          </ul>
+        </div>
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-500">PayPal</p>
+          <p class="mt-3 break-all text-sm text-slate-700">jcmpagel@gmail.com</p>
+          <a href="https://www.paypal.com/paypalme/jcmpagel" target="_blank" rel="noopener" class="mt-4 inline-flex items-center justify-center rounded-md border border-transparent bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2">PayPal öffnen</a>
+        </div>
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-500">Stripe</p>
+          <p class="mt-3 text-sm text-slate-700">Kartenzahlung via Stripe:</p>
+          <stripe-buy-button
+            class="mt-4"
+            buy-button-id="buy_btn_1SAFTYLeVNsm3uzhDFVFFIDC"
+            publishable-key="pk_live_51Q6DYuLeVNsm3uzhnS4snqrEuRASQEL6ftPyEVx1GifDoGj1D0yHWIzquqHmkfWPt224KfERBdMER6GIGH7DYKBz004QstZ3nh"
+          ></stripe-buy-button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.appendChild(donationSection);
 
   return container;
 }
@@ -323,21 +371,39 @@ function makeTable(title, rows) {
   return wrapper;
 }
 
-function buttonBar(rows, name) {
+function buttonBar(rows, name, options = {}) {
   const bar = document.createElement('div');
-  bar.className = 'flex flex-wrap items-center gap-3';
+  bar.className = 'space-y-3';
+
+  const actions = document.createElement('div');
+  actions.className = 'flex flex-wrap items-center gap-3';
   
-  const mkBtn = (txt, cb) => {
+  const mkBtn = (txt, cb, primary = false) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = txt === 'CSV' ? `${BUTTON_PRIMARY_CLASSES}` : BUTTON_BASE_CLASSES;
+    b.className = primary ? `${BUTTON_PRIMARY_CLASSES}` : BUTTON_BASE_CLASSES;
     b.textContent = txt;
     b.onclick = cb;
-    bar.appendChild(b);
+    actions.appendChild(b);
   };
-  
-  mkBtn('CSV', () => csvDL(rows, name));
+
+  const showLexware = options.showLexware === true;
+
+  mkBtn('CSV', () => csvDL(rows, name), true);
+  if (showLexware) {
+    mkBtn('Lexware CSV (Beta)', () => lexwareCsvDL(rows, name));
+  }
   mkBtn('Excel', () => xlsxDL(rows, name));
   mkBtn('JSON', () => jsonDL(rows, name));
+
+  bar.appendChild(actions);
+
+  if (showLexware) {
+    const note = document.createElement('p');
+    note.className = 'rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900';
+    note.innerHTML = 'Der <strong>Lexware CSV (Beta)</strong>-Export ist nur für FinanzManager-Importe gedacht. Er lässt die normale CSV unverändert und liefert eine separate, headerlose Datei mit <code>dd.MM.yyyy</code>-Datum und einem signierten Betrag. Falls FinanzManager weiter meckert: zuerst mit zwei Testzeilen prüfen.';
+    bar.appendChild(note);
+  }
+
   return bar;
 } 

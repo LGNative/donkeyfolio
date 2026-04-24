@@ -53,25 +53,6 @@ function scrollToResultsSummary() {
   }
 }
 
-/* ===================== Initialize Debug Logging Early ===================== */
-// Initialize debug logging function before anything else runs
-if (typeof window.debugLog === 'undefined') {
-  window.debugLog = (message) => {
-    const t = new Date().toISOString().slice(11, 19);
-    const logLine = `[${t}] ${message}`;
-    console.log(logLine);
-    
-    const el = document.getElementById("debug");
-    if (el) {
-      // Escape HTML to prevent injection
-      const escaped = String(message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      el.innerHTML += `[${t}] ${escaped.replace(/\n/g, '<br>')}<br>`;
-      // Auto-scroll to bottom
-      el.scrollTop = el.scrollHeight;
-    }
-  };
-}
-
 /* ===================== File Handling ===================== */
 const processFile = (file) => {
   if (!file) {
@@ -81,18 +62,20 @@ const processFile = (file) => {
   applyRunButtonBase(true);
   $("status").textContent = "PDF wird geladen …";
   const reader = new FileReader();
-  reader.onload = (ev) => {
-    pdfjsLib.getDocument(new Uint8Array(ev.target.result)).promise
-      .then((doc) => {
-        pdf = doc;
-        applyRunButtonBase(false);
-        $("status").textContent = `${doc.numPages} Seiten geladen`;
-        runAnalysis();
-      })
-      .catch(err => {
-        $("status").textContent = "Fehler: " + err.message;
-        applyRunButtonBase(true);
-      });
+  reader.onload = async (ev) => {
+    try {
+      if (window.ensurePdfWorkerReady) {
+        await window.ensurePdfWorkerReady();
+      }
+      const doc = await pdfjsLib.getDocument(new Uint8Array(ev.target.result)).promise;
+      pdf = doc;
+      applyRunButtonBase(false);
+      $("status").textContent = `${doc.numPages} Seiten geladen`;
+      runAnalysis();
+    } catch (err) {
+      $("status").textContent = "Fehler: " + (err && err.message ? err.message : err);
+      applyRunButtonBase(true);
+    }
   };
   reader.readAsArrayBuffer(file);
 };
@@ -105,25 +88,8 @@ async function runAnalysis() {
   applyRunButtonProcessing();
   $("status").textContent = "Analysiere PDF …";
   const debugEl = $("debug");
-  // Initialize debug logging function early - writes to both console and UI
-  window.debugLog = (message) => {
-    const t = new Date().toISOString().slice(11, 19);
-    const logLine = `[${t}] ${message}`;
-    console.log(logLine);
-    
-    const el = $("debug");
-    if (el) {
-      // Escape HTML to prevent injection
-      const escaped = String(message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      el.innerHTML += `[${t}] ${escaped.replace(/\n/g, '<br>')}<br>`;
-      // Auto-scroll to bottom
-      el.scrollTop = el.scrollHeight;
-    }
-  };
-  
   if (debugEl) {
     debugEl.innerHTML = "";
-    window.debugLog('Debug logging initialized');
   }
 
   try {
@@ -140,12 +106,7 @@ async function runAnalysis() {
       },
     };
 
-    // Ensure parsePDF is available (from parser.js)
-    if (typeof window.parsePDF === 'undefined') {
-      $("status").textContent = 'Fehler: parsePDF Funktion nicht geladen. Bitte Seite neu laden.';
-      throw new Error('parsePDF function not loaded. Please reload the page.');
-    }
-    const results = await window.parsePDF(pdf, parseOptions);
+    const results = await parsePDF(pdf, parseOptions);
 
     const { transactions: cashTransactionsWithSanity, failedChecks } = computeCashSanityChecks(results.cash || []);
 
@@ -169,29 +130,6 @@ async function runAnalysis() {
       amount: t.betrag,
     }));
 
-    const portfolioDisplay = (results.portfolio || []).map((p) => ({
-      quantity: p.quantity,
-      unit: p.unit,
-      name: p.name,
-      isin: p.isin,
-      pricePerUnit: p.pricePerUnit,
-      priceDate: p.priceDate,
-      marketValueEUR: p.marketValueEUR,
-      custodyCountry: p.custodyCountry,
-    }));
-
-    // Crypto output normalized to match portfolio format exactly
-    const cryptoDisplay = (results.crypto || []).map((c) => ({
-      quantity: c.quantity,
-      unit: c.unit,
-      name: c.name,
-      isin: c.isin || '', // Cryptos don't have ISINs - empty string to match portfolio format
-      pricePerUnit: c.pricePerUnit,
-      priceDate: c.priceDate,
-      marketValueEUR: c.marketValueEUR,
-      custodyCountry: c.custodyCountry || 'BitGo Deutschland GmbH',
-    }));
-
     const tradingTransactions = cashForAnalytics.length ? parseTradingTransactions(cashForAnalytics) : [];
     const tradingData = tradingTransactions.length ? calculatePnL(tradingTransactions) : null;
 
@@ -207,45 +145,28 @@ async function runAnalysis() {
 
     let cashTabComponent = null;
     let mmfTabComponent = null;
-    let portfolioTabComponent = null;
-    let cryptoTabComponent = null;
     let tradingTabComponent = null;
 
-    // Auto-enrich trading data with portfolio if available
-    if (portfolioDisplay.length > 0 && tradingData && typeof enrichTradingDataWithSecurities === 'function') {
-      tradingData = enrichTradingDataWithSecurities(tradingData, portfolioDisplay);
-      window.currentSecuritiesData = portfolioDisplay;
-    } else if (portfolioDisplay.length > 0) {
-      // Store portfolio data for potential later use
-      window.currentSecuritiesData = portfolioDisplay;
-    }
-
-    if (cashDisplay.length || interestDisplay.length || portfolioDisplay.length || cryptoDisplay.length || tradingTransactions.length) {
+    if (cashDisplay.length || interestDisplay.length || tradingTransactions.length) {
       const statsEl = document.createElement('div');
-      statsEl.innerHTML = createStatsSummary(cashDisplay, interestDisplay, portfolioDisplay, cryptoDisplay);
+      statsEl.innerHTML = createStatsSummary(cashDisplay, interestDisplay);
       $("out").appendChild(statsEl);
 
       cashTabComponent = cashDisplay.length ? renderComponent('Cash-Transaktionen', cashDisplay, 'cash', { failedChecks }) : null;
       mmfTabComponent = interestDisplay.length ? renderComponent('Geldmarktfonds (MMF)', interestDisplay, 'interest') : null;
-      portfolioTabComponent = portfolioDisplay.length ? renderComponent('Portfolio', portfolioDisplay, 'portfolio') : null;
-      cryptoTabComponent = cryptoDisplay.length ? renderComponent('Crypto', cryptoDisplay, 'crypto') : null;
       tradingTabComponent = tradingTransactions.length ? renderTradingComponent(tradingData, tradingTransactions) : null;
       const supportComp = renderSupportComponent({
         cashCount: cashDisplay.length,
         mmfCount: interestDisplay.length,
-        portfolioCount: portfolioDisplay.length,
-        cryptoCount: cryptoDisplay.length,
         tradingCount: tradingTransactions.length,
         failedChecks
       });
 
-      if (cashTabComponent || chartsElement || mmfTabComponent || portfolioTabComponent || cryptoTabComponent || tradingTabComponent || supportComp) {
+      if (cashTabComponent || chartsElement || mmfTabComponent || tradingTabComponent || supportComp) {
         const tabs = createTabNavigationWithTrading({
           cash: cashTabComponent,
           charts: chartsElement,
           mmf: mmfTabComponent,
-          portfolio: portfolioTabComponent,
-          crypto: cryptoTabComponent,
           trading: tradingTabComponent,
           support: supportComp,
           onChartsActivate: chartsBundle ? () => {
@@ -270,7 +191,7 @@ async function runAnalysis() {
       renderTradingCharts(tradingData, tradingTransactions);
     }
 
-    if (!cashDisplay.length && !interestDisplay.length && !portfolioDisplay.length && !cryptoDisplay.length) {
+    if (!cashDisplay.length && !interestDisplay.length) {
       $("status").textContent = 'Keine Transaktionen gefunden – bitte prüfe das PDF.';
     } else if (failedChecks > 0) {
       $("status").textContent = `Fertig – ${failedChecks} widersprüchliche Salden erkannt. Downloads verfügbar, bitte Daten prüfen.`;

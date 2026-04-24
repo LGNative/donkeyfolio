@@ -3,16 +3,16 @@
 const MONTH_MAP = {
   jan: 0, januar: 0,
   feb: 1, februar: 1,
-  mär: 2, märz: 2, mar: 2, maerz: 2,
+  mär: 2, märz: 2, mar: 2, maerz: 2, march: 2,
   apr: 3, april: 3,
-  mai: 4,
-  jun: 5, juni: 5,
-  jul: 6, juli: 6,
-  aug: 7, august: 7,
-  sep: 8, sept: 8, september: 8,
-  okt: 9, oktober: 9,
-  nov: 10, november: 10,
-  dez: 11, dezember: 11
+  mai: 4, may: 4,
+  jun: 5, juni: 5, june: 5, giugno: 5,
+  jul: 6, juli: 6, july: 6, luglio: 6,
+  aug: 7, august: 7, agosto: 7,
+  sep: 8, sept: 8, september: 8, settembre: 8,
+  okt: 9, oktober: 9, oct: 9, october: 9, ottobre: 9,
+  nov: 10, november: 10, novembre: 10,
+  dez: 11, dezember: 11, dec: 11, december: 11, dicembre: 11
 };
 
 let chartIdCounter = 0;
@@ -25,13 +25,33 @@ function uniqueChartId(prefix = 'chart') {
 function parseEuro(value) {
   if (typeof value === 'number') return value;
   if (!value || typeof value !== 'string') return 0;
-  const normalized = value
+
+  let normalized = value
     .replace(/\u00A0/g, '')
     .replace(/\s+/g, '')
     .replace(/€/g, '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.-]/g, '');
+    .replace(/[^\d,.\-]/g, '')
+    .trim();
+
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+
+  if (hasComma && hasDot) {
+    if (normalized.lastIndexOf(',') > normalized.lastIndexOf('.')) {
+      // European format: 1.234,56
+      normalized = normalized.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      // English format: 1,234.56
+      normalized = normalized.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    // Assume comma decimal separator
+    normalized = normalized.replace(/\./g, '').replace(/,/g, '.');
+  } else {
+    // Dot-only values may still contain thousands separators.
+    normalized = normalized.replace(/\.(?=\d{3}(?:\.|$))/g, '');
+  }
+
   const parsed = parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -42,7 +62,7 @@ function parseGermanDate(value) {
   if (parts.length < 3) return null;
 
   const day = parseInt(parts[0], 10);
-  const monthKey = parts[1].toLowerCase().replace('.', '');
+  const monthKey = parts[1].toLowerCase().replace(/[.,]/g, '');
   const year = parseInt(parts[2], 10);
   const month = MONTH_MAP[monthKey];
 
@@ -52,6 +72,120 @@ function parseGermanDate(value) {
 
 function formatEuro(value) {
   return value.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+}
+
+function formatSignedEuro(value) {
+  return `${value >= 0 ? '+' : ''}${formatEuro(value)}`;
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function toMonthKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+function monthLabelFromKey(monthKey) {
+  if (!monthKey) return '';
+  const [year, month] = monthKey.split('-').map(part => parseInt(part, 10));
+  if (!Number.isInteger(year) || !Number.isInteger(month)) return monthKey;
+  return new Date(year, month - 1, 1).toLocaleDateString('de-DE', { month: 'short', year: 'numeric' });
+}
+
+function normalizeMerchantLabel(value) {
+  const raw = String(value || '').replace(/\u0000/g, '').replace(/\s+/g, ' ').trim();
+  return raw || 'Unbekannt';
+}
+
+function buildDenseDailySeries(dailySeries) {
+  if (!Array.isArray(dailySeries) || dailySeries.length === 0) return [];
+
+  const sorted = [...dailySeries].sort((a, b) => a.date - b.date);
+  const start = new Date(sorted[0].date.getFullYear(), sorted[0].date.getMonth(), sorted[0].date.getDate());
+  const end = new Date(sorted[sorted.length - 1].date.getFullYear(), sorted[sorted.length - 1].date.getMonth(), sorted[sorted.length - 1].date.getDate());
+  const byKey = new Map(sorted.map(entry => [toDateKey(entry.date), entry]));
+
+  const dense = [];
+  for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = new Date(cursor);
+    const key = toDateKey(date);
+    const source = byKey.get(key);
+    dense.push({
+      date,
+      incoming: source ? source.incoming : 0,
+      outgoing: source ? source.outgoing : 0,
+      net: source ? source.net : 0,
+      balance: source ? source.balance : 0
+    });
+  }
+  return dense;
+}
+
+function buildRollingWindowSeries(denseDailySeries, windowSize = 30) {
+  if (!Array.isArray(denseDailySeries) || denseDailySeries.length < windowSize) return [];
+
+  const rolling = [];
+  let runningIncoming = 0;
+  let runningOutgoing = 0;
+
+  for (let i = 0; i < denseDailySeries.length; i += 1) {
+    runningIncoming += denseDailySeries[i].incoming;
+    runningOutgoing += denseDailySeries[i].outgoing;
+
+    if (i >= windowSize) {
+      runningIncoming -= denseDailySeries[i - windowSize].incoming;
+      runningOutgoing -= denseDailySeries[i - windowSize].outgoing;
+    }
+
+    if (i >= windowSize - 1) {
+      rolling.push({
+        date: denseDailySeries[i].date,
+        incoming: runningIncoming,
+        outgoing: runningOutgoing
+      });
+    }
+  }
+
+  return rolling;
+}
+
+function buildMerchantMoMSeries(numericTransactions) {
+  const totalsByMonth = {};
+  const totalsByMerchant = {};
+
+  numericTransactions.forEach(tx => {
+    if (tx.outgoing <= 0) return;
+    const monthKey = toMonthKey(tx.date);
+    const merchant = normalizeMerchantLabel(tx.raw.description || tx.raw.beschreibung);
+    if (!totalsByMonth[monthKey]) totalsByMonth[monthKey] = {};
+    totalsByMonth[monthKey][merchant] = (totalsByMonth[monthKey][merchant] || 0) + tx.outgoing;
+    totalsByMerchant[merchant] = (totalsByMerchant[merchant] || 0) + tx.outgoing;
+  });
+
+  const monthKeys = Object.keys(totalsByMonth).sort();
+  const currentMonthKey = monthKeys.length ? monthKeys[monthKeys.length - 1] : null;
+  const previousMonthKey = monthKeys.length > 1 ? monthKeys[monthKeys.length - 2] : null;
+  const currentTotals = currentMonthKey ? totalsByMonth[currentMonthKey] : {};
+  const previousTotals = previousMonthKey ? totalsByMonth[previousMonthKey] : {};
+
+  const entries = Object.entries(totalsByMerchant)
+    .map(([label, total]) => {
+      const current = currentTotals[label] || 0;
+      const previous = previousTotals[label] || 0;
+      const delta = current - previous;
+      const deltaPct = previous > 0 ? (delta / previous) * 100 : null;
+      return { label, total, current, previous, delta, deltaPct };
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+
+  return { entries, currentMonthKey, previousMonthKey };
 }
 
 function analyzeTransactions(transactions, typKey = "type") {
@@ -81,32 +215,14 @@ function analyzeCashFlow(transactions) {
   return result;
 }
 
-function createStatsSummary(cash, mmf, portfolio = [], crypto = []) {
-  const totalTransactions = cash.length + mmf.length + portfolio.length + crypto.length;
-  const totalPortfolioValue = portfolio.reduce((sum, p) => sum + (parseEuro(p.marketValueEUR || 0)), 0);
-  const totalCryptoValue = crypto.reduce((sum, c) => sum + (parseEuro(c.marketValueEUR || 0)), 0);
-  
+function createStatsSummary(cash, mmf) {
   let html = '<div id="results-summary" class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-2">';
-  html += `<h3 class="text-lg font-semibold text-slate-900">Transaktionsübersicht (${totalTransactions} Datensätze insgesamt)</h3>`;
+  html += `<h3 class="text-lg font-semibold text-slate-900">Transaktionsübersicht (${cash.length + mmf.length} Transaktionen insgesamt)</h3>`;
   if (cash.length > 0) {
     html += `<p class="text-sm text-slate-700"><strong class="font-semibold text-slate-900">${cash.length} Cash-Transaktionen</strong> gefunden</p>`;
   }
   if (mmf.length > 0) {
     html += `<p class="text-sm text-slate-700"><strong class="font-semibold text-slate-900">${mmf.length} Geldmarktfonds-Transaktionen</strong> gefunden</p>`;
-  }
-  if (portfolio.length > 0) {
-    html += `<p class="text-sm text-slate-700"><strong class="font-semibold text-slate-900">${portfolio.length} Portfolio-Positionen</strong> gefunden`;
-    if (totalPortfolioValue > 0) {
-      html += ` (Gesamtwert: ${formatEuro(totalPortfolioValue)})`;
-    }
-    html += `</p>`;
-  }
-  if (crypto.length > 0) {
-    html += `<p class="text-sm text-slate-700"><strong class="font-semibold text-slate-900">${crypto.length} Crypto-Positionen</strong> gefunden`;
-    if (totalCryptoValue > 0) {
-      html += ` (Gesamtwert: ${formatEuro(totalCryptoValue)})`;
-    }
-    html += `</p>`;
   }
   html += '</div>';
   return html;
@@ -142,7 +258,7 @@ function createCharts(cash, mmf) {
 
   const dailyMap = new Map();
   numericTransactions.forEach(tx => {
-    const key = tx.date.toISOString().slice(0, 10);
+    const key = toDateKey(tx.date);
     if (!dailyMap.has(key)) {
       dailyMap.set(key, {
         date: tx.date,
@@ -159,6 +275,8 @@ function createCharts(cash, mmf) {
     entry.balance = tx.balance;
   });
   const dailySeries = Array.from(dailyMap.values()).sort((a, b) => a.date - b.date);
+  const denseDailySeries = buildDenseDailySeries(dailySeries);
+  const rolling30Series = buildRollingWindowSeries(denseDailySeries, 30);
 
   const typeTotals = {};
   numericTransactions.forEach(tx => {
@@ -170,17 +288,7 @@ function createCharts(cash, mmf) {
   const typeBreakdown = Object.entries(typeTotals)
     .map(([label, totals]) => ({ label, incoming: totals.incoming, outgoing: totals.outgoing }))
     .sort((a, b) => b.outgoing - a.outgoing);
-
-  const merchantTotals = {};
-  numericTransactions.forEach(tx => {
-    if (tx.outgoing <= 0) return;
-    const label = tx.raw.description || tx.raw.beschreibung || 'Unbekannt';
-    merchantTotals[label] = (merchantTotals[label] || 0) + tx.outgoing;
-  });
-  const topMerchants = Object.entries(merchantTotals)
-    .map(([label, value]) => ({ label, value }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 7);
+  const merchantMoM = buildMerchantMoMSeries(numericTransactions);
 
   const weekdayTotals = Array(7).fill(0);
   numericTransactions.forEach(tx => {
@@ -238,6 +346,51 @@ function createCharts(cash, mmf) {
     card.appendChild(canvas);
     chartGrid.appendChild(card);
     chartConfigs.push({ canvasId, type, data, options });
+  }
+
+  if (rolling30Series.length > 0) {
+    addChartCard({
+      title: '30-Tage-Trend: Einnahmen vs Ausgaben',
+      description: 'Rollierende 30-Tage-Summe für Income und Spend.',
+      type: 'line',
+      data: {
+        labels: rolling30Series.map(d => d.date.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })),
+        datasets: [
+          {
+            label: 'Einnahmen (30T)',
+            data: rolling30Series.map(d => Math.round(d.incoming * 100) / 100),
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+            tension: 0.35,
+            fill: false
+          },
+          {
+            label: 'Ausgaben (30T)',
+            data: rolling30Series.map(d => Math.round(d.outgoing * 100) / 100),
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+            tension: 0.35,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: {
+            callbacks: {
+              label: context => `${context.dataset.label}: ${formatEuro(context.parsed.y)}`
+            }
+          }
+        },
+        scales: {
+          y: {
+            ticks: { callback: value => formatEuro(value) }
+          }
+        }
+      }
+    });
   }
 
   if (dailySeries.length > 1) {
@@ -321,25 +474,52 @@ function createCharts(cash, mmf) {
     });
   }
 
-  if (topMerchants.length > 0) {
+  if (merchantMoM.entries.length > 0) {
+    const currentMonthLabel = monthLabelFromKey(merchantMoM.currentMonthKey);
+    const previousMonthLabel = merchantMoM.previousMonthKey ? monthLabelFromKey(merchantMoM.previousMonthKey) : 'Vormonat';
+    const description = merchantMoM.previousMonthKey
+      ? `Top 10 nach Gesamtausgaben. Vergleich ${previousMonthLabel} vs ${currentMonthLabel}.`
+      : `Top 10 nach Gesamtausgaben. Für ${currentMonthLabel} liegt noch kein vollständiger Vormonat vor.`;
+
     addChartCard({
-      title: 'Top Händler',
-      description: 'Die größten Ausgabenblöcke nach Händler.',
+      title: 'Top 10 Händler nach Ausgaben (MoM)',
+      description,
       type: 'bar',
       data: {
-        labels: topMerchants.map(entry => entry.label.length > 32 ? `${entry.label.slice(0, 29)}…` : entry.label),
-        datasets: [{
-          data: topMerchants.map(entry => Math.round(entry.value * 100) / 100),
-          backgroundColor: '#0ea5e9',
-          borderRadius: 6
-        }]
+        labels: merchantMoM.entries.map(entry => entry.label.length > 32 ? `${entry.label.slice(0, 29)}…` : entry.label),
+        datasets: [
+          {
+            label: previousMonthLabel,
+            data: merchantMoM.entries.map(entry => Math.round(entry.previous * 100) / 100),
+            backgroundColor: '#cbd5e1',
+            borderRadius: 6
+          },
+          {
+            label: currentMonthLabel,
+            data: merchantMoM.entries.map(entry => Math.round(entry.current * 100) / 100),
+            backgroundColor: '#0ea5e9',
+            borderRadius: 6
+          }
+        ]
       },
       options: {
         indexAxis: 'y',
         responsive: true,
         plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: ctx => `${formatEuro(ctx.parsed.x)}` } }
+          legend: { position: 'top' },
+          tooltip: {
+            callbacks: {
+              label: context => `${context.dataset.label}: ${formatEuro(context.parsed.x)}`,
+              afterBody: contextItems => {
+                const idx = contextItems?.[0]?.dataIndex;
+                if (!Number.isInteger(idx)) return '';
+                const entry = merchantMoM.entries[idx];
+                if (!merchantMoM.previousMonthKey) return 'MoM: Noch kein Vormonat vorhanden';
+                if (entry.previous <= 0) return `MoM: Neu (+${formatEuro(entry.current)})`;
+                return `MoM: ${entry.delta >= 0 ? '+' : ''}${entry.deltaPct.toFixed(1)}% (${formatSignedEuro(entry.delta)})`;
+              }
+            }
+          }
         },
         scales: {
           x: {
@@ -378,7 +558,7 @@ function createCharts(cash, mmf) {
     });
   }
 
-  if (chartConfigs.length === 0) {
+  if (chartGrid.children.length === 0) {
     chartGrid.remove();
   }
 
