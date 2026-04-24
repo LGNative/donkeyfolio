@@ -129,10 +129,10 @@
     {
       "id": "tr-pdf-converter-addon",
       "name": "TR PDF Converter",
-      "version": "2.0.1",
+      "version": "2.1.0",
       "description": "Native Trade Republic PDF parser — extracts cash, MMF, trading P&L. Fully React-integrated UI with dark mode support. Ported from jcmpagel's open-source code.",
       "author": "Donkeyfolio",
-      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-2.0.1.zip",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-2.1.0.zip",
       "downloads": 0,
       "rating": 0,
       "reviewCount": 0,
