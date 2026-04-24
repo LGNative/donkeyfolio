@@ -108,6 +108,8 @@ export interface CashTransaction {
   zahlungsausgang: string;
   saldo: string;
   _sanityCheckOk?: boolean;
+  /** Set by recoverCashAmounts() when we auto-fixed In/Out via description + balance delta. */
+  _recovered?: "swapped" | "filled-from-balance";
 }
 
 export interface InterestTransaction {
@@ -285,4 +287,83 @@ export function buildLexwareCsv(rows: Record<string, unknown>[]): string {
   ensureLoaded();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (window as any).buildLexwareCsv(rows);
+}
+
+/**
+ * Fix PDF-extraction artefacts in trade rows where the amount ended up in
+ * the wrong column (or got dropped entirely) because the column-boundary
+ * heuristic fell over for certain row geometries.
+ *
+ * Strategy per "Buy trade"/"Sell trade" row:
+ *   1. If the amount sits in the WRONG column for its direction → swap.
+ *   2. If BOTH In and Out are empty but we have a usable balance on this
+ *      row and the next row → derive amount from the delta.
+ *
+ * Returns a new array (non-mutating) plus a count of recoveries so the UI
+ * can display a friendlier "auto-corrected N" message instead of a scary
+ * "N sanity checks failed".
+ */
+export function recoverCashAmounts(cash: CashTransaction[]): {
+  cash: CashTransaction[];
+  recovered: number;
+} {
+  let recovered = 0;
+  // We need balance from adjacent rows — convert once up-front.
+  const balances = cash.map((r) => parseEuroAmount(r.saldo));
+
+  const fixed = cash.map((row, i): CashTransaction => {
+    const desc = row.beschreibung || "";
+    const isBuy = /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+    const isSell =
+      /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+    if (!isBuy && !isSell) return row;
+
+    const inc = parseEuroAmount(row.zahlungseingang);
+    const out = parseEuroAmount(row.zahlungsausgang);
+
+    // (1) Column swap: Buy should have Out, Sell should have In.
+    if (isBuy && inc > 0 && out === 0) {
+      recovered += 1;
+      return {
+        ...row,
+        zahlungseingang: "",
+        zahlungsausgang: row.zahlungseingang,
+        _recovered: "swapped",
+      };
+    }
+    if (isSell && out > 0 && inc === 0) {
+      recovered += 1;
+      return {
+        ...row,
+        zahlungseingang: row.zahlungsausgang,
+        zahlungsausgang: "",
+        _recovered: "swapped",
+      };
+    }
+
+    // (2) Both columns empty → derive from balance delta with neighbour row.
+    if (inc === 0 && out === 0) {
+      const thisBal = balances[i];
+      // Prefer the previous row (saldo is cumulative; prev - curr = outflow).
+      const neighbourBal = i > 0 ? balances[i - 1] : i < cash.length - 1 ? balances[i + 1] : NaN;
+      if (Number.isFinite(thisBal) && Number.isFinite(neighbourBal)) {
+        const delta = Math.abs(neighbourBal - thisBal);
+        if (delta > 0) {
+          const formatted =
+            delta.toLocaleString("de-DE", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }) + " €";
+          recovered += 1;
+          return isBuy
+            ? { ...row, zahlungsausgang: formatted, _recovered: "filled-from-balance" }
+            : { ...row, zahlungseingang: formatted, _recovered: "filled-from-balance" };
+        }
+      }
+    }
+
+    return row;
+  });
+
+  return { cash: fixed, recovered };
 }

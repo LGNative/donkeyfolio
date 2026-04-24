@@ -30,6 +30,7 @@ import {
   enrichTradingWithQuantity,
   parsePDF,
   parseTradingTransactions,
+  recoverCashAmounts,
   type CashTransaction,
   type InterestTransaction,
   type PnLResult,
@@ -47,6 +48,7 @@ interface ParseState {
   trading: TradingTransaction[];
   pnl: PnLResult | null;
   failedChecks: number;
+  recoveredRows: number;
   fileName: string;
 }
 
@@ -63,6 +65,7 @@ const initialState: ParseState = {
   trading: [],
   pnl: null,
   failedChecks: 0,
+  recoveredRows: 0,
   fileName: "",
 };
 
@@ -181,7 +184,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         }));
       });
 
-      const { transactions: cashWithSanity, failedChecks } = computeCashSanityChecks(result.cash);
+      // Auto-recover trade rows with column-swapped or missing amounts BEFORE
+      // running the sanity check — so rows we can recover no longer surface as
+      // failures.
+      const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(result.cash);
+      const { transactions: cashWithSanity, failedChecks } = computeCashSanityChecks(recoveredCash);
       const analyticsCash = cashWithSanity.map(toAnalyticsShape);
       const rawTrading = analyticsCash.length
         ? (parseTradingTransactions(analyticsCash) as TradingTransaction[])
@@ -198,6 +205,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         trading,
         pnl,
         failedChecks,
+        recoveredRows,
         fileName: file.name,
       });
     } catch (err) {
@@ -519,6 +527,20 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             )}
           </Card>
 
+          {state.recoveredRows > 0 && (
+            <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30">
+              <CardContent className="flex items-center gap-2 pt-4 text-sm text-blue-900 dark:text-blue-200">
+                <Icons.CheckCircle className="h-4 w-4 shrink-0" />
+                <span>
+                  Auto-corrected <strong>{state.recoveredRows}</strong> trade row
+                  {state.recoveredRows === 1 ? "" : "s"} where the PDF parser placed the amount in
+                  the wrong column or dropped it — recovered from the trade direction and balance
+                  delta.
+                </span>
+              </CardContent>
+            </Card>
+          )}
+
           {state.failedChecks > 0 && (
             <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
               <CardContent className="flex items-center justify-between gap-2 pt-4 text-sm text-amber-900 dark:text-amber-200">
@@ -526,7 +548,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   <Icons.AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
                     <strong>{state.failedChecks}</strong> balance sanity check
-                    {state.failedChecks === 1 ? "" : "s"} failed — check the highlighted rows.
+                    {state.failedChecks === 1 ? "" : "s"} still failed after auto-recovery — check
+                    the highlighted rows.
                   </span>
                 </div>
                 <Button
@@ -719,9 +742,21 @@ function CashTable({ rows }: { rows: CashTransaction[] }) {
               <TableRow
                 key={i}
                 className={
-                  r._sanityCheckOk === false ? "bg-amber-50 dark:bg-amber-950/30" : undefined
+                  r._sanityCheckOk === false
+                    ? "bg-amber-50 dark:bg-amber-950/30"
+                    : r._recovered
+                      ? "bg-blue-50/60 dark:bg-blue-950/20"
+                      : undefined
                 }
-                title={r._sanityCheckOk === false ? "Balance sanity check failed" : undefined}
+                title={
+                  r._sanityCheckOk === false
+                    ? "Balance sanity check failed"
+                    : r._recovered === "swapped"
+                      ? "Auto-corrected: amount was in the wrong column"
+                      : r._recovered === "filled-from-balance"
+                        ? "Auto-corrected: amount recovered from balance delta"
+                        : undefined
+                }
               >
                 <TableCell className="font-mono text-xs">{r.datum}</TableCell>
                 <TableCell>{translateType(r.typ)}</TableCell>
