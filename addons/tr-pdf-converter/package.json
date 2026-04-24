@@ -1,6 +1,6 @@
 {
   "name": "tr-pdf-converter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Convert Trade Republic PDF statements inside Donkeyfolio (embeds kontoauszug.jonathanpagel.com)",
   "type": "module",
   "main": "dist/addon.js",
