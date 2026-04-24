@@ -33,15 +33,33 @@ const ACT = {
   TAX: "TAX",
 } satisfies Record<string, ActivityType>;
 
-// Parse German/European money "1.234,56 €" → number
+// Format-aware number parser (handles both US "€13,862.66" and EU "€13.862,66").
+// Rule: the separator that appears LAST is the decimal. Single-separator
+// strings use a 3-digit heuristic (exactly 3 trailing digits → thousands).
 function parseEuroAmount(raw: string): number {
   if (!raw) return 0;
-  const cleaned = String(raw)
-    .replace(/€/g, "")
-    .replace(/\s/g, "")
-    .replace(/\.(?=\d{3}(?:[.,]|$))/g, "")
-    .replace(",", ".");
-  const n = parseFloat(cleaned);
+  const s = String(raw).replace(/[€\s]/g, "");
+  if (!s) return 0;
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  let normalized: string = s;
+  if (hasComma && hasDot) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      normalized = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = s.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    const parts = s.split(",");
+    normalized =
+      parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if (hasDot) {
+    const parts = s.split(".");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      normalized = s.replace(/\./g, "");
+    }
+  }
+  const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -107,6 +125,7 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       unitPrice: unit,
       amount: Math.abs(tx.amount),
       fee: 0,
+      comment: tx.isSavingsPlan ? "TR Savings plan" : undefined,
       lineNumber: lineNumber++,
       isValid: true,
       isDraft: false,
@@ -158,4 +177,74 @@ export function buildTradingCashKeys(trading: TradingTransaction[]): Set<string>
     if (tx.date && tx.isin) keys.add(`${tx.date}|${tx.isin}`);
   }
   return keys;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// CSV export for the Donkeyfolio Import Activities wizard
+// Columns match those expected in the mapping step:
+//   date* | account | activityType* | symbol* | isin | quantity* |
+//   unitPrice* | amount* | currency | fee | comment | subtype |
+//   instrumentType
+// ───────────────────────────────────────────────────────────────────
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function isoDateOnly(d: Date | string | undefined): string {
+  if (!d) return "";
+  if (typeof d === "string") return d.slice(0, 10);
+  return d.toISOString().slice(0, 10);
+}
+
+export function buildDonkeyfolioCsv(
+  activities: ActivityImport[],
+  opts: { accountName?: string } = {},
+): string {
+  const accountName = opts.accountName ?? "Trade Republic";
+  const headers = [
+    "date",
+    "account",
+    "activityType",
+    "symbol",
+    "isin",
+    "quantity",
+    "unitPrice",
+    "amount",
+    "currency",
+    "fee",
+    "comment",
+    "subtype",
+    "instrumentType",
+  ];
+  const lines: string[] = [headers.join(",")];
+  for (const a of activities) {
+    const sym = a.symbol || "";
+    // TR symbols are always ISIN; populate both columns so the wizard can
+    // match by either.
+    const isISIN = /^[A-Z]{2}[A-Z0-9]{10}$/.test(sym);
+    const row = [
+      isoDateOnly(a.date),
+      accountName,
+      a.activityType,
+      sym,
+      isISIN ? sym : "",
+      a.quantity ?? "",
+      a.unitPrice ?? "",
+      a.amount ?? "",
+      a.currency || "EUR",
+      a.fee ?? "",
+      a.comment ?? "",
+      a.subtype ?? "",
+      // Instrument hint — ETFs use "Equity" in the wizard.
+      a.activityType === "BUY" || a.activityType === "SELL" ? "Equity" : "",
+    ];
+    lines.push(row.map(csvEscape).join(","));
+  }
+  return lines.join("\n");
 }

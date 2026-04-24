@@ -37,7 +37,11 @@ import {
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
-import { buildActivitiesFromParsed, buildTradingCashKeys } from "../lib/tr-to-activities";
+import {
+  buildActivitiesFromParsed,
+  buildDonkeyfolioCsv,
+  buildTradingCashKeys,
+} from "../lib/tr-to-activities";
 
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
@@ -190,10 +194,21 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(result.cash);
       const { transactions: cashWithSanity, failedChecks } = computeCashSanityChecks(recoveredCash);
       const analyticsCash = cashWithSanity.map(toAnalyticsShape);
-      const rawTrading = analyticsCash.length
-        ? (parseTradingTransactions(analyticsCash) as TradingTransaction[])
+      // jcmpagel's parseTradingTransactions only picks up descriptions containing
+      // "Buy"/"Sell"/"Kauf"/"Verkauf" etc. — TR's recurring DCA buys are labelled
+      // "Savings plan execution", which would otherwise be missed entirely (falling
+      // through to a generic cash WITHDRAWAL). Inject "Buy " so they're classified
+      // as implicit buy trades with the same ISIN/quantity extraction.
+      const analyticsCashForTrading = analyticsCash.map((c) => ({
+        ...c,
+        description: /^(\s*)Savings plan execution\b/i.test(c.description)
+          ? c.description.replace(/^(\s*)Savings plan execution\b/i, "$1Buy Savings plan execution")
+          : c.description,
+      }));
+      const rawTrading = analyticsCashForTrading.length
+        ? (parseTradingTransactions(analyticsCashForTrading) as TradingTransaction[])
         : [];
-      const trading = enrichTradingWithQuantity(rawTrading, analyticsCash);
+      const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
       const pnl = trading.length ? calculatePnL(trading) : null;
 
       setState({
@@ -261,6 +276,27 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     const data = kind === "cash" ? state.cash : kind === "mmf" ? state.interest : state.trading;
     if (data.length === 0) return;
     downloadBlob(`${baseName}-${kind}.json`, JSON.stringify(data, null, 2), "application/json");
+  };
+
+  /** CSV shaped for the Donkeyfolio Activities Import wizard (5-step mapping). */
+  const exportDonkeyfolioCsv = () => {
+    if (state.status !== "done") return;
+    const skipKeys = buildTradingCashKeys(state.trading);
+    // Use a placeholder accountId — the wizard lets the user map the account
+    // column or pick a default account anyway.
+    const activities = buildActivitiesFromParsed({
+      accountId: "",
+      currency: "EUR",
+      cash: state.cash,
+      trading: state.trading,
+      skipCashKeys: skipKeys,
+    });
+    if (activities.length === 0) return;
+    downloadBlob(
+      `${baseName}-donkeyfolio.csv`,
+      buildDonkeyfolioCsv(activities),
+      "text/csv;charset=utf-8",
+    );
   };
 
   const handleImport = React.useCallback(async () => {
@@ -333,6 +369,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   const tradingImportable = state.trading.filter((t) => t.quantity && t.quantity > 0).length;
   const tradingTotal = state.trading.length;
+  const savingsPlanCount = state.trading.filter((t) => t.isSavingsPlan).length;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -472,26 +509,37 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   <CardTitle className="text-base">Import to Donkeyfolio</CardTitle>
                   <CardDescription>
                     Creates (or reuses) a <strong>Trade Republic</strong> account and imports
-                    activities directly — no CSV roundtrip needed.
+                    activities directly — or export a CSV shaped for the Import Activities wizard.
                   </CardDescription>
                 </div>
-                <Button
-                  onClick={handleImport}
-                  disabled={importState.status === "running"}
-                  size="sm"
-                >
-                  {importState.status === "running" ? (
-                    <>
-                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
-                      Importing…
-                    </>
-                  ) : (
-                    <>
-                      <Icons.Download className="mr-2 h-4 w-4" />
-                      Import to Donkeyfolio
-                    </>
-                  )}
-                </Button>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Button
+                    onClick={handleImport}
+                    disabled={importState.status === "running"}
+                    size="sm"
+                  >
+                    {importState.status === "running" ? (
+                      <>
+                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                        Importing…
+                      </>
+                    ) : (
+                      <>
+                        <Icons.Download className="mr-2 h-4 w-4" />
+                        Import to Donkeyfolio
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={exportDonkeyfolioCsv}
+                    variant="outline"
+                    size="sm"
+                    disabled={importState.status === "running"}
+                  >
+                    <Icons.Download className="mr-2 h-4 w-4" />
+                    Activities CSV
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             {(importState.status === "running" ||
@@ -516,6 +564,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                     <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{importState.message}</span>
                   </div>
+                )}
+                {savingsPlanCount > 0 && (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Includes <strong>{savingsPlanCount}</strong> Savings plan execution(s) —
+                    imported as regular BUY activities tagged "TR Savings plan".
+                  </p>
                 )}
                 {tradingTotal > tradingImportable && (
                   <p className="text-muted-foreground mt-2 text-xs">

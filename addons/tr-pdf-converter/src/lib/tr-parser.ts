@@ -141,17 +141,60 @@ export interface TradingTransaction {
   unitPrice?: number;
   /** Cleaned stock name (strip " quantity: X" suffix and trailing commas). */
   cleanStockName?: string;
+  /** True when this trade came from a TR "Savings plan execution" (DCA) row. */
+  isSavingsPlan?: boolean;
 }
 
-// Helper: parse the German/European money format "1.234,56 €" into a number.
+/**
+ * Format-aware number parser. TR emits statements in multiple locales:
+ *   - Portuguese/English layout uses US format: "€13,862.66", "quantity: 0.129117"
+ *   - German layout uses EU format:             "€13.862,66", "quantity: 0,129117"
+ *
+ * Rule: the separator that appears LAST is the decimal point. If only one
+ * separator is present, use digit-count heuristics:
+ *   - "1.234" / "1,234" with exactly 3 digits after → thousands separator
+ *   - any other length → decimal separator
+ */
 function parseEuroAmount(raw: string): number {
   if (!raw) return 0;
-  const cleaned = String(raw)
-    .replace(/€/g, "")
-    .replace(/\s/g, "")
-    .replace(/\.(?=\d{3}(?:[.,]|$))/g, "")
-    .replace(",", ".");
-  const n = parseFloat(cleaned);
+  const s = String(raw).replace(/[€\s]/g, "");
+  if (!s) return 0;
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  let normalized: string = s;
+
+  if (hasComma && hasDot) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      // EU: 1.234,56 → 1234.56
+      normalized = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // US: 1,234.56 → 1234.56
+      normalized = s.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    const parts = s.split(",");
+    // "1,234" (exactly 3 digits after comma, nothing before > 3 groups) → US thousands
+    if (parts.length === 2 && parts[1].length === 3) {
+      normalized = s.replace(/,/g, "");
+    } else {
+      normalized = s.replace(",", ".");
+    }
+  } else if (hasDot) {
+    const parts = s.split(".");
+    if (parts.length > 2) {
+      // "1.234.567" → EU thousands
+      normalized = s.replace(/\./g, "");
+    } else if (parts.length === 2 && parts[1].length === 3) {
+      // "1.234" → EU thousands (unambiguous: currency never has 3 decimals,
+      // and fractional shares with exactly 3 digits are rare enough that
+      // this heuristic does more good than harm).
+      normalized = s.replace(/\./g, "");
+    } else {
+      // "0.129117", "13.1", "€13.12" → US decimal
+      normalized = s;
+    }
+  }
+  const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -188,13 +231,19 @@ export function enrichTradingWithQuantity(
     }
     const unitPrice = quantity && tx.amount > 0 ? Math.abs(tx.amount / quantity) : undefined;
     const cleanStockName = (tx.stockName || "")
+      // Strip ISINs that may remain after jcmpagel's extraction.
       .replace(/\s*-?\s*[A-Z]{2}[A-Z0-9]{10}\b/g, "")
+      // Strip the "Savings plan execution" marker we injected as "Buy" hint.
+      .replace(/\bSavings plan execution\b/i, "")
+      // Strip the German bond suffix "DL-,01" etc.
       .replace(/\s+DL-?,?\d+.*$/i, "")
+      // Strip the trailing ", quantity: X" fragment.
       .replace(/,\s*quantity\s*:.*$/i, "")
       .replace(/,\s*$/, "")
       .replace(/\s+/g, " ")
       .trim();
-    return { ...tx, quantity, unitPrice, cleanStockName };
+    const isSavingsPlan = /\bSavings plan execution\b/i.test(originalDesc);
+    return { ...tx, quantity, unitPrice, cleanStockName, isSavingsPlan };
   });
 }
 
@@ -313,7 +362,10 @@ export function recoverCashAmounts(cash: CashTransaction[]): {
 
   const fixed = cash.map((row, i): CashTransaction => {
     const desc = row.beschreibung || "";
-    const isBuy = /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+    const isManualBuy =
+      /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+    const isSavingsPlan = /\bSavings plan execution\b/i.test(desc);
+    const isBuy = isManualBuy || isSavingsPlan;
     const isSell =
       /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
     if (!isBuy && !isSell) return row;
