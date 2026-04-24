@@ -60,11 +60,28 @@ if (!w.Chart) {
 
 // ─── Load vendored modules in dependency order ────────────────────────
 // utils.js → parser.js → statistics.js → trading.js → export.js
-// Each file attaches its public API to `window.*`. We run them in the
-// current scope via Function constructor (isolated eval).
-const concatenated = [utilsJs, parserJs, statisticsJs, tradingJs, exportJs].join(
-  "\n\n/* ═════════════════ next module ═════════════════ */\n\n",
-);
+//
+// parser.js + utils.js attach their public API to `window.*` themselves,
+// but trading.js/statistics.js/export.js only declare local functions
+// (they're called from ui.js/app.js in the original, which we don't load).
+// We append explicit `window.*` assignments so the React layer can call
+// them via the re-exports at the bottom of this file.
+const EXPOSE_GLOBALS = `
+try { window.parseTradingTransactions = parseTradingTransactions; } catch (_) {}
+try { window.calculatePnL = calculatePnL; } catch (_) {}
+try { window.computeCashSanityChecks = computeCashSanityChecks; } catch (_) {}
+try { window.buildGenericCsv = buildGenericCsv; } catch (_) {}
+try { window.buildLexwareCsv = buildLexwareCsv; } catch (_) {}
+try { window.createStatsSummary = createStatsSummary; } catch (_) {}
+try { window.enrichTradingDataWithSecurities = enrichTradingDataWithSecurities; } catch (_) {}
+`;
+
+const concatenated =
+  [utilsJs, parserJs, statisticsJs, tradingJs, exportJs].join(
+    "\n\n/* ═════════════════ next module ═════════════════ */\n\n",
+  ) +
+  "\n\n/* ═════════════════ expose locals to window ═════════════════ */\n" +
+  EXPOSE_GLOBALS;
 
 let loaded = false;
 function ensureLoaded() {
