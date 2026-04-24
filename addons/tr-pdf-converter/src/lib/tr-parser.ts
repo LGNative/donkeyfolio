@@ -133,6 +133,67 @@ export interface TradingTransaction {
   amount: number;
   tradeId: string;
   balance: string;
+  /** Extracted from description via our post-processing (not in vendored parser). */
+  quantity?: number;
+  /** Derived: amount / quantity. Undefined when quantity missing. */
+  unitPrice?: number;
+  /** Cleaned stock name (strip " quantity: X" suffix and trailing commas). */
+  cleanStockName?: string;
+}
+
+// Helper: parse the German/European money format "1.234,56 €" into a number.
+function parseEuroAmount(raw: string): number {
+  if (!raw) return 0;
+  const cleaned = String(raw)
+    .replace(/€/g, "")
+    .replace(/\s/g, "")
+    .replace(/\.(?=\d{3}(?:[.,]|$))/g, "")
+    .replace(",", ".");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Enrich trading transactions with quantity extracted from the ORIGINAL cash
+ * description. jcmpagel's parseTradingTransactions strips the "quantity: X"
+ * fragment from stockName, so we have to re-extract from the raw cash data
+ * and match back by date + ISIN + amount.
+ */
+export function enrichTradingWithQuantity(
+  trading: TradingTransaction[],
+  cash: Array<{ date: string; description: string; incoming: string; outgoing: string }>,
+): TradingTransaction[] {
+  // Index cash descriptions by a stable key derived from date+ISIN+amount.
+  const index = new Map<string, string>();
+  for (const c of cash) {
+    const desc = c.description || "";
+    const isin = desc.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/)?.[1];
+    if (!isin) continue;
+    const amount = parseEuroAmount(c.outgoing || c.incoming || "");
+    if (amount <= 0) continue;
+    index.set(`${c.date}|${isin}|${amount.toFixed(2)}`, desc);
+  }
+
+  return trading.map((tx) => {
+    const key = `${tx.date}|${tx.isin}|${tx.amount.toFixed(2)}`;
+    const originalDesc = index.get(key) ?? "";
+    const qtyMatch = originalDesc.match(/quantity\s*:\s*([\d.,]+)/i);
+    let quantity: number | undefined;
+    if (qtyMatch) {
+      const raw = qtyMatch[1].replace(/\./g, "").replace(",", ".");
+      const q = parseFloat(raw);
+      if (Number.isFinite(q) && q > 0) quantity = q;
+    }
+    const unitPrice = quantity && tx.amount > 0 ? Math.abs(tx.amount / quantity) : undefined;
+    const cleanStockName = (tx.stockName || "")
+      .replace(/\s*-?\s*[A-Z]{2}[A-Z0-9]{10}\b/g, "")
+      .replace(/\s+DL-?,?\d+.*$/i, "")
+      .replace(/,\s*quantity\s*:.*$/i, "")
+      .replace(/,\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return { ...tx, quantity, unitPrice, cleanStockName };
+  });
 }
 
 export interface PnLPosition {

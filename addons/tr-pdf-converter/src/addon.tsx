@@ -19,16 +19,20 @@ const enable: AddonEnableFunction = (context: AddonContext) => {
     });
     added.push(sidebarItem);
 
+    // Capture the context in a closure so the page can call back into the
+    // host SDK (accounts.getAll, accounts.create, activities.import, …).
+    const PageWithCtx = () => <TrConverterPage ctx={context} />;
+
     context.router.add({
       path: "/addons/tr-pdf-converter",
       component: React.lazy(() =>
         Promise.resolve({
-          default: TrConverterPage,
+          default: PageWithCtx,
         }),
       ),
     });
 
-    context.api.logger.info("📄 TR PDF Converter enabled (v2 native)");
+    context.api.logger.info("📄 TR PDF Converter enabled (v2.2 native)");
   } catch (error) {
     context.api.logger.error(`Failed to enable TR PDF Converter: ${(error as Error).message}`);
     added.forEach((item) => item.remove());

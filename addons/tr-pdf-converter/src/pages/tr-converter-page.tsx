@@ -1,3 +1,4 @@
+import type { AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Badge,
   Button,
@@ -26,6 +27,7 @@ import {
   buildLexwareCsv,
   calculatePnL,
   computeCashSanityChecks,
+  enrichTradingWithQuantity,
   parsePDF,
   parseTradingTransactions,
   type CashTransaction,
@@ -33,6 +35,8 @@ import {
   type PnLResult,
   type TradingTransaction,
 } from "../lib/tr-parser";
+import { ensureTRAccount } from "../lib/tr-account";
+import { buildActivitiesFromParsed, buildTradingCashKeys } from "../lib/tr-to-activities";
 
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
@@ -46,6 +50,12 @@ interface ParseState {
   fileName: string;
 }
 
+type ImportState =
+  | { status: "idle" }
+  | { status: "running"; message: string }
+  | { status: "done"; imported: number; skipped: number; accountCreated: boolean }
+  | { status: "error"; message: string };
+
 const initialState: ParseState = {
   status: "idle",
   cash: [],
@@ -55,6 +65,16 @@ const initialState: ParseState = {
   failedChecks: 0,
   fileName: "",
 };
+
+// ─── Status translation (jcmpagel's parser emits German labels) ─────────
+const STATUS_EN: Record<string, string> = {
+  Offen: "Open",
+  Geschlossen: "Closed",
+  Teilweise: "Partial",
+  Verkauf: "Sold",
+  Ausgeglichen: "Balanced",
+};
+const translateStatus = (s: string | undefined): string => (s && STATUS_EN[s]) || s || "";
 
 // Map jcmpagel cash transaction shape → analytics shape used by parseTradingTransactions
 function toAnalyticsShape(tx: CashTransaction) {
@@ -90,12 +110,25 @@ function formatEur(value: number): string {
   });
 }
 
-export default function TrConverterPage() {
+function formatQty(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("en-US", { maximumFractionDigits: 6 });
+}
+
+interface TrConverterPageProps {
+  ctx: AddonContext;
+}
+
+export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const [state, setState] = React.useState<ParseState>(initialState);
+  const [importState, setImportState] = React.useState<ImportState>({ status: "idle" });
+  const [showOnlyFailed, setShowOnlyFailed] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = React.useState(false);
 
   const handleFile = React.useCallback(async (file: File) => {
+    setImportState({ status: "idle" });
+    setShowOnlyFailed(false);
     setState({
       ...initialState,
       status: "parsing",
@@ -114,9 +147,10 @@ export default function TrConverterPage() {
 
       const { transactions: cashWithSanity, failedChecks } = computeCashSanityChecks(result.cash);
       const analyticsCash = cashWithSanity.map(toAnalyticsShape);
-      const trading = analyticsCash.length
+      const rawTrading = analyticsCash.length
         ? (parseTradingTransactions(analyticsCash) as TradingTransaction[])
         : [];
+      const trading = enrichTradingWithQuantity(rawTrading, analyticsCash);
       const pnl = trading.length ? calculatePnL(trading) : null;
 
       setState({
@@ -185,7 +219,60 @@ export default function TrConverterPage() {
     downloadBlob(`${baseName}-${kind}.json`, JSON.stringify(data, null, 2), "application/json");
   };
 
-  const reset = () => setState(initialState);
+  const handleImport = React.useCallback(async () => {
+    if (state.status !== "done") return;
+    setImportState({ status: "running", message: "Finding Trade Republic account…" });
+    try {
+      const acct = await ensureTRAccount(ctx);
+
+      setImportState({ status: "running", message: "Preparing activities…" });
+      const skipKeys = buildTradingCashKeys(state.trading);
+      const activities = buildActivitiesFromParsed({
+        accountId: acct.accountId,
+        currency: acct.currency,
+        cash: state.cash,
+        trading: state.trading,
+        skipCashKeys: skipKeys,
+      });
+
+      if (activities.length === 0) {
+        setImportState({
+          status: "error",
+          message: "No importable activities found in this PDF.",
+        });
+        return;
+      }
+
+      setImportState({
+        status: "running",
+        message: `Importing ${activities.length} activities…`,
+      });
+      ctx.api.logger.info(`[TR PDF] Importing ${activities.length} activities`);
+      const result = await ctx.api.activities.import(activities);
+      const imported = result?.summary?.imported ?? 0;
+      const skipped = (result?.summary?.skipped ?? 0) + (result?.summary?.duplicates ?? 0);
+
+      setImportState({
+        status: "done",
+        imported,
+        skipped,
+        accountCreated: acct.created,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.api.logger.error(`[TR PDF] Import failed: ${message}`);
+      setImportState({
+        status: "error",
+        message: message.length > 300 ? message.slice(0, 300) + "…" : message,
+      });
+    }
+  }, [ctx, state.cash, state.status, state.trading]);
+
+  const reset = () => {
+    setState(initialState);
+    setImportState({ status: "idle" });
+    setShowOnlyFailed(false);
+  };
   const progressPct =
     state.progress && state.progress.total > 0
       ? (state.progress.page / state.progress.total) * 100
@@ -196,6 +283,13 @@ export default function TrConverterPage() {
   if (state.interest.length > 0) tabsAvailable.push("mmf");
   if (state.trading.length > 0) tabsAvailable.push("trading");
 
+  const visibleCash = showOnlyFailed
+    ? state.cash.filter((r) => r._sanityCheckOk === false)
+    : state.cash;
+
+  const tradingImportable = state.trading.filter((t) => t.quantity && t.quantity > 0).length;
+  const tradingTotal = state.trading.length;
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       {/* ─── Header ─── */}
@@ -204,7 +298,7 @@ export default function TrConverterPage() {
           <h1 className="text-2xl font-bold tracking-tight">Trade Republic PDF Converter</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             Extract cash transactions, money market funds, and trading P&L from Trade Republic
-            statements. Runs 100% locally in your device.
+            statements. Runs 100% locally on your device.
           </p>
         </div>
         {state.status === "done" && (
@@ -326,14 +420,86 @@ export default function TrConverterPage() {
             )}
           </div>
 
+          {/* ─── Direct import to Donkeyfolio ─── */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="text-base">Import to Donkeyfolio</CardTitle>
+                  <CardDescription>
+                    Creates (or reuses) a <strong>Trade Republic</strong> account and imports
+                    activities directly — no CSV roundtrip needed.
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={handleImport}
+                  disabled={importState.status === "running"}
+                  size="sm"
+                >
+                  {importState.status === "running" ? (
+                    <>
+                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      Importing…
+                    </>
+                  ) : (
+                    <>
+                      <Icons.Download className="mr-2 h-4 w-4" />
+                      Import to Donkeyfolio
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardHeader>
+            {(importState.status === "running" ||
+              importState.status === "done" ||
+              importState.status === "error") && (
+              <CardContent className="text-sm">
+                {importState.status === "running" && (
+                  <p className="text-muted-foreground">{importState.message}</p>
+                )}
+                {importState.status === "done" && (
+                  <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
+                    <Icons.CheckCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      Imported <strong>{importState.imported}</strong> activities
+                      {importState.skipped > 0 && ` · ${importState.skipped} skipped`}
+                      {importState.accountCreated && " · account created"}
+                    </span>
+                  </div>
+                )}
+                {importState.status === "error" && (
+                  <div className="flex items-start gap-2 text-red-700 dark:text-red-300">
+                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{importState.message}</span>
+                  </div>
+                )}
+                {tradingTotal > tradingImportable && (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Note: {tradingTotal - tradingImportable} trade(s) lack a quantity and will be
+                    skipped during import.
+                  </p>
+                )}
+              </CardContent>
+            )}
+          </Card>
+
           {state.failedChecks > 0 && (
             <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
-              <CardContent className="flex items-center gap-2 pt-4 text-sm text-amber-900 dark:text-amber-200">
-                <Icons.AlertCircle className="h-4 w-4 shrink-0" />
-                <span>
-                  <strong>{state.failedChecks}</strong> balance sanity check
-                  {state.failedChecks === 1 ? "" : "s"} failed — check the highlighted rows.
-                </span>
+              <CardContent className="flex items-center justify-between gap-2 pt-4 text-sm text-amber-900 dark:text-amber-200">
+                <div className="flex items-center gap-2">
+                  <Icons.AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    <strong>{state.failedChecks}</strong> balance sanity check
+                    {state.failedChecks === 1 ? "" : "s"} failed — check the highlighted rows.
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant={showOnlyFailed ? "default" : "outline"}
+                  onClick={() => setShowOnlyFailed((v) => !v)}
+                >
+                  {showOnlyFailed ? "Show all" : "Show only failed"}
+                </Button>
               </CardContent>
             </Card>
           )}
@@ -364,13 +530,16 @@ export default function TrConverterPage() {
                     <Badge variant="secondary" className="ml-2">
                       {state.trading.length}
                     </Badge>
+                    <Badge variant="outline" className="ml-2 text-[10px] uppercase">
+                      Beta
+                    </Badge>
                   </TabsTrigger>
                 )}
               </TabsList>
 
               {tabsAvailable.includes("cash") && (
                 <TabsContent value="cash" className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button size="sm" onClick={exportCsv}>
                       <Icons.Download className="mr-2 h-4 w-4" />
                       Export CSV
@@ -381,8 +550,19 @@ export default function TrConverterPage() {
                     <Button size="sm" variant="outline" onClick={() => exportJson("cash")}>
                       JSON
                     </Button>
+                    {state.failedChecks > 0 && (
+                      <Button
+                        size="sm"
+                        variant={showOnlyFailed ? "default" : "outline"}
+                        onClick={() => setShowOnlyFailed((v) => !v)}
+                      >
+                        {showOnlyFailed
+                          ? `Showing ${state.failedChecks} failed`
+                          : "Only failed sanity checks"}
+                      </Button>
+                    )}
                   </div>
-                  <CashTable rows={state.cash} />
+                  <CashTable rows={visibleCash} />
                 </TabsContent>
               )}
 
@@ -406,7 +586,7 @@ export default function TrConverterPage() {
                       Export JSON
                     </Button>
                   </div>
-                  <TradingTable pnl={state.pnl} />
+                  <TradingTable pnl={state.pnl} trades={state.trading} />
                 </TabsContent>
               )}
             </Tabs>
@@ -475,7 +655,15 @@ function StatCard({
 }
 
 function CashTable({ rows }: { rows: CashTransaction[] }) {
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="text-muted-foreground pt-6 text-center text-sm">
+          No rows to show with the current filter.
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card>
       <div className="overflow-auto">
@@ -556,7 +744,26 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
   );
 }
 
-function TradingTable({ pnl }: { pnl: PnLResult }) {
+function TradingTable({ pnl, trades }: { pnl: PnLResult; trades: TradingTransaction[] }) {
+  // Aggregate quantity/unitPrice per ISIN from enriched trades
+  const qtyByIsin = React.useMemo(() => {
+    const map = new Map<string, { totalQty: number; count: number; name: string }>();
+    for (const t of trades) {
+      if (!t.isin) continue;
+      const entry = map.get(t.isin) || {
+        totalQty: 0,
+        count: 0,
+        name: t.cleanStockName || t.stockName,
+      };
+      if (t.quantity) entry.totalQty += t.isBuy ? t.quantity : -t.quantity;
+      entry.count += 1;
+      // Prefer the cleanest name we have
+      if (!entry.name && t.cleanStockName) entry.name = t.cleanStockName;
+      map.set(t.isin, entry);
+    }
+    return map;
+  }, [trades]);
+
   return (
     <Card>
       <div className="overflow-auto">
@@ -565,39 +772,43 @@ function TradingTable({ pnl }: { pnl: PnLResult }) {
             <TableRow>
               <TableHead>Stock</TableHead>
               <TableHead>ISIN</TableHead>
+              <TableHead className="text-right">Net qty</TableHead>
               <TableHead className="text-right">Bought</TableHead>
               <TableHead className="text-right">Sold</TableHead>
-              <TableHead className="text-right">Cost basis</TableHead>
               <TableHead className="text-right">Realized P&L</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pnl.pnlSummary.map((p) => (
-              <TableRow key={p.isin}>
-                <TableCell className="max-w-xs truncate" title={p.stockName}>
-                  {p.stockName}
-                </TableCell>
-                <TableCell className="font-mono text-xs">{p.isin}</TableCell>
-                <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
-                <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
-                <TableCell className="text-right font-mono">{formatEur(p.costBasis)}</TableCell>
-                <TableCell
-                  className={`text-right font-mono font-medium ${
-                    p.realizedGainLoss >= 0
-                      ? "text-green-600 dark:text-green-400"
-                      : "text-red-600 dark:text-red-400"
-                  }`}
-                >
-                  {formatEur(p.realizedGainLoss)}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={p.isOpen ? "outline" : "secondary"} className="text-xs">
-                    {p.statusIcon}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
+            {pnl.pnlSummary.map((p) => {
+              const agg = qtyByIsin.get(p.isin);
+              const displayName = agg?.name || p.stockName;
+              return (
+                <TableRow key={p.isin}>
+                  <TableCell className="max-w-xs truncate" title={displayName}>
+                    {displayName}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{p.isin}</TableCell>
+                  <TableCell className="text-right font-mono">{formatQty(agg?.totalQty)}</TableCell>
+                  <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
+                  <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
+                  <TableCell
+                    className={`text-right font-mono font-medium ${
+                      p.realizedGainLoss >= 0
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {formatEur(p.realizedGainLoss)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={p.isOpen ? "outline" : "secondary"} className="text-xs">
+                      {translateStatus(p.statusIcon)}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
