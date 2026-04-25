@@ -29,6 +29,7 @@ const ACT = {
   WITHDRAWAL: "WITHDRAWAL",
   DIVIDEND: "DIVIDEND",
   INTEREST: "INTEREST",
+  CREDIT: "CREDIT",
   FEE: "FEE",
   TAX: "TAX",
 } satisfies Record<string, ActivityType>;
@@ -120,9 +121,13 @@ function toIsoDate(raw: string): string {
 
 // Multi-language keyword classifier. TR statements come in DE / EN / PT (and
 // occasionally mixed) so we match against all three for each activity type.
-// Order matters: more specific keywords (DIVIDEND, INTEREST, TAX, FEE) are
-// checked before the generic IN/OUT fallback.
+// Order matters: more specific keywords (STAKING, DIVIDEND, INTEREST, TAX,
+// FEE, BONUS) are checked before the generic IN/OUT fallback.
 const KEYWORDS = {
+  // Staking rewards (TR pays them as cash to the EUR account)
+  staking: ["staking", "stake reward", "staked"],
+  // Bonus / referral / promo cash credits
+  bonus: ["bonus", "referral", "promo", "promoção", "promocao"],
   interest: ["zins", "interest", "juros", "rendimento"],
   dividend: ["dividend", "dividendo", "dividendos"],
   tax: ["steuer", "tax", "imposto", "withhold", "retenção", "retencao"],
@@ -144,20 +149,37 @@ function matchAny(text: string, words: readonly string[]): boolean {
   return false;
 }
 
-function classifyCashType(typ: string, description: string, incoming: number): ActivityType | null {
+interface CashClassification {
+  type: ActivityType;
+  subtype?: string;
+}
+
+function classifyCashType(
+  typ: string,
+  description: string,
+  incoming: number,
+): CashClassification | null {
   const t = (typ || "").toLowerCase();
   const d = (description || "").toLowerCase();
   const probe = `${t} ${d}`;
 
-  if (matchAny(probe, KEYWORDS.interest)) return ACT.INTEREST;
-  if (matchAny(probe, KEYWORDS.dividend)) return ACT.DIVIDEND;
-  if (matchAny(probe, KEYWORDS.tax)) return ACT.TAX;
-  if (matchAny(probe, KEYWORDS.fee)) return ACT.FEE;
+  // Staking → INTEREST with STAKING_REWARD subtype (Donkeyfolio convention).
+  if (matchAny(probe, KEYWORDS.staking)) {
+    return { type: ACT.INTEREST, subtype: "STAKING_REWARD" };
+  }
+  if (matchAny(probe, KEYWORDS.dividend)) return { type: ACT.DIVIDEND };
+  if (matchAny(probe, KEYWORDS.interest)) return { type: ACT.INTEREST };
+  if (matchAny(probe, KEYWORDS.tax)) return { type: ACT.TAX };
+  if (matchAny(probe, KEYWORDS.fee)) return { type: ACT.FEE };
+  // Bonus / referral / promo → CREDIT with BONUS subtype.
+  if (matchAny(probe, KEYWORDS.bonus)) {
+    return { type: ACT.CREDIT, subtype: "BONUS" };
+  }
 
   // Generic in/out → deposit/withdrawal (covers "Transfer", "Depósito aceite",
   // "Auszahlung", "Withdrawal", "Lastschrift", anything else with cash flow).
-  if (incoming > 0) return ACT.DEPOSIT;
-  if (incoming < 0) return ACT.WITHDRAWAL;
+  if (incoming > 0) return { type: ACT.DEPOSIT };
+  if (incoming < 0) return { type: ACT.WITHDRAWAL };
   return null;
 }
 
@@ -248,18 +270,19 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     const key = isin ? `${c.datum}|${isin}` : "";
     if (key && skipCashKeys.has(key)) continue;
 
-    const kind = classifyCashType(c.typ, c.beschreibung, signed);
-    if (!kind) continue;
+    const classification = classifyCashType(c.typ, c.beschreibung, signed);
+    if (!classification) continue;
 
     const amount = Math.abs(signed);
     activities.push({
       accountId,
       currency,
-      activityType: kind,
+      activityType: classification.type,
+      subtype: classification.subtype,
       date: toIsoDate(c.datum),
-      // For DIVIDEND we want the underlying ISIN (so the activity ties to the
-      // security). For pure cash flows ($CASH) keep $CASH-EUR per the wizard
-      // convention.
+      // For DIVIDEND/INTEREST(staking) we want the underlying ISIN so the
+      // activity ties to the security. For pure cash flows ($CASH) keep
+      // $CASH-EUR per the wizard convention.
       symbol: isin || "$CASH-EUR",
       amount,
       quantity: 1,
