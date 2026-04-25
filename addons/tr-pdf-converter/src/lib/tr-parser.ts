@@ -225,8 +225,12 @@ export function enrichTradingWithQuantity(
     const qtyMatch = originalDesc.match(/quantity\s*:\s*([\d.,]+)/i);
     let quantity: number | undefined;
     if (qtyMatch) {
-      const raw = qtyMatch[1].replace(/\./g, "").replace(",", ".");
-      const q = parseFloat(raw);
+      // Use the format-aware parser — TR descriptions emit "quantity: 0.272851"
+      // (US format with dot as decimal). The previous naive replace(/\./g, "")
+      // turned 0.272851 into 272851, inflating fractional shares 10^6× and
+      // producing absurd Net qty values for stocks with many fractional sells
+      // (PALANTIR sample: -11.37M shares vs. real ~63 net).
+      const q = parseEuroAmount(qtyMatch[1]);
       if (Number.isFinite(q) && q > 0) quantity = q;
     }
     const unitPrice = quantity && tx.amount > 0 ? Math.abs(tx.amount / quantity) : undefined;
