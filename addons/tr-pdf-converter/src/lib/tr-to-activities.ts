@@ -155,6 +155,15 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   }
 
   // 2) Cash rows NOT tied to a trade → DEPOSIT / WITHDRAWAL / INTEREST / etc.
+  // Donkeyfolio's import wizard requires quantity > 0 on every row (it's a
+  // mandatory field), so for cash activities we follow the same convention
+  // the AI Importer uses:
+  //     quantity  = 1
+  //     unitPrice = amount
+  //     amount    = amount
+  // That keeps amount = qty × unitPrice consistent and lets the wizard accept
+  // the row. For DIVIDEND/INTEREST a per-share breakdown is irrelevant — the
+  // total cash received is what matters.
   for (const c of cash) {
     const inc = parseEuroAmount(c.zahlungseingang);
     const out = parseEuroAmount(c.zahlungsausgang);
@@ -168,15 +177,19 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     const kind = classifyCashType(c.typ, c.beschreibung, signed);
     if (!kind) continue;
 
+    const amount = Math.abs(signed);
     activities.push({
       accountId,
       currency,
       activityType: kind,
       date: toIsoDate(c.datum),
-      symbol: isin || "$CASH",
-      amount: Math.abs(signed),
-      quantity: 0,
-      unitPrice: 0,
+      // For DIVIDEND we want the underlying ISIN (so the activity ties to the
+      // security). For pure cash flows ($CASH) keep $CASH-EUR per the wizard
+      // convention.
+      symbol: isin || "$CASH-EUR",
+      amount,
+      quantity: 1,
+      unitPrice: amount,
       fee: 0,
       comment: c.beschreibung?.slice(0, 200) || undefined,
       lineNumber: lineNumber++,
