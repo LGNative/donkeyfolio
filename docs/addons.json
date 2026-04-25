@@ -64,12 +64,12 @@
       "minWealthfolioVersion": "3.0.0"
     },
     {
-      "id": "wealthfolio-ai-importer-addon",
+      "id": "ai-importer",
       "name": "AI Importer",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "description": "Extract transactions from broker PDFs and images using OpenAI/Anthropic vision models",
       "author": "foliveira (community)",
-      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/wealthfolio-importer-1.3.2.zip",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/wealthfolio-importer-1.3.3.zip",
       "downloads": 0,
       "rating": 0,
       "reviewCount": 0,
@@ -78,14 +78,14 @@
       "isFeatured": 1,
       "lastUpdated": "2026-04-24 00:00:00",
       "images": [],
-      "releaseNotes": "v1.3.2: Fix model IDs — Anthropic 'claude-sonnet-4-5-20250514' (does not exist) → 'claude-sonnet-4-5' alias; OpenAI 'gpt-5.4-mini' (does not exist) → 'gpt-4o-mini' with standard Chat Completions params (max_tokens, no reasoning_effort). Also ships v1.3.1's pdfjs-dist 4.x downgrade that fixes the worker MIME-type error.",
+      "releaseNotes": "v1.3.3: Halve chunk size (10→5 text pages, 5→3 image pages) so each LLM request finishes in seconds instead of stalling for minutes on dense brokerage statements. Add per-request 90s hard timeout that surfaces a clear error instead of spinning forever. Better large-doc warning recommends the dedicated TR PDF Converter for Trade Republic statements. Bundles v1.3.2's model-ID fixes and v1.3.1's pdfjs-dist 4.x downgrade.",
       "changelogUrl": "https://github.com/foliveira/wealthfolio-importer",
       "isCritical": 0,
       "hasBreakingChanges": 0,
       "minWealthfolioVersion": "3.0.0"
     },
     {
-      "id": "wealthfolio-rebalancer-addon",
+      "id": "rebalancer",
       "name": "Rebalancer",
       "version": "3.0.0",
       "description": "Portfolio rebalancing calculator with target allocations and drift analysis",
@@ -106,7 +106,7 @@
       "minWealthfolioVersion": "3.0.0"
     },
     {
-      "id": "dividend-tracker",
+      "id": "dividend-tracker-addon",
       "name": "Dividend Tracker",
       "version": "1.0.2",
       "description": "Backfill missing dividend activities automatically from Yahoo Finance",
