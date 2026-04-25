@@ -568,7 +568,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 {savingsPlanCount > 0 && (
                   <p className="text-muted-foreground mt-2 text-xs">
                     Includes <strong>{savingsPlanCount}</strong> Savings plan execution(s) —
-                    imported as regular BUY activities tagged "TR Savings plan".
+                    imported as BUY with €0 fee. Manual Buy/Sell trades get the standard TR €1 fee
+                    separated out (amount = qty × price, fee = €1).
                   </p>
                 )}
                 {tradingTotal > tradingImportable && (

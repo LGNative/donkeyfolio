@@ -106,14 +106,36 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   let lineNumber = 1;
 
   // 1) Trading → BUY / SELL
+  // Trade Republic fee model:
+  //   - Manual Buy / Sell of stocks/ETFs: €1 flat external fee
+  //   - Savings plan executions: free (€0)
+  // The cash leg in the TR statement always shows the TOTAL cash flow
+  // (including the fee). For Donkeyfolio's import the convention is:
+  //   amount = qty × unitPrice  (gross trade value, NO fee)
+  //   fee   = the €1 (or €0)    (separate field)
+  // So we have to back the fee out of the cash amount before storing it.
   for (const tx of trading) {
     if (!tx.isin || !tx.date) continue;
     const qty = tx.quantity;
-    const unit = tx.unitPrice;
-    if (!qty || qty <= 0 || !unit || unit <= 0) {
+    if (!qty || qty <= 0) {
       // No quantity → can't create a proper BUY/SELL activity.
       continue;
     }
+
+    const totalCash = Math.abs(tx.amount);
+    const expectedFee = tx.isSavingsPlan ? 0 : 1;
+    // For BUY: cash_out = gross + fee → gross = cash_out - fee
+    // For SELL: cash_in = gross - fee → gross = cash_in + fee
+    const grossAmount = tx.isBuy ? totalCash - expectedFee : totalCash + expectedFee;
+
+    // Safety: if the trade is smaller than the fee (very rare, but defends
+    // against bad data), keep the cash amount as-is and skip the fee.
+    const useFeeAdjustment = grossAmount > 0;
+    const amount = useFeeAdjustment ? grossAmount : totalCash;
+    const fee = useFeeAdjustment ? expectedFee : 0;
+    const unitPrice = amount / qty;
+    if (unitPrice <= 0) continue;
+
     activities.push({
       accountId,
       currency,
@@ -122,9 +144,9 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       symbol: tx.isin,
       symbolName: tx.cleanStockName || tx.stockName,
       quantity: qty,
-      unitPrice: unit,
-      amount: Math.abs(tx.amount),
-      fee: 0,
+      unitPrice,
+      amount,
+      fee,
       comment: tx.isSavingsPlan ? "TR Savings plan" : undefined,
       lineNumber: lineNumber++,
       isValid: true,
