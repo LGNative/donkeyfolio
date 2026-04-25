@@ -56,6 +56,7 @@
         "theme": "Dark",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "trafficLightPosition": { "x": 20, "y": 20 },
         "title": "${DONKEYFOLIO_APP_NAME}",
         "width": 1440,
         "height": 960
