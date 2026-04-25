@@ -63,25 +63,99 @@ function parseEuroAmount(raw: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// dd.MM.yyyy → yyyy-MM-ddTHH:mm:ssZ (midnight UTC)
-function toIsoDate(ddmmyyyy: string): string {
-  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(ddmmyyyy.trim());
-  if (!m) return new Date().toISOString();
-  const [, dd, mm, yyyy] = m;
-  return `${yyyy}-${mm}-${dd}T00:00:00.000Z`;
+// Convert TR statement dates to ISO 8601 (midnight UTC).
+// TR emits dates in two flavours depending on the statement language:
+//   "20.06.2024"    (German, dd.MM.yyyy)
+//   "20 Jun 2024"   (English/Portuguese, dd MMM yyyy)
+//   "20 Jun. 2024"  (occasional period after the month abbreviation)
+// Everything else falls back to today (and is logged-by-effect via a clear
+// stale date in the import).
+const MONTHS_EN_PT: Record<string, string> = {
+  jan: "01",
+  feb: "02",
+  fev: "02",
+  mar: "03",
+  apr: "04",
+  abr: "04",
+  may: "05",
+  mai: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  ago: "08",
+  sep: "09",
+  set: "09",
+  oct: "10",
+  out: "10",
+  nov: "11",
+  dec: "12",
+  dez: "12",
+};
+
+function toIsoDate(raw: string): string {
+  const s = (raw || "").trim();
+  // dd.MM.yyyy
+  const dotMatch = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s);
+  if (dotMatch) {
+    const [, dd, mm, yyyy] = dotMatch;
+    return `${yyyy}-${mm}-${dd}T00:00:00.000Z`;
+  }
+  // dd MMM[.] yyyy   (e.g. "20 Jun 2024", "20 Jun. 2024", "20 jun 2024")
+  const monMatch = /^(\d{1,2})\s+([A-Za-zçÇ]{3,})\.?\s+(\d{4})$/.exec(s);
+  if (monMatch) {
+    const [, dd, monRaw, yyyy] = monMatch;
+    const mm = MONTHS_EN_PT[monRaw.slice(0, 3).toLowerCase()];
+    if (mm) {
+      const ddPad = dd.padStart(2, "0");
+      return `${yyyy}-${mm}-${ddPad}T00:00:00.000Z`;
+    }
+  }
+  // yyyy-MM-dd already
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}T00:00:00.000Z`;
+  }
+  return new Date().toISOString();
+}
+
+// Multi-language keyword classifier. TR statements come in DE / EN / PT (and
+// occasionally mixed) so we match against all three for each activity type.
+// Order matters: more specific keywords (DIVIDEND, INTEREST, TAX, FEE) are
+// checked before the generic IN/OUT fallback.
+const KEYWORDS = {
+  interest: ["zins", "interest", "juros", "rendimento"],
+  dividend: ["dividend", "dividendo", "dividendos"],
+  tax: ["steuer", "tax", "imposto", "withhold", "retenção", "retencao"],
+  fee: [
+    "gebühr",
+    "gebuehr",
+    "fee",
+    "comissão",
+    "comissao",
+    "taxa",
+    "encargo",
+    "external cost",
+    "settlement fee",
+  ],
+} as const;
+
+function matchAny(text: string, words: readonly string[]): boolean {
+  for (const w of words) if (text.includes(w)) return true;
+  return false;
 }
 
 function classifyCashType(typ: string, description: string, incoming: number): ActivityType | null {
   const t = (typ || "").toLowerCase();
   const d = (description || "").toLowerCase();
+  const probe = `${t} ${d}`;
 
-  if (t.includes("zins") || d.includes("zins") || d.includes("interest")) return ACT.INTEREST;
-  if (t.includes("dividend") || d.includes("dividend")) return ACT.DIVIDEND;
-  if (t.includes("steuer") || d.includes("steuer") || d.includes("tax")) return ACT.TAX;
-  if (t.includes("gebühr") || t.includes("gebuehr") || d.includes("gebühr") || d.includes("fee"))
-    return ACT.FEE;
+  if (matchAny(probe, KEYWORDS.interest)) return ACT.INTEREST;
+  if (matchAny(probe, KEYWORDS.dividend)) return ACT.DIVIDEND;
+  if (matchAny(probe, KEYWORDS.tax)) return ACT.TAX;
+  if (matchAny(probe, KEYWORDS.fee)) return ACT.FEE;
 
-  // Generic in/out → deposit/withdrawal
+  // Generic in/out → deposit/withdrawal (covers "Transfer", "Depósito aceite",
+  // "Auszahlung", "Withdrawal", "Lastschrift", anything else with cash flow).
   if (incoming > 0) return ACT.DEPOSIT;
   if (incoming < 0) return ACT.WITHDRAWAL;
   return null;
