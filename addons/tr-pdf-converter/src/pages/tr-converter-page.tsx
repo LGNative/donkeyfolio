@@ -188,18 +188,48 @@ function toAnalyticsShape(tx: CashTransaction) {
   };
 }
 
-function downloadBlob(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 100);
+/**
+ * Save text content to disk. Uses the SDK's openSaveDialog (works in Tauri
+ * webview where the <a download> trick is silently blocked). Falls back to
+ * the browser blob trick if the SDK call rejects (e.g. permission missing,
+ * or running in a web context).
+ */
+async function saveFile(
+  ctx: AddonContext,
+  filename: string,
+  content: string,
+  mimeType: string,
+): Promise<boolean> {
+  // Try the SDK first — Tauri webview blocks the synthetic-click download path
+  // we used before, so this is the reliable route inside the desktop app.
+  try {
+    if (ctx.api.files?.openSaveDialog) {
+      await ctx.api.files.openSaveDialog(content, filename);
+      return true;
+    }
+  } catch (err) {
+    ctx.api.logger.warn(
+      `[TR PDF] SDK file save failed (${(err as Error).message}); falling back to anchor download.`,
+    );
+  }
+  // Browser fallback (web context).
+  try {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    return true;
+  } catch (err) {
+    ctx.api.logger.error(`[TR PDF] File save failed: ${(err as Error).message}`);
+    return false;
+  }
 }
 
 function formatEur(value: number): string {
@@ -356,30 +386,37 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   const baseName = state.fileName.replace(/\.pdf$/i, "") || "tr-statements";
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (state.cash.length === 0) return;
-    downloadBlob(
+    await saveFile(
+      ctx,
       `${baseName}-cash.csv`,
       buildGenericCsv(state.cash as unknown as Record<string, unknown>[]),
       "text/csv;charset=utf-8",
     );
   };
-  const exportLexwareCsv = () => {
+  const exportLexwareCsv = async () => {
     if (state.cash.length === 0) return;
-    downloadBlob(
+    await saveFile(
+      ctx,
       `${baseName}-lexware.csv`,
       buildLexwareCsv(state.cash as unknown as Record<string, unknown>[]),
       "text/csv;charset=utf-8",
     );
   };
-  const exportJson = (kind: "cash" | "mmf" | "trading") => {
+  const exportJson = async (kind: "cash" | "mmf" | "trading") => {
     const data = kind === "cash" ? state.cash : kind === "mmf" ? state.interest : state.trading;
     if (data.length === 0) return;
-    downloadBlob(`${baseName}-${kind}.json`, JSON.stringify(data, null, 2), "application/json");
+    await saveFile(
+      ctx,
+      `${baseName}-${kind}.json`,
+      JSON.stringify(data, null, 2),
+      "application/json",
+    );
   };
 
   /** CSV shaped for the Donkeyfolio Activities Import wizard (5-step mapping). */
-  const exportDonkeyfolioCsv = () => {
+  const exportDonkeyfolioCsv = async () => {
     if (state.status !== "done") return;
     const skipKeys = buildTradingCashKeys(state.trading);
     // Use a placeholder accountId — the wizard lets the user map the account
@@ -392,7 +429,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       skipCashKeys: skipKeys,
     });
     if (activities.length === 0) return;
-    downloadBlob(
+    await saveFile(
+      ctx,
       `${baseName}-donkeyfolio.csv`,
       buildDonkeyfolioCsv(activities),
       "text/csv;charset=utf-8",

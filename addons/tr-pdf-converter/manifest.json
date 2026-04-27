@@ -1,7 +1,7 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "2.5.4",
+  "version": "2.5.5",
   "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Direct import to Donkeyfolio activities with quantity + unit price. Ported from @jcmpagel's open-source converter.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
@@ -20,8 +20,13 @@
     },
     {
       "category": "activities",
-      "functions": ["import"],
+      "functions": ["import", "checkImport"],
       "purpose": "Import parsed transactions directly as Donkeyfolio activities (optional alternative to CSV export)"
+    },
+    {
+      "category": "files",
+      "functions": ["openSaveDialog"],
+      "purpose": "Save the generated CSV / JSON exports to disk via the system save dialog (Tauri webview blocks the standard <a download> trick)"
     }
   ],
   "keywords": ["donkeyfolio", "addon", "trade-republic", "pdf", "csv"],
