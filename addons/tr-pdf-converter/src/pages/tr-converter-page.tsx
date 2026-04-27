@@ -25,15 +25,15 @@ import React from "react";
 import {
   buildGenericCsv,
   buildLexwareCsv,
-  calculatePnL,
   computeCashSanityChecks,
+  computeEnhancedPnL,
   enrichTradingWithQuantity,
   parsePDF,
   parseTradingTransactions,
   recoverCashAmounts,
   type CashTransaction,
+  type EnhancedPnLResult,
   type InterestTransaction,
-  type PnLResult,
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
@@ -50,7 +50,7 @@ interface ParseState {
   cash: CashTransaction[];
   interest: InterestTransaction[];
   trading: TradingTransaction[];
-  pnl: PnLResult | null;
+  pnl: EnhancedPnLResult | null;
   failedChecks: number;
   recoveredRows: number;
   fileName: string;
@@ -306,7 +306,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         ? (parseTradingTransactions(analyticsCashForTrading) as TradingTransaction[])
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
-      const pnl = trading.length ? calculatePnL(trading) : null;
+      // Use our own running-average-cost P&L (jcmpagel's calculatePnL returned
+      // €0 for every partially-sold position, which made the Realized P&L
+      // column useless for any active portfolio).
+      const pnl = trading.length ? computeEnhancedPnL(trading) : null;
 
       setState({
         status: "done",
@@ -797,7 +800,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                       Export JSON
                     </Button>
                   </div>
-                  <TradingTable pnl={state.pnl} trades={state.trading} />
+                  <TradingTable pnl={state.pnl} />
                 </TabsContent>
               )}
             </Tabs>
@@ -967,26 +970,7 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
   );
 }
 
-function TradingTable({ pnl, trades }: { pnl: PnLResult; trades: TradingTransaction[] }) {
-  // Aggregate quantity/unitPrice per ISIN from enriched trades
-  const qtyByIsin = React.useMemo(() => {
-    const map = new Map<string, { totalQty: number; count: number; name: string }>();
-    for (const t of trades) {
-      if (!t.isin) continue;
-      const entry = map.get(t.isin) || {
-        totalQty: 0,
-        count: 0,
-        name: t.cleanStockName || t.stockName,
-      };
-      if (t.quantity) entry.totalQty += t.isBuy ? t.quantity : -t.quantity;
-      entry.count += 1;
-      // Prefer the cleanest name we have
-      if (!entry.name && t.cleanStockName) entry.name = t.cleanStockName;
-      map.set(t.isin, entry);
-    }
-    return map;
-  }, [trades]);
-
+function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
   return (
     <Card>
       <div className="overflow-auto">
@@ -995,7 +979,8 @@ function TradingTable({ pnl, trades }: { pnl: PnLResult; trades: TradingTransact
             <TableRow>
               <TableHead>Stock</TableHead>
               <TableHead>ISIN</TableHead>
-              <TableHead className="text-right">Net qty</TableHead>
+              <TableHead className="text-right">Held</TableHead>
+              <TableHead className="text-right">Avg cost</TableHead>
               <TableHead className="text-right">Bought</TableHead>
               <TableHead className="text-right">Sold</TableHead>
               <TableHead className="text-right">Realized P&L</TableHead>
@@ -1003,35 +988,39 @@ function TradingTable({ pnl, trades }: { pnl: PnLResult; trades: TradingTransact
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pnl.pnlSummary.map((p) => {
-              const agg = qtyByIsin.get(p.isin);
-              const displayName = agg?.name || p.stockName;
-              return (
-                <TableRow key={p.isin}>
-                  <TableCell className="max-w-xs truncate" title={displayName}>
-                    {displayName}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{p.isin}</TableCell>
-                  <TableCell className="text-right font-mono">{formatQty(agg?.totalQty)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
-                  <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
-                  <TableCell
-                    className={`text-right font-mono font-medium ${
-                      p.realizedGainLoss >= 0
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
+            {pnl.positions.map((p) => (
+              <TableRow key={p.isin}>
+                <TableCell className="max-w-xs truncate" title={p.stockName}>
+                  {p.stockName}
+                </TableCell>
+                <TableCell className="font-mono text-xs">{p.isin}</TableCell>
+                <TableCell className="text-right font-mono">{formatQty(p.qtyHeld)}</TableCell>
+                <TableCell className="text-right font-mono">
+                  {p.avgCostBasis > 0 ? formatEur(p.avgCostBasis) : "—"}
+                </TableCell>
+                <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
+                <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
+                <TableCell
+                  className={`text-right font-mono font-medium ${
+                    p.realizedPnL > 0
+                      ? "text-green-600 dark:text-green-400"
+                      : p.realizedPnL < 0
+                        ? "text-red-600 dark:text-red-400"
+                        : ""
+                  }`}
+                >
+                  {p.qtySold > 0 ? formatEur(p.realizedPnL) : "—"}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={p.status === "Open" ? "outline" : "secondary"}
+                    className="text-xs"
                   >
-                    {formatEur(p.realizedGainLoss)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={p.isOpen ? "outline" : "secondary"} className="text-xs">
-                      {translateStatus(p.statusIcon)}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+                    {p.status}
+                  </Badge>
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       </div>

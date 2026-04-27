@@ -232,6 +232,9 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     const unitPrice = amount / qty;
     if (unitPrice <= 0) continue;
 
+    // Crypto pseudo-ISINs start with "XF000" (BTC/ETH/XRP/SOL etc.) — flag
+    // those so the import resolves them differently than equities.
+    const isCrypto = /^XF000/.test(tx.isin);
     activities.push({
       accountId,
       currency,
@@ -243,6 +246,11 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       unitPrice,
       amount,
       fee,
+      // Hints the Donkeyfolio backend uses for symbol resolution & validation.
+      // Without these, most rows were getting silently rejected during import
+      // ("Imported 0 / N skipped").
+      quoteCcy: currency,
+      instrumentType: isCrypto ? "Crypto" : "Equity",
       comment: tx.isSavingsPlan ? "TR Savings plan" : undefined,
       lineNumber: lineNumber++,
       isValid: true,
@@ -274,20 +282,23 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     if (!classification) continue;
 
     const amount = Math.abs(signed);
+    // Tag DIVIDEND/INTEREST rows tied to a security as Equity; pure cash
+    // flows stay generic.
+    const symbol = isin || "$CASH-EUR";
+    const isSecurityTied = !!isin;
     activities.push({
       accountId,
       currency,
       activityType: classification.type,
       subtype: classification.subtype,
       date: toIsoDate(c.datum),
-      // For DIVIDEND/INTEREST(staking) we want the underlying ISIN so the
-      // activity ties to the security. For pure cash flows ($CASH) keep
-      // $CASH-EUR per the wizard convention.
-      symbol: isin || "$CASH-EUR",
+      symbol,
       amount,
       quantity: 1,
       unitPrice: amount,
       fee: 0,
+      quoteCcy: currency,
+      instrumentType: isSecurityTied ? "Equity" : "Cash",
       comment: c.beschreibung?.slice(0, 200) || undefined,
       lineNumber: lineNumber++,
       isValid: true,

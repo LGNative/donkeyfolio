@@ -281,6 +281,164 @@ export interface PnLResult {
   closedPositions: number;
 }
 
+// ── Enhanced realized P&L (average-cost method) ─────────────────────────
+// jcmpagel's calculatePnL returns realizedGainLoss = 0 for any position that
+// is "Teilweise verkauft" (partially sold) — which is the most common state
+// for an active TR portfolio. That makes the Trading P&L tab show €0.00 for
+// every partially-sold stock and renders the realized-P&L number useless.
+//
+// Replace it with a proper running-average cost calculation: for each ISIN,
+// walk trades in chronological order; BUYs update the running average cost;
+// SELLs realize a gain/loss vs. that running average. Sum across positions.
+
+const MONTH_LOOKUP: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  fev: 1,
+  mar: 2,
+  apr: 3,
+  abr: 3,
+  may: 4,
+  mai: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  ago: 7,
+  sep: 8,
+  set: 8,
+  oct: 9,
+  out: 9,
+  nov: 10,
+  dec: 11,
+  dez: 11,
+};
+
+/** Best-effort date sort key — handles dd.MM.yyyy, "20 Jun 2024", and ISO. */
+function tradeDateSortKey(s: string): number {
+  if (!s) return 0;
+  const t = s.trim();
+  // dd.MM.yyyy
+  const dot = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(t);
+  if (dot) return new Date(+dot[3], +dot[2] - 1, +dot[1]).getTime();
+  // dd MMM[.] yyyy
+  const mon = /^(\d{1,2})\s+([A-Za-zçÇ]{3,})\.?\s+(\d{4})$/.exec(t);
+  if (mon) {
+    const m = MONTH_LOOKUP[mon[2].slice(0, 3).toLowerCase()];
+    if (m !== undefined) return new Date(+mon[3], m, +mon[1]).getTime();
+  }
+  // ISO
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  if (iso) return new Date(+iso[1], +iso[2] - 1, +iso[3]).getTime();
+  return 0;
+}
+
+export interface EnhancedPnLPosition {
+  isin: string;
+  stockName: string;
+  /** Total € spent on buys (gross of any fees). */
+  totalBought: number;
+  /** Total € received from sells. */
+  totalSold: number;
+  /** Sum of all bought quantities (positive). */
+  qtyBought: number;
+  /** Sum of all sold quantities (positive). */
+  qtySold: number;
+  /** Current holding (qtyBought − qtySold). */
+  qtyHeld: number;
+  /** Weighted-average cost per share for the held portion. */
+  avgCostBasis: number;
+  /** Realized P&L from sells, computed against the running avg cost. */
+  realizedPnL: number;
+  /** "Open" / "Closed" / "Partial". */
+  status: "Open" | "Closed" | "Partial";
+}
+
+export interface EnhancedPnLResult {
+  positions: EnhancedPnLPosition[];
+  totalRealized: number;
+  totalBought: number;
+  totalSold: number;
+}
+
+export function computeEnhancedPnL(trades: TradingTransaction[]): EnhancedPnLResult {
+  const byIsin = new Map<string, TradingTransaction[]>();
+  for (const t of trades) {
+    if (!t.isin || !t.quantity || t.quantity <= 0) continue;
+    if (!byIsin.has(t.isin)) byIsin.set(t.isin, []);
+    byIsin.get(t.isin)!.push(t);
+  }
+
+  const positions: EnhancedPnLPosition[] = [];
+  let grandRealized = 0;
+  let grandBought = 0;
+  let grandSold = 0;
+
+  for (const [isin, txs] of byIsin) {
+    txs.sort((a, b) => tradeDateSortKey(a.date) - tradeDateSortKey(b.date));
+
+    let qtyHeld = 0;
+    let avgCost = 0;
+    let realized = 0;
+    let qtyBought = 0;
+    let qtySold = 0;
+    let totalBoughtEur = 0;
+    let totalSoldEur = 0;
+
+    for (const t of txs) {
+      const qty = t.quantity!;
+      // unitPrice from enrich; fall back to amount/qty if missing.
+      const unitPrice =
+        t.unitPrice && t.unitPrice > 0 ? t.unitPrice : qty > 0 ? Math.abs(t.amount) / qty : 0;
+      if (unitPrice <= 0) continue;
+
+      if (t.isBuy) {
+        const newHeld = qtyHeld + qty;
+        avgCost = newHeld > 0 ? (avgCost * qtyHeld + unitPrice * qty) / newHeld : 0;
+        qtyHeld = newHeld;
+        qtyBought += qty;
+        totalBoughtEur += Math.abs(t.amount);
+      } else {
+        // Sell — realize against running avg cost (capped to held qty so an
+        // over-sell doesn't swing wildly).
+        const sellQty = Math.min(qty, qtyHeld > 0 ? qtyHeld : qty);
+        realized += (unitPrice - avgCost) * sellQty;
+        qtyHeld -= qty;
+        qtySold += qty;
+        totalSoldEur += Math.abs(t.amount);
+      }
+    }
+
+    let status: EnhancedPnLPosition["status"];
+    if (qtySold === 0) status = "Open";
+    else if (Math.abs(qtyHeld) < 0.0001) status = "Closed";
+    else status = "Partial";
+
+    positions.push({
+      isin,
+      stockName: txs[0].cleanStockName || txs[0].stockName,
+      totalBought: totalBoughtEur,
+      totalSold: totalSoldEur,
+      qtyBought,
+      qtySold,
+      qtyHeld,
+      avgCostBasis: avgCost,
+      realizedPnL: realized,
+      status,
+    });
+    grandRealized += realized;
+    grandBought += totalBoughtEur;
+    grandSold += totalSoldEur;
+  }
+
+  positions.sort((a, b) => b.totalBought - a.totalBought);
+  return {
+    positions,
+    totalRealized: grandRealized,
+    totalBought: grandBought,
+    totalSold: grandSold,
+  };
+}
+
 /** Parse a TR PDF → cash + interest transactions. */
 export async function parsePDF(
   arrayBuffer: ArrayBuffer,
