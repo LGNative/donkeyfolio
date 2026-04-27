@@ -26,7 +26,11 @@ export const logger: Logger = {
   },
 };
 
-const INVOKE_TIMEOUT_MS = 120_000;
+// 120 s was too tight for bulk imports of statements with ~80 unique
+// ISINs / ~3000+ activities (the wizard's preview_import_assets has to
+// hit Yahoo Finance synchronously for every unique symbol). Bumped to
+// 10 minutes so the slowest legitimate operations still complete.
+const INVOKE_TIMEOUT_MS = 600_000;
 
 /**
  * Invoke a Tauri command (internal - use typed adapter functions instead)
