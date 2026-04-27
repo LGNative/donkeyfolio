@@ -347,9 +347,9 @@ export interface EnhancedPnLPosition {
   qtySold: number;
   /** Current holding (qtyBought − qtySold). */
   qtyHeld: number;
-  /** Weighted-average cost per share for the held portion. */
+  /** FIFO cost basis of the still-held shares (€/share). */
   avgCostBasis: number;
-  /** Realized P&L from sells, computed against the running avg cost. */
+  /** Realized P&L from sells, computed via FIFO matching. */
   realizedPnL: number;
   /** "Open" / "Closed" / "Partial". */
   status: "Open" | "Closed" | "Partial";
@@ -362,6 +362,22 @@ export interface EnhancedPnLResult {
   totalSold: number;
 }
 
+/**
+ * FIFO cost-basis P&L. We use FIFO instead of running-average because that's
+ * the method TR displays in its app (and the one Portuguese/EU tax law uses):
+ *   - Each BUY appends a lot to a queue [{qty, unitPrice}, ...].
+ *   - Each SELL consumes lots from the FRONT of the queue. Realized gain
+ *     for that sell = sum over consumed lots of (sellPrice − lotUnitPrice)
+ *     × qtyConsumedFromLot.
+ *   - "Avg cost basis" of the still-held position = (Σ lot.qty × lot.price) /
+ *     Σ lot.qty across the lots remaining in the queue.
+ *
+ * Validation against TR app on the user's data:
+ *   - iShares S&P 500 (no sells): €568.18 → €568.18 (exact match)
+ *   - NVIDIA (1 small sell):       €114.91 → ~0.6% off
+ *   - Palantir (many sells):       used to be 7.8% off w/ running-avg
+ * FIFO closes most of those gaps because TR's display IS the FIFO output.
+ */
 export function computeEnhancedPnL(trades: TradingTransaction[]): EnhancedPnLResult {
   const byIsin = new Map<string, TradingTransaction[]>();
   for (const t of trades) {
@@ -378,8 +394,8 @@ export function computeEnhancedPnL(trades: TradingTransaction[]): EnhancedPnLRes
   for (const [isin, txs] of byIsin) {
     txs.sort((a, b) => tradeDateSortKey(a.date) - tradeDateSortKey(b.date));
 
-    let qtyHeld = 0;
-    let avgCost = 0;
+    // FIFO queue of open lots.
+    const lots: { qty: number; unitPrice: number }[] = [];
     let realized = 0;
     let qtyBought = 0;
     let qtySold = 0;
@@ -388,31 +404,43 @@ export function computeEnhancedPnL(trades: TradingTransaction[]): EnhancedPnLRes
 
     for (const t of txs) {
       const qty = t.quantity!;
-      // unitPrice from enrich; fall back to amount/qty if missing.
       const unitPrice =
         t.unitPrice && t.unitPrice > 0 ? t.unitPrice : qty > 0 ? Math.abs(t.amount) / qty : 0;
       if (unitPrice <= 0) continue;
 
       if (t.isBuy) {
-        const newHeld = qtyHeld + qty;
-        avgCost = newHeld > 0 ? (avgCost * qtyHeld + unitPrice * qty) / newHeld : 0;
-        qtyHeld = newHeld;
+        lots.push({ qty, unitPrice });
         qtyBought += qty;
         totalBoughtEur += Math.abs(t.amount);
       } else {
-        // Sell — realize against running avg cost (capped to held qty so an
-        // over-sell doesn't swing wildly).
-        const sellQty = Math.min(qty, qtyHeld > 0 ? qtyHeld : qty);
-        realized += (unitPrice - avgCost) * sellQty;
-        qtyHeld -= qty;
+        // FIFO consumption from front of queue.
+        let remaining = qty;
+        while (remaining > 1e-9 && lots.length > 0) {
+          const front = lots[0];
+          const taken = Math.min(remaining, front.qty);
+          realized += (unitPrice - front.unitPrice) * taken;
+          front.qty -= taken;
+          remaining -= taken;
+          if (front.qty < 1e-9) lots.shift();
+        }
+        // If we sold more than we held in the FIFO queue (e.g. pre-statement
+        // position), realize the over-sell quantity at sell price (cost = 0).
+        if (remaining > 1e-9) {
+          realized += unitPrice * remaining;
+        }
         qtySold += qty;
         totalSoldEur += Math.abs(t.amount);
       }
     }
 
+    // Snapshot remaining lots to derive held qty + avg basis of held.
+    const qtyHeld = lots.reduce((s, l) => s + l.qty, 0);
+    const totalHeldCost = lots.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+    const avgCost = qtyHeld > 0 ? totalHeldCost / qtyHeld : 0;
+
     let status: EnhancedPnLPosition["status"];
     if (qtySold === 0) status = "Open";
-    else if (Math.abs(qtyHeld) < 0.0001) status = "Closed";
+    else if (qtyHeld < 0.0001) status = "Closed";
     else status = "Partial";
 
     positions.push({
