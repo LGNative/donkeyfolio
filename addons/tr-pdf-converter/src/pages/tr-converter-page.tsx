@@ -1,4 +1,4 @@
-import type { AddonContext } from "@wealthfolio/addon-sdk";
+import type { ActivityImport, AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Badge,
   Button,
@@ -423,12 +423,46 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         return;
       }
 
+      // Step 1: validate via checkImport — this is what creates the
+      // underlying asset profiles in Donkeyfolio. Without it the
+      // backend accepts the activities but never links them to a
+      // security, so Holdings stays empty.
       setImportState({
         status: "running",
-        message: `Importing ${activities.length} activities…`,
+        message: `Resolving ${activities.length} symbols against market data…`,
       });
-      ctx.api.logger.info(`[TR PDF] Importing ${activities.length} activities`);
-      const result = await ctx.api.activities.import(activities);
+      ctx.api.logger.info(`[TR PDF] checkImport on ${activities.length} activities`);
+      let validated: ActivityImport[];
+      try {
+        const checked = await ctx.api.activities.checkImport(activities);
+        validated = (Array.isArray(checked) ? checked : []) as ActivityImport[];
+        if (validated.length === 0) validated = activities;
+      } catch (err) {
+        // checkImport failure — fall back to plain import. Worst case we end
+        // up where we were before (cash flows ok but no holdings).
+        ctx.api.logger.warn(
+          `[TR PDF] checkImport failed (${(err as Error).message}); proceeding with raw activities`,
+        );
+        validated = activities;
+      }
+
+      // Force-import everything: TR's own ISINs are the source of truth
+      // even when Yahoo's market-data DB doesn't have a matching profile
+      // (TR pseudo-ISINs for crypto, less-liquid OTC tickers, etc.). Setting
+      // forceImport: true tells the backend to create a custom asset profile
+      // when resolution fails instead of dropping the row.
+      const forced = validated.map((a) => ({
+        ...a,
+        isValid: true,
+        forceImport: true,
+      })) as (ActivityImport & { forceImport?: boolean })[];
+
+      setImportState({
+        status: "running",
+        message: `Importing ${forced.length} activities…`,
+      });
+      ctx.api.logger.info(`[TR PDF] importing ${forced.length} activities`);
+      const result = await ctx.api.activities.import(forced as ActivityImport[]);
       const imported = result?.summary?.imported ?? 0;
       const skipped = (result?.summary?.skipped ?? 0) + (result?.summary?.duplicates ?? 0);
 
