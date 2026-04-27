@@ -419,28 +419,50 @@ export function recoverCashAmounts(cash: CashTransaction[]): {
     }
 
     // (3) BOTH columns populated → fragment noise on the wrong side.
-    // The PDF column-boundary heuristic occasionally lets a tiny number
-    // (often a piece of the balance text) bleed into the opposite column
-    // for a trade row. If the value on the EXPECTED side already matches
-    // the balance delta within tolerance, the value on the OTHER side is
-    // junk — clear it.
+    // The PDF column-boundary heuristic occasionally lets a piece of the
+    // balance text bleed into the opposite column for a trade row.
+    //
+    // Two passes:
+    //   3a) If the value on the EXPECTED side matches the balance delta
+    //       within €0.01, clear the OTHER side as junk (most precise).
+    //   3b) Otherwise, if the value on the expected side is at least 100×
+    //       larger than the value on the wrong side, clear the wrong side
+    //       (heuristic — works when prevBalance is itself broken so the
+    //        delta doesn't match exactly).
     if (inc > 0 && out > 0) {
       const thisBal = balances[i];
       const prevBal = i > 0 ? balances[i - 1] : NaN;
+
+      // Pass 3a: balance-delta exact match
       if (Number.isFinite(thisBal) && Number.isFinite(prevBal)) {
         const expected = Math.abs(prevBal - thisBal);
         if (expected > 0) {
           if (isBuy && Math.abs(out - expected) < 0.01) {
-            // Out matches; In is junk fragment.
             recovered += 1;
             return { ...row, zahlungseingang: "", _recovered: "swapped" };
           }
           if (isSell && Math.abs(inc - expected) < 0.01) {
-            // In matches; Out is junk fragment.
             recovered += 1;
             return { ...row, zahlungsausgang: "", _recovered: "swapped" };
           }
         }
+      }
+
+      // Pass 3b: size-direction heuristic
+      // For a Buy: expect Out to be the trade amount, In to be junk →
+      // if Out is >100× In, In is almost certainly a stray fragment.
+      // (Real cases where both columns are non-zero on the same trade row
+      // — e.g. partial deposit + buy — would typically be of similar order
+      // of magnitude, so the 100× threshold is conservative.)
+      const ratioBuy = isBuy && out > inc * 100 && out > 1;
+      const ratioSell = isSell && inc > out * 100 && inc > 1;
+      if (ratioBuy) {
+        recovered += 1;
+        return { ...row, zahlungseingang: "", _recovered: "swapped" };
+      }
+      if (ratioSell) {
+        recovered += 1;
+        return { ...row, zahlungsausgang: "", _recovered: "swapped" };
       }
     }
 

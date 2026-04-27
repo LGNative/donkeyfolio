@@ -119,6 +119,63 @@ const translateType = (s: string | undefined): string => {
     .join(" ");
 };
 
+// Format-aware EUR string parser (mirrors the one in tr-parser/tr-to-activities).
+// Used here only for the statement summary panel — not in the import path.
+function parseEurDisplay(raw: string): number {
+  if (!raw) return 0;
+  const s = String(raw).replace(/[€\s]/g, "");
+  if (!s) return 0;
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  let n = s;
+  if (hasComma && hasDot) {
+    n =
+      s.lastIndexOf(",") > s.lastIndexOf(".")
+        ? s.replace(/\./g, "").replace(",", ".")
+        : s.replace(/,/g, "");
+  } else if (hasComma) {
+    const parts = s.split(",");
+    n = parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
+  } else if (hasDot) {
+    const parts = s.split(".");
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) n = s.replace(/\./g, "");
+  }
+  const v = parseFloat(n);
+  return Number.isFinite(v) ? v : 0;
+}
+
+interface StatementSummary {
+  opening: number;
+  totalIn: number;
+  totalOut: number;
+  closing: number;
+}
+
+/**
+ * Derive the statement-level totals from the parsed cash rows.
+ *   opening = first row's printed balance, minus that row's signed amount
+ *   closing = last row's printed balance
+ *   totalIn / totalOut = column sums
+ * These should match the "Money IN / Money OUT / Closing Balance" block at
+ * the top of every TR PDF statement, and after import they should also match
+ * Donkeyfolio's Trade Republic account cash balance.
+ */
+function computeStatementSummary(cash: CashTransaction[]): StatementSummary {
+  if (cash.length === 0) return { opening: 0, totalIn: 0, totalOut: 0, closing: 0 };
+  let totalIn = 0;
+  let totalOut = 0;
+  for (const c of cash) {
+    totalIn += parseEurDisplay(c.zahlungseingang);
+    totalOut += parseEurDisplay(c.zahlungsausgang);
+  }
+  const first = cash[0];
+  const firstSigned =
+    parseEurDisplay(first.zahlungseingang) - parseEurDisplay(first.zahlungsausgang);
+  const opening = parseEurDisplay(first.saldo) - firstSigned;
+  const closing = parseEurDisplay(cash[cash.length - 1].saldo);
+  return { opening, totalIn, totalOut, closing };
+}
+
 // Map jcmpagel cash transaction shape → analytics shape used by parseTradingTransactions
 function toAnalyticsShape(tx: CashTransaction) {
   return {
