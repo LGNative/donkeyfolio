@@ -587,14 +587,19 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             />
             {state.pnl ? (
               <StatCard
-                label="Realized P&L"
-                value={formatEur(state.pnl.totalRealized)}
+                // "Realized P&L" requires precise cost-basis tracking with
+                // historical FX rates and fee accounting per individual fill —
+                // none of which we can do reliably from a TR statement alone.
+                // The honest headline figure is the cash-flow delta (sold
+                // proceeds minus buy spend). Donkeyfolio will compute the real
+                // P&L after the activities are imported (with live market data).
+                label="Sold − Bought"
+                value={formatEur(state.pnl.totalSold - state.pnl.totalBought)}
                 icon={<Icons.DollarSign className="h-4 w-4" />}
-                tone={state.pnl.totalRealized >= 0 ? "positive" : "negative"}
               />
             ) : (
               <StatCard
-                label="Realized P&L"
+                label="Sold − Bought"
                 value="—"
                 icon={<Icons.DollarSign className="h-4 w-4" />}
               />
@@ -800,6 +805,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                       Export JSON
                     </Button>
                   </div>
+                  <p className="text-muted-foreground text-xs">
+                    Per-position approximation. The accurate P&L is computed by Donkeyfolio after
+                    import using live market prices and your full holdings history.
+                  </p>
                   <TradingTable pnl={state.pnl} />
                 </TabsContent>
               )}
