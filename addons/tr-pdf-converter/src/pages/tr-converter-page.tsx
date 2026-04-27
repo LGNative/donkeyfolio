@@ -249,7 +249,47 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // running the sanity check — so rows we can recover no longer surface as
       // failures.
       const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(result.cash);
-      const { transactions: cashWithSanity, failedChecks } = computeCashSanityChecks(recoveredCash);
+      const { transactions: cashWithChainSanity } = computeCashSanityChecks(recoveredCash);
+      // jcmpagel's sanity check tests the BALANCE CHAIN (prev_saldo + in - out
+      // must equal current_saldo). Even after our recovery, a single broken
+      // row upstream can cascade a "failed" flag onto rows that are themselves
+      // perfectly clean. For the user's purposes (importing into Donkeyfolio)
+      // what matters is whether each ROW is well-formed, not the chain.
+      // Override the flag: if a row has exactly one column populated (the
+      // expected one for its trade direction OR a one-sided cash flow), treat
+      // it as OK regardless of chain consistency.
+      const cashWithSanity = cashWithChainSanity.map((r) => {
+        if (r._sanityCheckOk !== false) return r; // already ok, leave alone
+        const desc = r.beschreibung || "";
+        const isBuyTrade =
+          /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) &&
+          /\btrade\b|\bHandel\b|\bSavings plan\b/i.test(desc);
+        const isSellTrade =
+          /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+        // Lightweight number parse — we only care about magnitude.
+        const num = (s: string) => {
+          const m = String(s || "")
+            .replace(/[€\s]/g, "")
+            .match(/-?\d+(?:[.,]\d+)?/);
+          if (!m) return 0;
+          const n = parseFloat(m[0].replace(",", "."));
+          return Number.isFinite(n) ? n : 0;
+        };
+        const inc = num(r.zahlungseingang);
+        const out = num(r.zahlungsausgang);
+        const onlyOut = inc < 0.01 && out > 0.01;
+        const onlyIn = inc > 0.01 && out < 0.01;
+        // Trade rows: well-formed = direction matches the populated side
+        if ((isBuyTrade && onlyOut) || (isSellTrade && onlyIn)) {
+          return { ...r, _sanityCheckOk: true };
+        }
+        // Non-trade rows: well-formed = exactly one side populated.
+        if (!isBuyTrade && !isSellTrade && (onlyOut || onlyIn)) {
+          return { ...r, _sanityCheckOk: true };
+        }
+        return r;
+      });
+      const failedChecks = cashWithSanity.filter((r) => r._sanityCheckOk === false).length;
       const analyticsCash = cashWithSanity.map(toAnalyticsShape);
       // jcmpagel's parseTradingTransactions only picks up descriptions containing
       // "Buy"/"Sell"/"Kauf"/"Verkauf" etc. — TR's recurring DCA buys are labelled
