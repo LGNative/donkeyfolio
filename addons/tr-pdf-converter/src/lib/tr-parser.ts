@@ -418,6 +418,32 @@ export function recoverCashAmounts(cash: CashTransaction[]): {
       }
     }
 
+    // (3) BOTH columns populated → fragment noise on the wrong side.
+    // The PDF column-boundary heuristic occasionally lets a tiny number
+    // (often a piece of the balance text) bleed into the opposite column
+    // for a trade row. If the value on the EXPECTED side already matches
+    // the balance delta within tolerance, the value on the OTHER side is
+    // junk — clear it.
+    if (inc > 0 && out > 0) {
+      const thisBal = balances[i];
+      const prevBal = i > 0 ? balances[i - 1] : NaN;
+      if (Number.isFinite(thisBal) && Number.isFinite(prevBal)) {
+        const expected = Math.abs(prevBal - thisBal);
+        if (expected > 0) {
+          if (isBuy && Math.abs(out - expected) < 0.01) {
+            // Out matches; In is junk fragment.
+            recovered += 1;
+            return { ...row, zahlungseingang: "", _recovered: "swapped" };
+          }
+          if (isSell && Math.abs(inc - expected) < 0.01) {
+            // In matches; Out is junk fragment.
+            recovered += 1;
+            return { ...row, zahlungsausgang: "", _recovered: "swapped" };
+          }
+        }
+      }
+    }
+
     return row;
   });
 
