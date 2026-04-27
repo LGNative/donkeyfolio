@@ -56,7 +56,12 @@ function parseEuroAmount(raw: string): number {
       parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
   } else if (hasDot) {
     const parts = s.split(".");
-    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+    // Multiple dots → EU thousands. Single dot with 3 digits after → EU
+    // thousands ONLY when integer part is non-zero. "0.384" stays as US
+    // decimal (it's a fractional share quantity, not 384).
+    if (parts.length > 2) {
+      normalized = s.replace(/\./g, "");
+    } else if (parts.length === 2 && parts[1].length === 3 && !/^0+$/.test(parts[0])) {
       normalized = s.replace(/\./g, "");
     }
   }

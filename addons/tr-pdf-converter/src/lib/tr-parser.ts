@@ -182,15 +182,17 @@ function parseEuroAmount(raw: string): number {
   } else if (hasDot) {
     const parts = s.split(".");
     if (parts.length > 2) {
-      // "1.234.567" → EU thousands
+      // "1.234.567" → EU thousands (multiple dots can only be thousands)
       normalized = s.replace(/\./g, "");
-    } else if (parts.length === 2 && parts[1].length === 3) {
-      // "1.234" → EU thousands (unambiguous: currency never has 3 decimals,
-      // and fractional shares with exactly 3 digits are rare enough that
-      // this heuristic does more good than harm).
+    } else if (parts.length === 2 && parts[1].length === 3 && !/^0+$/.test(parts[0])) {
+      // "1.234" → EU thousands (only when integer part is non-zero).
+      // Critically: "0.384" / "0.117" / "00.384" must STAY as decimals — TR
+      // emits fractional share quantities with exactly 3 digits all the time
+      // (Sell 0.384 ASML), and the previous heuristic was inflating them
+      // 1000× (0.384 → 384).
       normalized = s.replace(/\./g, "");
     } else {
-      // "0.129117", "13.1", "€13.12" → US decimal
+      // "0.129117", "13.1", "€13.12", "0.384" → US decimal
       normalized = s;
     }
   }
