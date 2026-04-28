@@ -280,9 +280,14 @@ const EQUITIES: Record<string, TickerMapping> = {
   US00760J1088: { symbol: "AEHR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Aehr Test
   US30231G1022: { symbol: "XOM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Exxon
   US0316521006: { symbol: "AMKR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Amkor
-  US0080731088: { symbol: "ABNB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Airbnb (US0080731088)
-  US25402D1028: { symbol: "DJT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Trump Media
-  CA50077N1024: { symbol: "PNG.V", exchangeMic: "XTSE", quoteCcy: "CAD", instrumentType: "EQUITY" }, // Kraken Robotics
+  US0080731088: { symbol: "AVAV", quoteCcy: "USD", instrumentType: "EQUITY" }, // AeroVironment (WKN A0MJX7)
+  US25402D1028: { symbol: "DOCN", quoteCcy: "USD", instrumentType: "EQUITY" }, // DigitalOcean Holdings (WKN A2QRZ4)
+  CA50077N1024: {
+    symbol: "PNG.TO",
+    exchangeMic: "XTSE",
+    quoteCcy: "CAD",
+    instrumentType: "EQUITY",
+  }, // Kraken Robotics (WKN A2DYP6, graduated from TSXV to TSX)
   CA26142Q3044: { symbol: "DPRO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Draganfly
   FI0009000681: { symbol: "NOK", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nokia ADR
   IT0003027817: {
@@ -320,10 +325,10 @@ const EQUITIES: Record<string, TickerMapping> = {
     instrumentType: "EQUITY",
   }, // Bavarian Nordic
   DK0062498333: { symbol: "NVO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Novo Nordisk ADR
-  US58733R1023: { symbol: "MELI", quoteCcy: "USD", instrumentType: "EQUITY" }, // MercadoLibre
-  US09175A2069: { symbol: "BMNR", quoteCcy: "USD", instrumentType: "EQUITY" }, // BitMine Immersion
-  US5949724083: { symbol: "META", quoteCcy: "USD", instrumentType: "EQUITY" }, // Meta secondary
-  US83443Q1031: { symbol: "SOLM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice Advanced Materials
+  US58733R1023: { symbol: "MELI", quoteCcy: "USD", instrumentType: "EQUITY" }, // MercadoLibre (description was truncated to just "INC." but user confirmed)
+  US09175A2069: { symbol: "BMNR", quoteCcy: "USD", instrumentType: "EQUITY" }, // BitMine Immersion (description was clear)
+  US5949724083: { symbol: "MSTR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Strategy (formerly MicroStrategy — Michael Saylor's bitcoin treasury company)
+  US83443Q1031: { symbol: "SOLST", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice Advanced Materials (Honeywell spinoff, NOT Amplify Solana ETF SOLM)
   IE00B4BNMY34: { symbol: "ACN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Accenture (Irish-domiciled, NYSE primary)
 };
 
