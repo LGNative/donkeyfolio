@@ -206,6 +206,32 @@ function parseEuroAmount(raw: string): number {
 }
 
 /**
+ * Multi-language quantity-label regex. TR statements come in DE/EN/PT/ES/IT
+ * depending on the user's account language; the qty label changes accordingly:
+ *
+ *   EN  "quantity: 1.234"
+ *   DE  "Stück: 1,234"   /   "Stk.: 1,234"   /   "Anzahl: 1,234"
+ *   PT  "quantidade: 1.234"   /   "qtd: 1.234"
+ *   ES  "cantidad: 1,234"
+ *   IT  "quantità: 1,234"   /   "pezzi: 1,234"
+ *
+ * Up to v2.7.1 only "quantity" matched, so non-EN PDFs lost the qty on every
+ * trade — propagating through to (a) no BUY/SELL activity and (b) the
+ * skipKeys hole that v2.7.1 plugged. This regex closes the source of the
+ * problem.
+ *
+ * Notes on regex shape:
+ *   - We DON'T anchor with \b before "stk" because "Stk.:" has a period that
+ *     breaks word-boundary semantics. Use a lookbehind for start-of-string or
+ *     non-letter instead.
+ *   - "quantità" includes a non-ASCII char — fine in JS regexes.
+ *   - We also accept the bare token "Stk." (period) which is a common DE
+ *     short form, by allowing an optional period before the colon.
+ */
+const QTY_LABEL_RE =
+  /(?:^|[^A-Za-zÀ-ÿ])(?:quantity|quantidade|qtd|stück|stueck|stk|anzahl|cantidad|quantità|pezzi)\.?\s*:\s*([\d.,]+)/i;
+
+/**
  * Enrich trading transactions with quantity extracted from the ORIGINAL cash
  * description. jcmpagel's parseTradingTransactions strips the "quantity: X"
  * fragment from stockName, so we have to re-extract from the raw cash data
@@ -216,12 +242,20 @@ export function enrichTradingWithQuantity(
   cash: Array<{ date: string; description: string; incoming: string; outgoing: string }>,
 ): TradingTransaction[] {
   // Index cash descriptions by a stable key derived from date+ISIN+amount.
+  // PATCH (v2.7.2): use parsed numeric values, not the raw strings, when
+  // picking which side of the row holds the trade amount. Previously we used
+  // `c.outgoing || c.incoming`, which evaluates string-truthiness — a column
+  // containing only whitespace (" ") is truthy but parses to 0, so the lookup
+  // key would be "...|0.00" and never match the trade amount, silently losing
+  // the description (and its quantity).
   const index = new Map<string, string>();
   for (const c of cash) {
     const desc = c.description || "";
     const isin = desc.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/)?.[1];
     if (!isin) continue;
-    const amount = parseEuroAmount(c.outgoing || c.incoming || "");
+    const out = parseEuroAmount(c.outgoing || "");
+    const inc = parseEuroAmount(c.incoming || "");
+    const amount = out > 0 ? out : inc;
     if (amount <= 0) continue;
     index.set(`${c.date}|${isin}|${amount.toFixed(2)}`, desc);
   }
@@ -229,7 +263,7 @@ export function enrichTradingWithQuantity(
   return trading.map((tx) => {
     const key = `${tx.date}|${tx.isin}|${tx.amount.toFixed(2)}`;
     const originalDesc = index.get(key) ?? "";
-    const qtyMatch = originalDesc.match(/quantity\s*:\s*([\d.,]+)/i);
+    const qtyMatch = originalDesc.match(QTY_LABEL_RE);
     let quantity: number | undefined;
     if (qtyMatch) {
       // Use the format-aware parser — TR descriptions emit "quantity: 0.272851"
@@ -249,8 +283,13 @@ export function enrichTradingWithQuantity(
       .replace(/\bSavings plan execution\b/i, "")
       // Strip the German bond suffix "DL-,01" etc.
       .replace(/\s+DL-?,?\d+.*$/i, "")
-      // Strip the trailing ", quantity: X" fragment.
-      .replace(/,\s*quantity\s*:.*$/i, "")
+      // Strip the trailing ", <qty-label>: X" fragment in any of our
+      // supported languages so non-EN PDFs don't leave "Compra APPLE,
+      // quantidade: 1.234" as the displayed name.
+      .replace(
+        /,\s*(?:quantity|quantidade|qtd|stück|stueck|stk|anzahl|cantidad|quantità|pezzi)\.?\s*:.*$/i,
+        "",
+      )
       .replace(/,\s*$/, "")
       .replace(/\s+/g, " ")
       .trim();
