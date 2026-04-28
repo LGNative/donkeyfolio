@@ -34,6 +34,7 @@ import {
   type CashTransaction,
   type EnhancedPnLResult,
   type InterestTransaction,
+  type StatementSummary,
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
@@ -57,6 +58,8 @@ interface ParseState {
   failedChecks: number;
   recoveredRows: number;
   fileName: string;
+  /** Page-1 SUMMARY block — authoritative period totals from TR. */
+  summary: StatementSummary | null;
 }
 
 type ImportState =
@@ -82,6 +85,7 @@ const initialState: ParseState = {
   failedChecks: 0,
   recoveredRows: 0,
   fileName: "",
+  summary: null,
 };
 
 // ─── Status translation (jcmpagel's parser emits German labels) ─────────
@@ -153,38 +157,6 @@ function parseEurDisplay(raw: string): number {
   }
   const v = parseFloat(n);
   return Number.isFinite(v) ? v : 0;
-}
-
-interface StatementSummary {
-  opening: number;
-  totalIn: number;
-  totalOut: number;
-  closing: number;
-}
-
-/**
- * Derive the statement-level totals from the parsed cash rows.
- *   opening = first row's printed balance, minus that row's signed amount
- *   closing = last row's printed balance
- *   totalIn / totalOut = column sums
- * These should match the "Money IN / Money OUT / Closing Balance" block at
- * the top of every TR PDF statement, and after import they should also match
- * Donkeyfolio's Trade Republic account cash balance.
- */
-function computeStatementSummary(cash: CashTransaction[]): StatementSummary {
-  if (cash.length === 0) return { opening: 0, totalIn: 0, totalOut: 0, closing: 0 };
-  let totalIn = 0;
-  let totalOut = 0;
-  for (const c of cash) {
-    totalIn += parseEurDisplay(c.zahlungseingang);
-    totalOut += parseEurDisplay(c.zahlungsausgang);
-  }
-  const first = cash[0];
-  const firstSigned =
-    parseEurDisplay(first.zahlungseingang) - parseEurDisplay(first.zahlungsausgang);
-  const opening = parseEurDisplay(first.saldo) - firstSigned;
-  const closing = parseEurDisplay(cash[cash.length - 1].saldo);
-  return { opening, totalIn, totalOut, closing };
 }
 
 // Map jcmpagel cash transaction shape → analytics shape used by parseTradingTransactions
@@ -454,6 +426,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         failedChecks,
         recoveredRows,
         fileName: file.name,
+        summary: result.summary ?? null,
       });
     } catch (err) {
       setState({
@@ -781,8 +754,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       trading: state.trading,
       skipCashKeys: skipKeys,
     });
-    return buildReconciliation(state.cash, activities);
-  }, [state.status, state.cash, state.trading]);
+    return buildReconciliation(state.cash, activities, state.summary);
+  }, [state.status, state.cash, state.trading, state.summary]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -1089,32 +1062,89 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               <CardHeader>
                 <CardTitle className="text-base">Cash reconciliation</CardTitle>
                 <CardDescription>
-                  Compare the PDF statement totals to the cash impact of the activities we'll
-                  import. A non-zero gap means a row is missing or mis-classified.
+                  {reconcile.pdfSummary
+                    ? "PDF summary block (page 1) is the authoritative ground-truth — what TR officially says about the period. We compare our row-by-row parsing against it to catch parser drift, then compare our import activities against the summary."
+                    : "Couldn't locate the PDF summary block on page 1. Falling back to row-by-row totals (less reliable)."}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 text-sm">
-                {/* Statement totals strip */}
+                {/* PDF summary tiles (preferred) — falls back to row-derived. */}
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   <ReconcileTile
                     label="Opening balance"
-                    value={formatEur(reconcile.statement.opening)}
+                    value={formatEur(
+                      reconcile.pdfSummary
+                        ? reconcile.pdfSummary.opening
+                        : reconcile.rowDerived.opening,
+                    )}
                   />
                   <ReconcileTile
                     label="Money IN"
-                    value={formatEur(reconcile.statement.totalIn)}
+                    value={formatEur(
+                      reconcile.pdfSummary
+                        ? reconcile.pdfSummary.moneyIn
+                        : reconcile.rowDerived.totalIn,
+                    )}
                     tone="positive"
                   />
                   <ReconcileTile
                     label="Money OUT"
-                    value={formatEur(reconcile.statement.totalOut)}
+                    value={formatEur(
+                      reconcile.pdfSummary
+                        ? reconcile.pdfSummary.moneyOut
+                        : reconcile.rowDerived.totalOut,
+                    )}
                     tone="negative"
                   />
                   <ReconcileTile
                     label="Closing balance"
-                    value={formatEur(reconcile.statement.closing)}
+                    value={formatEur(
+                      reconcile.pdfSummary
+                        ? reconcile.pdfSummary.ending
+                        : reconcile.rowDerived.closing,
+                    )}
                   />
                 </div>
+
+                {/* Parser-drift warning: when our row-by-row sums disagree
+                    with the PDF summary, the parser has dropped or
+                    double-counted rows. Show how much we're off so the user
+                    can see the diagnosis directly. */}
+                {reconcile.parserDrift &&
+                  (Math.abs(reconcile.parserDrift.inDrift) > 0.01 ||
+                    Math.abs(reconcile.parserDrift.outDrift) > 0.01 ||
+                    Math.abs(reconcile.parserDrift.closingDrift) > 0.01) && (
+                    <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-xs dark:border-orange-900 dark:bg-orange-950/30">
+                      <div className="flex items-start gap-2">
+                        <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-700 dark:text-orange-300" />
+                        <div className="space-y-1">
+                          <p className="font-medium text-orange-900 dark:text-orange-200">
+                            Parser drift detected — our row-by-row sum disagrees with the PDF
+                            summary block.
+                          </p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-orange-800 dark:text-orange-300">
+                            <span>
+                              IN drift: <strong>{formatEur(reconcile.parserDrift.inDrift)}</strong>
+                            </span>
+                            <span>
+                              OUT drift:{" "}
+                              <strong>{formatEur(reconcile.parserDrift.outDrift)}</strong>
+                            </span>
+                            <span>
+                              Closing drift:{" "}
+                              <strong>{formatEur(reconcile.parserDrift.closingDrift)}</strong>
+                            </span>
+                          </div>
+                          <p className="text-orange-800 dark:text-orange-300">
+                            Positive = parser counted MORE than the summary. Negative = parser
+                            MISSED rows. The reconciliation below uses the PDF summary as
+                            ground-truth, so the import will still aim at the correct closing
+                            balance.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                 {/* Breakdown */}
                 {reconcile.breakdown.length > 0 && (
@@ -1174,11 +1204,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   <div className="space-y-1 text-xs">
                     <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono">
                       <span>
-                        Statement Δ: <strong>{formatEur(reconcile.statementNetDelta)}</strong>{" "}
-                        (closing − opening)
+                        {reconcile.pdfSummary ? "PDF Δ" : "Statement Δ"}:{" "}
+                        <strong>{formatEur(reconcile.authoritativeNetDelta)}</strong> (
+                        {reconcile.pdfSummary ? "ending − opening" : "closing − opening"})
                       </span>
                       <span>
-                        Activities Δ: <strong>{formatEur(reconcile.expectedNetDelta)}</strong>
+                        Activities Δ: <strong>{formatEur(reconcile.activitiesNetDelta)}</strong>
                       </span>
                       <span>
                         Gap:{" "}

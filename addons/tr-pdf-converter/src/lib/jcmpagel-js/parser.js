@@ -56,6 +56,116 @@ function isInterestStartLabel(text) {
   );
 }
 
+/**
+ * (Donkeyfolio v2.7.3): Parse the "ACCOUNT STATEMENT SUMMARY" block on page 1.
+ *
+ * Every TR statement starts with a 4-column summary table that gives the
+ * authoritative totals for the period:
+ *
+ *   PRODUCT          OPENING BALANCE   MONEY IN       MONEY OUT     ENDING BALANCE
+ *   Checking Account €0.00             €252,535.20    €241,999.09   €10,536.11
+ *
+ * Reading these 4 numbers directly is far more reliable than summing
+ * thousands of cash rows row-by-row (where saldo-chain breaks, mis-aligned
+ * column boundaries, or missed pages will silently drift the total). We use
+ * the summary as ground truth and compare our row-level totals against it
+ * to detect parser bugs.
+ *
+ * Returns null when the summary block can't be located (e.g. older TR
+ * statement formats, a corrupted PDF). In that case downstream code falls
+ * back to the row-by-row totals.
+ */
+function parseStatementSummary(pageItems) {
+  // Find the heading anchor — try DE/EN/PT/ES/IT/FR variants.
+  const SUMMARY_ANCHORS = [
+    "ACCOUNT STATEMENT SUMMARY", // EN
+    "KONTOAUSZUG ZUSAMMENFASSUNG", // DE (sometimes)
+    "ZUSAMMENFASSUNG DES KONTOAUSZUGS", // DE (full)
+    "RESUMO DO EXTRATO DE CONTA", // PT
+    "RESUMO DO EXTRATO", // PT (variant)
+    "RESUMEN DEL EXTRACTO DE LA CUENTA", // ES
+    "RIASSUNTO DELL ESTRATTO CONTO", // IT
+    "RECAPITULATIF DU RELEVE DE COMPTE", // FR
+  ].map((s) => normalizeHeaderText(s));
+
+  const headingItem = pageItems.find((it) => {
+    const norm = normalizeHeaderText((it.text || "").trim());
+    return SUMMARY_ANCHORS.some((a) => norm === a || norm.startsWith(a));
+  });
+  if (!headingItem) return null;
+
+  // The data row sits between the heading and the next major heading
+  // ("ACCOUNT TRANSACTIONS"). Look at items below the heading (smaller y in
+  // pdf.js coords), pick those above the next major section.
+  const NEXT_SECTION_ANCHORS = [
+    "ACCOUNT TRANSACTIONS",
+    "TRANSAKTIONSUBERSICHT",
+    "TRANSACTION OVERVIEW",
+    "RESUMO DE TRANSACOES",
+    "RESUMO DAS TRANSACOES",
+    "TRANSACOES",
+    "RESUMEN DE TRANSACCIONES",
+    "PANORAMICA DELLE TRANSAZIONI",
+    "APERCU DES TRANSACTIONS",
+  ].map((s) => normalizeHeaderText(s));
+
+  const nextSectionItem = pageItems
+    .filter((it) => it.y < headingItem.y)
+    .find((it) => {
+      const norm = normalizeHeaderText((it.text || "").trim());
+      return NEXT_SECTION_ANCHORS.some((a) => norm === a || norm.startsWith(a));
+    });
+
+  // Items in the band: below heading, above next section (if any), with text.
+  const inBand = pageItems.filter((it) => {
+    if (it.y >= headingItem.y) return false;
+    if (nextSectionItem && it.y <= nextSectionItem.y + 2) return false;
+    return (it.text || "").trim() !== "";
+  });
+
+  // Find the row that contains 4 currency-shaped values + a non-currency label.
+  // Group by y (within ~3px = same line).
+  const grouped = [];
+  const sorted = inBand.slice().sort((a, b) => b.y - a.y || a.x - b.x);
+  for (const it of sorted) {
+    const last = grouped[grouped.length - 1];
+    if (last && Math.abs(last[0].y - it.y) <= 3) {
+      last.push(it);
+    } else {
+      grouped.push([it]);
+    }
+  }
+
+  const CURRENCY_RE = /^[€$]?\s*-?[\d.,]+\s*€?$/;
+  const isCurrency = (s) => {
+    const t = (s || "").trim().replace(/\s+/g, "");
+    if (!t) return false;
+    return CURRENCY_RE.test(t) && /\d/.test(t);
+  };
+
+  // Look for a row with exactly 4 currency values (opening, in, out, ending).
+  for (const row of grouped) {
+    const sortedRow = row.slice().sort((a, b) => a.x - b.x);
+    const currencyItems = sortedRow.filter((it) => isCurrency(it.text));
+    if (currencyItems.length !== 4) continue;
+    const [opening, moneyIn, moneyOut, ending] = currencyItems.map((it) => it.text.trim());
+    const productLabel = sortedRow
+      .filter((it) => !isCurrency(it.text))
+      .map((it) => it.text.trim())
+      .join(" ")
+      .trim();
+    return {
+      product: productLabel || null,
+      openingBalance: opening,
+      moneyIn,
+      moneyOut,
+      endingBalance: ending,
+    };
+  }
+
+  return null;
+}
+
 function isInterestEndLabel(text) {
   const normalized = normalizeHeaderText(text);
   return (
@@ -91,6 +201,8 @@ async function parsePDF(pdf, options = {}) {
   let allInterestTransactions = [];
   let cashColumnBoundaries = null;
   let interestColumnBoundaries = null;
+  // (v2.7.3) Authoritative period totals from the SUMMARY block on page 1.
+  let statementSummary = null;
 
   let isParsingCash = false;
   let isParsingInterest = false;
@@ -111,6 +223,24 @@ async function parsePDF(pdf, options = {}) {
       height: item.height,
     }));
     console.log(`Page ${pageNum}: Found ${pageItems.length} total text items.`);
+
+    // (v2.7.3) Capture the ACCOUNT STATEMENT SUMMARY from page 1 only.
+    // The summary block is the authoritative ground-truth of the period's
+    // totals (opening/in/out/ending) — far more reliable than summing 4000+
+    // cash rows. We do this BEFORE the cash header detection so the summary
+    // row never accidentally gets counted as a transaction.
+    if (pageNum === 1) {
+      try {
+        statementSummary = parseStatementSummary(pageItems);
+        if (statementSummary) {
+          console.log("Found statement summary:", statementSummary);
+        } else {
+          console.log("No statement summary block detected on page 1.");
+        }
+      } catch (e) {
+        console.warn("parseStatementSummary failed:", e);
+      }
+    }
 
     // --- Simple Y-only footer clipping ---
     // pdf.js text y=0 is near the bottom; larger y is higher on the page.
@@ -226,7 +356,11 @@ async function parsePDF(pdf, options = {}) {
 
   console.log(`Total cash transactions: ${allCashTransactions.length}`);
   console.log(`Total interest transactions: ${allInterestTransactions.length}`);
-  return { cash: allCashTransactions, interest: allInterestTransactions };
+  return {
+    cash: allCashTransactions,
+    interest: allInterestTransactions,
+    summary: statementSummary,
+  };
 }
 
 // --- Generic and Cash-Specific Functions ---

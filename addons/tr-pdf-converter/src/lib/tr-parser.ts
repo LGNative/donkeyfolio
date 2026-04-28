@@ -121,9 +121,29 @@ export interface InterestTransaction {
   betrag: string;
 }
 
+/**
+ * Statement-level totals parsed from the "ACCOUNT STATEMENT SUMMARY" block
+ * on page 1. Authoritative source-of-truth — TR computes these directly so
+ * they bypass any row-by-row parsing fragility (column drift, page splits,
+ * MMF section confusion).
+ *
+ * Strings are kept as raw PDF text so the consumer can decide formatting.
+ * Use parseEuroAmount() in the consumer to convert to numbers.
+ */
+export interface StatementSummary {
+  product: string | null;
+  openingBalance: string;
+  moneyIn: string;
+  moneyOut: string;
+  endingBalance: string;
+}
+
 export interface ParseResult {
   cash: CashTransaction[];
   interest: InterestTransaction[];
+  /** Page-1 summary block. null if the parser couldn't locate it (older
+   *  TR statement formats, malformed PDFs, etc.). */
+  summary: StatementSummary | null;
 }
 
 export interface TradingTransaction {
