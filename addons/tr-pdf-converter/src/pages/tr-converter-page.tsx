@@ -461,123 +461,93 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         return;
       }
 
-      // ── SMART AUTO-IMPORT ────────────────────────────────────────────
-      // The Donkeyfolio backend's bulk activities.import() inserts rows but
-      // never creates the underlying asset profile (we verified this in the
-      // core source — only prepare_new_activity, called by single create(),
-      // calls get_or_create_minimal_asset). So bulk-only imports leave
-      // Holdings empty.
+      // ── SINGLE-CREATE FOR EVERY ACTIVITY ─────────────────────────────
+      // Earlier versions tried bulk activities.import() which is fast but
+      // does not run prepare_new_activity → get_or_create_minimal_asset.
+      // Result: activities are inserted with asset_id NULL and the symbol
+      // information is discarded, leaving Holdings empty AND impossible to
+      // recover (the symbol isn't kept anywhere on the activity row).
       //
-      // Workaround: for each unique ISIN, call activities.create() ONCE with
-      // its first activity. That single call creates the asset profile.
-      // Then bulk-import the rest, skipping the seeds (idempotency keys
-      // would dedupe them anyway, but we filter explicitly to keep counts
-      // honest).
-      //
-      // This trades latency (~80 single calls × ~50ms = ~4s) for fully
-      // automatic asset creation, eliminating the need for the import wizard.
+      // The robust fix is to call ctx.api.activities.create() per activity.
+      // Each call runs prepare_new_activity which creates the asset profile
+      // (or reuses an existing one) and links the activity correctly.
+      // Trade-off: ~50 ms per call → ~3-5 minutes for a full TR yearly
+      // statement. Acceptable given we only run this once per import.
 
-      const TR_EQUITY_EU_EXCHANGE = "XAMS"; // Euronext Amsterdam — most TR
-      // ETF holdings settle here. Forces the backend to pick the EUR-listed
-      // version of an ETF instead of falling back to the GBP/LSE listing.
+      const TR_EQUITY_EU_EXCHANGE = "XAMS"; // Euronext Amsterdam — preferred
+      // EUR listing for Irish-domiciled ETFs (avoids the GBP/LSE fallback).
       const isISIN = (s: string) => /^[A-Z]{2}[A-Z0-9]{10}$/.test(s);
       const isCryptoPseudo = (s: string) => /^XF000/.test(s);
 
-      // Group by ISIN; cash-only rows ($CASH-EUR) go straight to bulk.
-      const seedByIsin = new Map<string, ActivityImport>();
-      const remaining: ActivityImport[] = [];
-      const cashOnly: ActivityImport[] = [];
-      for (const a of activities) {
-        const sym = a.symbol || "";
-        if (!sym || !isISIN(sym)) {
-          cashOnly.push(a);
-          continue;
-        }
-        if (!seedByIsin.has(sym)) {
-          seedByIsin.set(sym, a); // first activity for this ISIN → seed
-        } else {
-          remaining.push(a);
-        }
-      }
+      ctx.api.logger.info(`[TR PDF] single-create import for ${activities.length} activities`);
 
-      const seeds = Array.from(seedByIsin.values());
-      ctx.api.logger.info(
-        `[TR PDF] smart import: ${seeds.length} unique ISINs to seed, ` +
-          `${remaining.length} bulk activities, ${cashOnly.length} cash flows`,
-      );
-
-      // Step 1 — single-create each seed (creates the asset profile).
-      let createdCount = 0;
-      let createFailures = 0;
-      for (let i = 0; i < seeds.length; i++) {
-        const seed = seeds[i];
-        if (i % 5 === 0) {
+      let imported = 0;
+      let failures = 0;
+      const startMs = Date.now();
+      for (let i = 0; i < activities.length; i++) {
+        const a = activities[i];
+        // Update progress every 25 rows so the UI doesn't get spammed.
+        if (i % 25 === 0) {
+          const elapsed = (Date.now() - startMs) / 1000;
+          const eta = i > 0 ? Math.round((elapsed / i) * (activities.length - i)) : 0;
           setImportState({
             status: "running",
-            message: `Creating asset profiles… ${i + 1} of ${seeds.length}`,
+            message: `Importing ${i + 1} of ${activities.length}…  (${
+              eta > 0 ? `~${eta}s remaining` : "estimating"
+            })`,
           });
         }
+
         try {
-          // Convert ActivityImport → ActivityCreate. The single-create endpoint
-          // takes a different shape (activityDate vs date, symbol as object).
-          const sym = seed.symbol || "";
+          const sym = a.symbol || "";
+          const symbolPayload =
+            sym && isISIN(sym)
+              ? {
+                  symbol: sym,
+                  exchangeMic: isCryptoPseudo(sym)
+                    ? undefined
+                    : sym.startsWith("IE")
+                      ? TR_EQUITY_EU_EXCHANGE
+                      : undefined,
+                  name: a.symbolName,
+                }
+              : sym
+                ? { symbol: sym, name: a.symbolName }
+                : undefined;
           await ctx.api.activities.create({
             accountId: acct.accountId,
-            activityType: seed.activityType,
-            activityDate: seed.date as string,
-            symbol: {
-              symbol: sym,
-              // Hint EU exchange for Irish-domiciled ETFs (avoids GBP/LSE
-              // resolution). Don't set `kind` — the AssetKind enum only
-              // has INVESTMENT/PROPERTY/FX/etc. (not "EQUITY"/"CRYPTO");
-              // passing an invalid value silently dropped most assets in
-              // v2.6.0. Letting the backend infer from instrumentType
-              // (which we set on the activity import) is the safe path.
-              exchangeMic: isCryptoPseudo(sym)
-                ? undefined
-                : sym.startsWith("IE")
-                  ? TR_EQUITY_EU_EXCHANGE
-                  : undefined,
-              name: seed.symbolName,
-            },
-            quantity: seed.quantity ?? 0,
-            unitPrice: seed.unitPrice ?? 0,
-            amount: seed.amount ?? 0,
-            currency: seed.currency,
-            fee: seed.fee ?? 0,
-            comment: seed.comment ?? null,
+            activityType: a.activityType,
+            activityDate: a.date as string,
+            subtype: a.subtype ?? null,
+            symbol: symbolPayload,
+            quantity: a.quantity ?? 0,
+            unitPrice: a.unitPrice ?? 0,
+            amount: a.amount ?? 0,
+            currency: a.currency,
+            fee: a.fee ?? 0,
+            comment: a.comment ?? null,
           });
-          createdCount += 1;
+          imported += 1;
         } catch (err) {
-          createFailures += 1;
-          ctx.api.logger.warn(
-            `[TR PDF] seed create failed for ${seed.symbol}: ${(err as Error).message}`,
-          );
+          failures += 1;
+          if (failures <= 10) {
+            // Log only the first 10 failures so we don't flood the log.
+            ctx.api.logger.warn(
+              `[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${(err as Error).message}`,
+            );
+          }
         }
       }
 
-      // Step 2 — bulk import the remaining + cash-only rows.
-      const bulk = [...remaining, ...cashOnly];
-      setImportState({
-        status: "running",
-        message: `Importing ${bulk.length} additional activities…`,
-      });
-      ctx.api.logger.info(`[TR PDF] bulk-importing ${bulk.length} remaining activities`);
-      const forced = bulk.map((a) => ({
-        ...a,
-        isValid: true,
-        forceImport: true,
-      })) as (ActivityImport & {
-        forceImport?: boolean;
-      })[];
-      const result = await ctx.api.activities.import(forced as ActivityImport[]);
-      const bulkImported = result?.summary?.imported ?? 0;
-      const skipped = (result?.summary?.skipped ?? 0) + (result?.summary?.duplicates ?? 0);
+      const totalElapsed = Math.round((Date.now() - startMs) / 1000);
+      ctx.api.logger.info(
+        `[TR PDF] import done: ${imported} imported, ${failures} failed, ${totalElapsed}s`,
+      );
 
       setImportState({
         status: "done",
-        imported: createdCount + bulkImported,
-        skipped: skipped + createFailures,
+        imported,
+        skipped: failures,
         accountCreated: acct.created,
       });
     } catch (err) {
