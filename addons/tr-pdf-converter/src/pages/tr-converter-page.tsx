@@ -59,7 +59,15 @@ interface ParseState {
 type ImportState =
   | { status: "idle" }
   | { status: "running"; message: string }
-  | { status: "done"; imported: number; skipped: number; accountCreated: boolean }
+  | {
+      status: "done";
+      imported: number;
+      skipped: number;
+      accountCreated: boolean;
+      /** Up to 3 sample failure messages, shown when skipped > 0 so the user
+       * can diagnose which assets failed (e.g. "Quote currency required"). */
+      failureExamples?: string[];
+    }
   | { status: "error"; message: string };
 
 const initialState: ParseState = {
@@ -550,11 +558,13 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // EUR listing for Irish-domiciled ETFs (avoids the GBP/LSE fallback).
       const isISIN = (s: string) => /^[A-Z]{2}[A-Z0-9]{10}$/.test(s);
       const isCryptoPseudo = (s: string) => /^XF000/.test(s);
+      const isCashOnlySymbol = (s: string) => /^\$CASH/.test(s);
 
       ctx.api.logger.info(`[TR PDF] single-create import for ${activities.length} activities`);
 
       let imported = 0;
       let failures = 0;
+      const failureExamples: string[] = [];
       const startMs = Date.now();
       for (let i = 0; i < activities.length; i++) {
         const a = activities[i];
@@ -572,20 +582,51 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
         try {
           const sym = a.symbol || "";
-          const symbolPayload =
-            sym && isISIN(sym)
-              ? {
-                  symbol: sym,
-                  exchangeMic: isCryptoPseudo(sym)
-                    ? undefined
-                    : sym.startsWith("IE")
-                      ? TR_EQUITY_EU_EXCHANGE
-                      : undefined,
-                  name: a.symbolName,
-                }
-              : sym
-                ? { symbol: sym, name: a.symbolName }
-                : undefined;
+          // Build the SymbolInput payload for the Rust SDK. The TS SDK type
+          // omits `quoteCcy` and `instrumentType`, but the Rust struct accepts
+          // both via serde — and validate_persisted_symbol_metadata REJECTS
+          // any new EQUITY without one of: existing asset, MANUAL quoteMode,
+          // or explicit quoteCcy. Without these the import fails 100%.
+          //
+          // Strategy:
+          //   - Crypto pseudo-ISIN (XF000…) → instrumentType=CRYPTO bypasses
+          //     the validation entirely (is_non_security branch in Rust). We
+          //     also pin quoteMode=MANUAL since no provider quotes these
+          //     pseudo-ISINs anyway.
+          //   - Equity ISIN → instrumentType=EQUITY + quoteCcy=EUR. EUR is
+          //     correct for every TR statement we've seen (the user's account
+          //     is always denominated in EUR).
+          //   - $CASH-EUR or empty → omit symbol entirely. Pure cash flows
+          //     (DEPOSIT/WITHDRAWAL/non-security INTEREST) don't need an asset.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let symbolPayload: any;
+          if (sym && isISIN(sym) && isCryptoPseudo(sym)) {
+            symbolPayload = {
+              symbol: sym,
+              name: a.symbolName,
+              instrumentType: "CRYPTO",
+              quoteMode: "MANUAL",
+              quoteCcy: acct.currency,
+            };
+          } else if (sym && isISIN(sym)) {
+            symbolPayload = {
+              symbol: sym,
+              exchangeMic: sym.startsWith("IE") ? TR_EQUITY_EU_EXCHANGE : undefined,
+              name: a.symbolName,
+              instrumentType: "EQUITY",
+              quoteCcy: acct.currency,
+            };
+          } else if (sym && !isCashOnlySymbol(sym)) {
+            // Non-ISIN symbol (rare). Treat as equity with EUR quote.
+            symbolPayload = {
+              symbol: sym,
+              name: a.symbolName,
+              instrumentType: "EQUITY",
+              quoteCcy: acct.currency,
+            };
+          } else {
+            symbolPayload = undefined; // pure cash flow
+          }
           await ctx.api.activities.create({
             accountId: acct.id,
             activityType: a.activityType,
@@ -602,11 +643,13 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           imported += 1;
         } catch (err) {
           failures += 1;
+          const msg = (err as Error).message;
           if (failures <= 10) {
             // Log only the first 10 failures so we don't flood the log.
-            ctx.api.logger.warn(
-              `[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${(err as Error).message}`,
-            );
+            ctx.api.logger.warn(`[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${msg}`);
+          }
+          if (failureExamples.length < 3) {
+            failureExamples.push(`${a.symbol || "(cash)"}: ${msg.slice(0, 120)}`);
           }
         }
       }
@@ -621,6 +664,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         imported,
         skipped: failures,
         accountCreated: false,
+        failureExamples: failures > 0 ? failureExamples : undefined,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -908,13 +952,27 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   <p className="text-muted-foreground">{importState.message}</p>
                 )}
                 {importState.status === "done" && (
-                  <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-                    <Icons.CheckCircle className="h-4 w-4 shrink-0" />
-                    <span>
-                      Imported <strong>{importState.imported}</strong> activities
-                      {importState.skipped > 0 && ` · ${importState.skipped} skipped`}
-                      {importState.accountCreated && " · account created"}
-                    </span>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
+                      <Icons.CheckCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        Imported <strong>{importState.imported}</strong> activities
+                        {importState.skipped > 0 && ` · ${importState.skipped} skipped`}
+                        {importState.accountCreated && " · account created"}
+                      </span>
+                    </div>
+                    {importState.failureExamples && importState.failureExamples.length > 0 && (
+                      <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                        <div className="font-medium">Sample failures:</div>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                          {importState.failureExamples.map((msg, i) => (
+                            <li key={i} className="font-mono">
+                              {msg}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
                 {importState.status === "error" && (
