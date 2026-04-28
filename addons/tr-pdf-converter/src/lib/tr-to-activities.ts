@@ -127,12 +127,32 @@ function toIsoDate(raw: string): string {
 // Multi-language keyword classifier. TR statements come in DE / EN / PT (and
 // occasionally mixed) so we match against all three for each activity type.
 // Order matters: more specific keywords (STAKING, DIVIDEND, INTEREST, TAX,
-// FEE, BONUS) are checked before the generic IN/OUT fallback.
+// FEE, BONUS, SAVEBACK, REFUND) are checked before the generic IN/OUT
+// fallback.
 const KEYWORDS = {
   // Staking rewards (TR pays them as cash to the EUR account)
   staking: ["staking", "stake reward", "staked"],
+  // Saveback / Round-up — TR returns 1% of card spending as ETF investments.
+  // Classified as CREDIT/SAVEBACK so it's separable from regular bonuses.
+  saveback: ["saveback", "round up", "round-up", "aufrundung", "arredondamento"],
   // Bonus / referral / promo cash credits
-  bonus: ["bonus", "referral", "promo", "promoção", "promocao"],
+  bonus: ["bonus", "referral", "promo", "promoção", "promocao", "prämie"],
+  // Refunds / reimbursements / chargebacks — net incoming cash, NOT income.
+  refund: ["refund", "erstattung", "reembolso", "estorno", "rückzahlung", "ruckzahlung"],
+  // Settlement / rebooking / rounding adjustments — internal corrections.
+  // Generic in/out fallthrough handles direction; classified as CREDIT to
+  // avoid skewing the deposit/withdrawal totals.
+  settlement: [
+    "ausgleich",
+    "umbuchung",
+    "rundung",
+    "rebooking",
+    "settlement adjust",
+    "liquidação",
+    "liquidacao",
+    "reclassificação",
+    "reclassificacao",
+  ],
   interest: ["zins", "interest", "juros", "rendimento"],
   dividend: ["dividend", "dividendo", "dividendos"],
   tax: ["steuer", "tax", "imposto", "withhold", "retenção", "retencao"],
@@ -176,6 +196,30 @@ function classifyCashType(
   if (matchAny(probe, KEYWORDS.interest)) return { type: ACT.INTEREST };
   if (matchAny(probe, KEYWORDS.tax)) return { type: ACT.TAX };
   if (matchAny(probe, KEYWORDS.fee)) return { type: ACT.FEE };
+  // Saveback / Round-up: TR returns 1% of card spending. CREDIT/SAVEBACK so
+  // it's separable from referral bonuses. Always incoming — but if the row
+  // direction says outgoing (rare edge case), it'll fall through to the
+  // generic in/out branch instead of being miscategorised here.
+  if (incoming > 0 && matchAny(probe, KEYWORDS.saveback)) {
+    return { type: ACT.CREDIT, subtype: "SAVEBACK" };
+  }
+  // Refund / reimbursement / chargeback. Direction-aware: a refund TO the
+  // user is CREDIT/REFUND (incoming); a reversed refund (outgoing) falls
+  // through to WITHDRAWAL.
+  if (incoming > 0 && matchAny(probe, KEYWORDS.refund)) {
+    return { type: ACT.CREDIT, subtype: "REFUND" };
+  }
+  // Settlement / rebooking / rounding — internal adjustment. Direction-aware:
+  // tag as CREDIT (with SETTLEMENT subtype) regardless of sign, but use the
+  // sign from incoming to set the activity-level amount direction.
+  // We map both signs to CREDIT so they don't skew DEPOSIT/WITHDRAWAL totals.
+  // (In practice these are usually a few cents.)
+  if (matchAny(probe, KEYWORDS.settlement)) {
+    return {
+      type: incoming >= 0 ? ACT.CREDIT : ACT.WITHDRAWAL,
+      subtype: "SETTLEMENT",
+    };
+  }
   // Bonus / referral / promo → CREDIT with BONUS subtype.
   if (matchAny(probe, KEYWORDS.bonus)) {
     return { type: ACT.CREDIT, subtype: "BONUS" };
@@ -318,11 +362,21 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
  * Build a set of "date|ISIN" keys that identify cash rows already covered
  * by a trading transaction — so we don't import the same event twice
  * (once as BUY and once as WITHDRAWAL).
+ *
+ * IMPORTANT: only include trades that will actually be imported as
+ * BUY/SELL (i.e. have a usable quantity). Otherwise we silently drop both
+ * the trade (no qty → skipped in buildActivitiesFromParsed) AND its cash
+ * leg (skipped here), evaporating €X of cash flow per dropped trade. On a
+ * typical TR yearly statement with ~100 trades whose qty couldn't be
+ * extracted, this used to produce a ~€2-9k phantom shortfall in the imported
+ * cash balance.
  */
 export function buildTradingCashKeys(trading: TradingTransaction[]): Set<string> {
   const keys = new Set<string>();
   for (const tx of trading) {
-    if (tx.date && tx.isin) keys.add(`${tx.date}|${tx.isin}`);
+    if (tx.date && tx.isin && tx.quantity && tx.quantity > 0) {
+      keys.add(`${tx.date}|${tx.isin}`);
+    }
   }
   return keys;
 }

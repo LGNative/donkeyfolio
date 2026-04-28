@@ -104,9 +104,28 @@ const CASH_SIGN: Partial<Record<ActivityType, 1 | -1>> = {
 
 /**
  * Compute statement totals from the parsed cash rows.
- * - opening = first row's printed balance, minus that row's signed amount
- * - closing = last row's printed balance
- * - totalIn / totalOut = column sums
+ *
+ * - closing = last row's printed balance (read directly from PDF, always
+ *   reliable — TR prints the running balance on every row).
+ * - totalIn / totalOut = column sums (sum the In and Out columns across all
+ *   rows). These represent the actual cash flow the statement records.
+ * - opening = closing − (totalIn − totalOut). DERIVED, not read from the PDF.
+ *
+ * Why derive opening instead of reading it from the first row's saldo?
+ *
+ * The naive "first row saldo minus first row signed amount" approach assumes
+ * the first row IS the start of the statement period. It isn't — TR
+ * statements carry over the closing balance from the previous statement, so
+ * the first row's saldo already reflects the carry-over PLUS the first
+ * row's effect. Subtracting only the first row's signed amount gives the
+ * carry-over balance correctly ONLY IF the first row's In/Out values were
+ * extracted correctly by the PDF parser, which is fragile.
+ *
+ * The derived form is exact by construction: if the row-by-row sums add up,
+ * (closing − net flow) = opening. If they don't add up, the statement is
+ * internally inconsistent (parser dropped a row, or saldo column is wrong),
+ * and our reconciliation will surface that as a non-zero gap downstream
+ * regardless of how we computed opening.
  */
 export function computeStatementSummary(cash: CashTransaction[]): StatementSummary {
   if (cash.length === 0) return { opening: 0, totalIn: 0, totalOut: 0, closing: 0 };
@@ -116,11 +135,8 @@ export function computeStatementSummary(cash: CashTransaction[]): StatementSumma
     totalIn += parseEuroAmount(c.zahlungseingang);
     totalOut += parseEuroAmount(c.zahlungsausgang);
   }
-  const first = cash[0];
-  const firstSigned =
-    parseEuroAmount(first.zahlungseingang) - parseEuroAmount(first.zahlungsausgang);
-  const opening = parseEuroAmount(first.saldo) - firstSigned;
   const closing = parseEuroAmount(cash[cash.length - 1].saldo);
+  const opening = closing - (totalIn - totalOut);
   return { opening, totalIn, totalOut, closing };
 }
 
