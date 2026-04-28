@@ -37,6 +37,7 @@ import {
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
+import { lookupTicker } from "../lib/tr-isin-tickers";
 import {
   buildActivitiesFromParsed,
   buildDonkeyfolioCsv,
@@ -582,25 +583,34 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
         try {
           const sym = a.symbol || "";
-          // Build the SymbolInput payload for the Rust SDK. The TS SDK type
-          // omits `quoteCcy` and `instrumentType`, but the Rust struct accepts
-          // both via serde — and validate_persisted_symbol_metadata REJECTS
-          // any new EQUITY without one of: existing asset, MANUAL quoteMode,
-          // or explicit quoteCcy. Without these the import fails 100%.
+          // Build the SymbolInput payload for the Rust SDK.
           //
-          // Strategy:
-          //   - Crypto pseudo-ISIN (XF000…) → instrumentType=CRYPTO bypasses
-          //     the validation entirely (is_non_security branch in Rust). We
-          //     also pin quoteMode=MANUAL since no provider quotes these
-          //     pseudo-ISINs anyway.
-          //   - Equity ISIN → instrumentType=EQUITY + quoteCcy=EUR. EUR is
-          //     correct for every TR statement we've seen (the user's account
-          //     is always denominated in EUR).
-          //   - $CASH-EUR or empty → omit symbol entirely. Pure cash flows
-          //     (DEPOSIT/WITHDRAWAL/non-security INTEREST) don't need an asset.
+          // Order of preference:
+          //   1. ISIN→ticker map (lookupTicker) — gives Yahoo a real ticker
+          //      (AAPL, BTC-EUR, CSPX.L) that resolves to live prices and
+          //      matching ticker-logos. This is the path that produces a
+          //      pretty Holdings page with logos and current values.
+          //   2. ISIN-as-symbol fallback — when no mapping exists. The
+          //      activity still imports correctly (cost basis preserved),
+          //      but Yahoo can't price it and no logo is shown.
+          //   3. Pure cash (no symbol or "$CASH…") — symbol omitted; the
+          //      Rust backend treats DEPOSIT/WITHDRAWAL as account-level.
+          //
+          // For the fallback we still set quoteCcy/instrumentType because
+          // validate_persisted_symbol_metadata REJECTS new EQUITY assets
+          // without explicit quoteCcy. CRYPTO bypasses that branch.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let symbolPayload: any;
-          if (sym && isISIN(sym) && isCryptoPseudo(sym)) {
+          const mapped = sym ? lookupTicker(sym) : null;
+          if (mapped) {
+            symbolPayload = {
+              symbol: mapped.symbol,
+              exchangeMic: mapped.exchangeMic,
+              name: a.symbolName,
+              instrumentType: mapped.instrumentType,
+              quoteCcy: mapped.quoteCcy ?? acct.currency,
+            };
+          } else if (sym && isISIN(sym) && isCryptoPseudo(sym)) {
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
