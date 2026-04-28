@@ -528,13 +528,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             symbol: {
               symbol: sym,
               // Hint EU exchange for Irish-domiciled ETFs (avoids GBP/LSE
-              // resolution) and explicit Crypto kind for TR's pseudo-ISINs.
+              // resolution). Don't set `kind` — the AssetKind enum only
+              // has INVESTMENT/PROPERTY/FX/etc. (not "EQUITY"/"CRYPTO");
+              // passing an invalid value silently dropped most assets in
+              // v2.6.0. Letting the backend infer from instrumentType
+              // (which we set on the activity import) is the safe path.
               exchangeMic: isCryptoPseudo(sym)
                 ? undefined
                 : sym.startsWith("IE")
                   ? TR_EQUITY_EU_EXCHANGE
                   : undefined,
-              kind: isCryptoPseudo(sym) ? "CRYPTO" : "EQUITY",
               name: seed.symbolName,
             },
             quantity: seed.quantity ?? 0,
