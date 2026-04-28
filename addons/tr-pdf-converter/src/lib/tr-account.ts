@@ -25,7 +25,11 @@ export async function ensureTRAccount(ctx: AddonContext): Promise<{
   }
 
   // accounts.create is typed as `unknown` in the SDK; the desktop bridge
-  // accepts a NewAccount-shaped object.
+  // accepts a NewAccount-shaped object. trackingMode MUST be set to
+  // 'TRANSACTIONS' — the default 'NOT_SET' value puts the account in a
+  // limbo state where Donkeyfolio's Data Health flags it ("1 account
+  // needs setup") and downstream snapshot/holdings calc may behave
+  // unpredictably.
   const created = await ctx.api.accounts.create({
     name: TR_ACCOUNT_NAME,
     accountType: "SECURITIES",
@@ -33,6 +37,7 @@ export async function ensureTRAccount(ctx: AddonContext): Promise<{
     currency: TR_ACCOUNT_CURRENCY,
     isDefault: false,
     isActive: true,
+    trackingMode: "TRANSACTIONS",
     platformId: null,
     accountNumber: null,
   });

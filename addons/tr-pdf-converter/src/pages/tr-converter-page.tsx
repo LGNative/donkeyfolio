@@ -1,4 +1,4 @@
-import type { ActivityImport, AddonContext } from "@wealthfolio/addon-sdk";
+import type { Account, ActivityImport, AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Badge,
   Button,
@@ -256,6 +256,62 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = React.useState(false);
 
+  // Account selection. We load all accounts on mount so the user can pick the
+  // target account explicitly (better than always auto-creating one — lets
+  // users reuse an existing TR account, and avoids the "needs setup" state if
+  // they had created one manually with the wrong trackingMode). The fallback
+  // path remains: a "Create Trade Republic account" button if nothing fits.
+  const [accounts, setAccounts] = React.useState<Account[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = React.useState(false);
+  const [selectedAccountId, setSelectedAccountId] = React.useState<string>("");
+  const [creatingAccount, setCreatingAccount] = React.useState(false);
+
+  const loadAccounts = React.useCallback(async () => {
+    try {
+      const all = await ctx.api.accounts.getAll();
+      // Prefer active, non-archived accounts; SECURITIES first.
+      const sorted = [...all]
+        .filter((a) => a.isActive && !a.isArchived)
+        .sort((a, b) => {
+          if (a.accountType === "SECURITIES" && b.accountType !== "SECURITIES") return -1;
+          if (b.accountType === "SECURITIES" && a.accountType !== "SECURITIES") return 1;
+          return a.name.localeCompare(b.name);
+        });
+      setAccounts(sorted);
+      // Default selection: an existing "Trade Republic" account if present.
+      const trMatch = sorted.find((a) => a.name.trim().toLowerCase() === "trade republic");
+      if (trMatch) {
+        setSelectedAccountId(trMatch.id);
+      } else if (sorted.length > 0) {
+        // No TR account → leave unselected so the user has to opt in.
+        setSelectedAccountId("");
+      }
+    } catch (err) {
+      ctx.api.logger.warn(`[TR PDF] failed to load accounts: ${(err as Error).message}`);
+    } finally {
+      setAccountsLoaded(true);
+    }
+  }, [ctx]);
+
+  React.useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  const handleCreateTRAccount = React.useCallback(async () => {
+    setCreatingAccount(true);
+    try {
+      const acct = await ensureTRAccount(ctx);
+      await loadAccounts();
+      setSelectedAccountId(acct.accountId);
+    } catch (err) {
+      ctx.api.logger.error(`[TR PDF] Failed to create TR account: ${(err as Error).message}`);
+    } finally {
+      setCreatingAccount(false);
+    }
+  }, [ctx, loadAccounts]);
+
+  const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+
   const handleFile = React.useCallback(async (file: File) => {
     setImportState({ status: "idle" });
     setShowOnlyFailed(false);
@@ -439,14 +495,30 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   const handleImport = React.useCallback(async () => {
     if (state.status !== "done") return;
-    setImportState({ status: "running", message: "Finding Trade Republic account…" });
+    if (!selectedAccountId) {
+      setImportState({
+        status: "error",
+        message: "Pick a target account first (or use 'Create Trade Republic account' below).",
+      });
+      return;
+    }
+    const acct = accounts.find((a) => a.id === selectedAccountId);
+    if (!acct) {
+      setImportState({ status: "error", message: "Selected account not found." });
+      return;
+    }
+    if (acct.trackingMode !== "TRANSACTIONS") {
+      setImportState({
+        status: "error",
+        message: `Account "${acct.name}" has trackingMode "${acct.trackingMode}". Set it to "Transactions" in account settings before importing — otherwise activities won't generate Holdings.`,
+      });
+      return;
+    }
+    setImportState({ status: "running", message: "Preparing activities…" });
     try {
-      const acct = await ensureTRAccount(ctx);
-
-      setImportState({ status: "running", message: "Preparing activities…" });
       const skipKeys = buildTradingCashKeys(state.trading);
       const activities = buildActivitiesFromParsed({
-        accountId: acct.accountId,
+        accountId: acct.id,
         currency: acct.currency,
         cash: state.cash,
         trading: state.trading,
@@ -515,7 +587,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 ? { symbol: sym, name: a.symbolName }
                 : undefined;
           await ctx.api.activities.create({
-            accountId: acct.accountId,
+            accountId: acct.id,
             activityType: a.activityType,
             activityDate: a.date as string,
             subtype: a.subtype ?? null,
@@ -548,7 +620,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         status: "done",
         imported,
         skipped: failures,
-        accountCreated: acct.created,
+        accountCreated: false,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -558,7 +630,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         message: message.length > 300 ? message.slice(0, 300) + "…" : message,
       });
     }
-  }, [ctx, state.cash, state.status, state.trading]);
+  }, [ctx, accounts, selectedAccountId, state.cash, state.status, state.trading]);
 
   const reset = () => {
     setState(initialState);
@@ -725,14 +797,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 <div>
                   <CardTitle className="text-base">Import to Donkeyfolio</CardTitle>
                   <CardDescription>
-                    Creates (or reuses) a <strong>Trade Republic</strong> account and imports
-                    activities directly — or export a CSV shaped for the Import Activities wizard.
+                    Pick the target account, then import activities directly — or export a CSV
+                    shaped for the Import Activities wizard.
                   </CardDescription>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Button
                     onClick={handleImport}
-                    disabled={importState.status === "running"}
+                    disabled={
+                      importState.status === "running" || !selectedAccountId || !accountsLoaded
+                    }
                     size="sm"
                   >
                     {importState.status === "running" ? (
@@ -759,6 +833,73 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 </div>
               </div>
             </CardHeader>
+            <CardContent className="space-y-3 pt-0 text-sm">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-[260px] flex-1">
+                  <label
+                    htmlFor="tr-account-select"
+                    className="text-muted-foreground mb-1 block text-xs font-medium"
+                  >
+                    Target account
+                  </label>
+                  <select
+                    id="tr-account-select"
+                    value={selectedAccountId}
+                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                    disabled={
+                      importState.status === "running" || !accountsLoaded || creatingAccount
+                    }
+                    className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">
+                      {accountsLoaded
+                        ? accounts.length === 0
+                          ? "No accounts found — create one below"
+                          : "Select an account…"
+                        : "Loading accounts…"}
+                    </option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} · {a.accountType} · {a.currency}
+                        {a.trackingMode !== "TRANSACTIONS" ? " ⚠" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  onClick={handleCreateTRAccount}
+                  variant="outline"
+                  size="sm"
+                  disabled={importState.status === "running" || creatingAccount || !accountsLoaded}
+                >
+                  {creatingAccount ? (
+                    <>
+                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      Creating…
+                    </>
+                  ) : (
+                    <>
+                      <Icons.Plus className="mr-2 h-4 w-4" />
+                      Create Trade Republic account
+                    </>
+                  )}
+                </Button>
+              </div>
+              {selectedAccount && selectedAccount.trackingMode !== "TRANSACTIONS" && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  ⚠ This account uses trackingMode <code>{selectedAccount.trackingMode}</code>. Set
+                  it to <strong>Transactions</strong> in Donkeyfolio account settings before
+                  importing — otherwise activities won't generate Holdings.
+                </p>
+              )}
+              {accountsLoaded && accounts.length === 0 && (
+                <p className="text-muted-foreground text-xs">
+                  No accounts found in this Donkeyfolio install. Click{" "}
+                  <strong>Create Trade Republic account</strong> to add one with the right tracking
+                  mode.
+                </p>
+              )}
+            </CardContent>
             {(importState.status === "running" ||
               importState.status === "done" ||
               importState.status === "error") && (
