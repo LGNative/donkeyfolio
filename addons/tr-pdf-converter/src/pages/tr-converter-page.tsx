@@ -643,13 +643,23 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           imported += 1;
         } catch (err) {
           failures += 1;
-          const msg = (err as Error).message;
+          // Tauri IPC errors come back as STRINGS (not Error objects), so
+          // (err as Error).message is undefined and msg.slice() would throw,
+          // killing the whole import loop. Coerce defensively.
+          const errAny = err as { message?: unknown } | string | null | undefined;
+          const rawMsg =
+            typeof errAny === "string"
+              ? errAny
+              : typeof errAny === "object" && errAny !== null && typeof errAny.message === "string"
+                ? errAny.message
+                : String(err);
+          const msg = rawMsg || "(empty error)";
           if (failures <= 10) {
             // Log only the first 10 failures so we don't flood the log.
             ctx.api.logger.warn(`[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${msg}`);
           }
           if (failureExamples.length < 3) {
-            failureExamples.push(`${a.symbol || "(cash)"}: ${msg.slice(0, 120)}`);
+            failureExamples.push(`${a.symbol || "(cash)"}: ${msg.slice(0, 200)}`);
           }
         }
       }
