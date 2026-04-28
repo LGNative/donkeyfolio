@@ -143,6 +143,11 @@ export interface TradingTransaction {
   cleanStockName?: string;
   /** True when this trade came from a TR "Savings plan execution" (DCA) row. */
   isSavingsPlan?: boolean;
+  /** German Wertpapierkennnummer (WKN) extracted from description, if present.
+   * Format: 6 alphanumeric chars, typically [A-Z][0-9A-Z]{5} (e.g. A0MJX7, 870747).
+   * Useful for cross-referencing ticker mappings — a WKN unambiguously identifies
+   * the security in DE/AT exchanges where multiple ISINs may share a name. */
+  wkn?: string;
 }
 
 /**
@@ -235,6 +240,7 @@ export function enrichTradingWithQuantity(
       const q = parseEuroAmount(qtyMatch[1]);
       if (Number.isFinite(q) && q > 0) quantity = q;
     }
+    const wkn = extractWknFromDescription(originalDesc, tx.isin);
     const unitPrice = quantity && tx.amount > 0 ? Math.abs(tx.amount / quantity) : undefined;
     const cleanStockName = (tx.stockName || "")
       // Strip ISINs that may remain after jcmpagel's extraction.
@@ -249,8 +255,63 @@ export function enrichTradingWithQuantity(
       .replace(/\s+/g, " ")
       .trim();
     const isSavingsPlan = /\bSavings plan execution\b/i.test(originalDesc);
-    return { ...tx, quantity, unitPrice, cleanStockName, isSavingsPlan };
+    return { ...tx, quantity, unitPrice, cleanStockName, isSavingsPlan, wkn };
   });
+}
+
+/**
+ * Best-effort WKN extraction. WKN = 6 alphanumeric chars, typically with at
+ * least one letter. We exclude:
+ *   - 6-char windows that are part of an ISIN (substring of tx.isin)
+ *   - 6-digit purely-numeric strings that look like trade IDs (TR uses 8+ digits
+ *     for Order/Trade IDs, but very short numeric WKNs do exist — e.g. 870747
+ *     for Berkshire — so we accept all-digit if it stands alone in context)
+ *   - tokens like "GERMAN" / "RECTAL" (looks like WKN but is a word) by checking
+ *     that the token is not bracketed by alphabetic characters
+ *
+ * Real WKNs in user's data (cross-referenced by user verification on v2.6.7):
+ *   AVAV  → A0MJX7        DOCN → A2QRZ4        SOLST → A40PHT
+ *   PNG.TO → A2DYP6       MSTR → 722713
+ *
+ * Strategy: find all 6-char alphanumeric tokens, drop those that overlap the
+ * ISIN, and pick the one that appears CLOSEST to a "WKN" / "/ " marker, OR
+ * the first one that looks like a WKN (mixed letter+digit pattern). When in
+ * doubt, return undefined — better no WKN than a wrong one.
+ */
+function extractWknFromDescription(desc: string, isin: string): string | undefined {
+  if (!desc) return undefined;
+  // TR statements emit the WKN right after a forward slash separator, e.g.
+  //   "Buy trade APPLE INC. / US0378331005 / 865985 quantity: 1.234"
+  //                                          └── WKN
+  // Look for that pattern first — it's the most reliable signal.
+  const slashWkn = desc.match(/\/\s*([A-Z0-9]{6})\b/g);
+  if (slashWkn) {
+    for (const raw of slashWkn) {
+      const tok = raw.replace(/^\/\s*/, "");
+      if (isWknCandidate(tok, isin)) return tok;
+    }
+  }
+  // Fallback: any standalone 6-char alphanumeric that isn't part of the ISIN.
+  // We require word boundaries to avoid pulling 6-char windows out of longer
+  // identifiers (e.g. avoiding "ARS123" being extracted from "TRDARS123XYZ").
+  const candidates = desc.match(/\b[A-Z0-9]{6}\b/g) ?? [];
+  for (const tok of candidates) {
+    if (isWknCandidate(tok, isin)) return tok;
+  }
+  return undefined;
+}
+
+function isWknCandidate(tok: string, isin: string): boolean {
+  if (tok.length !== 6) return false;
+  if (isin && isin.includes(tok)) return false;
+  // Pure-digit tokens of 6 chars: accept (some legacy WKNs are numeric).
+  // Pure-letter 6-char tokens: reject — those are almost always English words
+  // that happen to be uppercase ("GERMAN", "STOCKS"). Real WKNs starting with
+  // letters always contain at least one digit.
+  const hasDigit = /[0-9]/.test(tok);
+  const hasLetter = /[A-Z]/.test(tok);
+  if (hasLetter && !hasDigit) return false;
+  return true;
 }
 
 export interface PnLPosition {
@@ -337,6 +398,8 @@ function tradeDateSortKey(s: string): number {
 export interface EnhancedPnLPosition {
   isin: string;
   stockName: string;
+  /** Most-frequent WKN seen across this position's trades (German stock ID). */
+  wkn?: string;
   /** Total € spent on buys (gross of any fees). */
   totalBought: number;
   /** Total € received from sells. */
@@ -443,9 +506,14 @@ export function computeEnhancedPnL(trades: TradingTransaction[]): EnhancedPnLRes
     else if (qtyHeld < 0.0001) status = "Closed";
     else status = "Partial";
 
+    // Pick the first trade's WKN (they should all be identical for a given ISIN
+    // — TR doesn't reassign WKNs mid-statement).
+    const wkn = txs.find((t) => t.wkn)?.wkn;
+
     positions.push({
       isin,
       stockName: txs[0].cleanStockName || txs[0].stockName,
+      wkn,
       totalBought: totalBoughtEur,
       totalSold: totalSoldEur,
       qtyBought,

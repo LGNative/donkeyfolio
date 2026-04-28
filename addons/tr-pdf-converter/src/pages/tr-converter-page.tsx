@@ -43,6 +43,8 @@ import {
   buildDonkeyfolioCsv,
   buildTradingCashKeys,
 } from "../lib/tr-to-activities";
+import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
+import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
@@ -275,6 +277,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const [selectedAccountId, setSelectedAccountId] = React.useState<string>("");
   const [creatingAccount, setCreatingAccount] = React.useState(false);
 
+  // Split detection (Yahoo Finance). Opt-in: the network round-trip can take
+  // ~1 minute on large portfolios, so we only run it when the user clicks
+  // "Check for splits". Results live in component state until reset.
+  const [splitState, setSplitState] = React.useState<
+    | { status: "idle" }
+    | { status: "running"; checked: number; total: number }
+    | { status: "done"; splits: SplitEvent[]; checked: number; errors: number; skipped: number }
+    | { status: "error"; message: string }
+  >({ status: "idle" });
+
   const loadAccounts = React.useCallback(async () => {
     try {
       const all = await ctx.api.accounts.getAll();
@@ -321,9 +333,34 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
 
+  const handleCheckSplits = React.useCallback(async () => {
+    if (state.status !== "done" || state.trading.length === 0) return;
+    setSplitState({ status: "running", checked: 0, total: 0 });
+    try {
+      const result = await detectSplitsForPositions(state.trading, (checked, total) => {
+        setSplitState({ status: "running", checked, total });
+      });
+      setSplitState({
+        status: "done",
+        splits: result.splits,
+        checked: result.checked,
+        errors: result.errors,
+        skipped: result.skipped,
+      });
+      ctx.api.logger.info(
+        `[TR PDF] split check: ${result.splits.length} splits found across ${result.checked} positions (${result.errors} errors, ${result.skipped} skipped).`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.api.logger.error(`[TR PDF] split check failed: ${message}`);
+      setSplitState({ status: "error", message });
+    }
+  }, [ctx, state.status, state.trading]);
+
   const handleFile = React.useCallback(async (file: File) => {
     setImportState({ status: "idle" });
     setShowOnlyFailed(false);
+    setSplitState({ status: "idle" });
     setState({
       ...initialState,
       status: "parsing",
@@ -526,6 +563,13 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     setImportState({ status: "running", message: "Preparing activities…" });
     try {
       const skipKeys = buildTradingCashKeys(state.trading);
+      // ISIN → WKN map so failure samples can show the WKN — makes it trivial
+      // for the user to look the security up by WKN (the German ID) when a
+      // mapping is missing or wrong.
+      const isinToWkn = new Map<string, string>();
+      for (const t of state.trading) {
+        if (t.isin && t.wkn && !isinToWkn.has(t.isin)) isinToWkn.set(t.isin, t.wkn);
+      }
       const activities = buildActivitiesFromParsed({
         accountId: acct.id,
         currency: acct.currency,
@@ -669,7 +713,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             ctx.api.logger.warn(`[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${msg}`);
           }
           if (failureExamples.length < 3) {
-            failureExamples.push(`${a.symbol || "(cash)"}: ${msg.slice(0, 200)}`);
+            const wkn = a.symbol ? isinToWkn.get(a.symbol) : undefined;
+            const tag = a.symbol ? (wkn ? `${a.symbol} (WKN ${wkn})` : a.symbol) : "(cash)";
+            failureExamples.push(`${tag}: ${msg.slice(0, 200)}`);
           }
         }
       }
@@ -700,6 +746,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     setState(initialState);
     setImportState({ status: "idle" });
     setShowOnlyFailed(false);
+    setSplitState({ status: "idle" });
   };
   const progressPct =
     state.progress && state.progress.total > 0
@@ -718,6 +765,24 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const tradingImportable = state.trading.filter((t) => t.quantity && t.quantity > 0).length;
   const tradingTotal = state.trading.length;
   const savingsPlanCount = state.trading.filter((t) => t.isSavingsPlan).length;
+
+  // Reconciliation: compute statement totals + activity-type breakdown +
+  // expected net cash delta, so the user can spot a parser/classification
+  // mismatch BEFORE clicking import. Memoised — re-runs only when parsed
+  // data changes.
+  const reconcile: ReconcileResult | null = React.useMemo(() => {
+    if (state.status !== "done" || state.cash.length === 0) return null;
+    const skipKeys = buildTradingCashKeys(state.trading);
+    const activities = buildActivitiesFromParsed({
+      // accountId/currency don't affect totals — placeholders are fine.
+      accountId: "_reconcile",
+      currency: "EUR",
+      cash: state.cash,
+      trading: state.trading,
+      skipCashKeys: skipKeys,
+    });
+    return buildReconciliation(state.cash, activities);
+  }, [state.status, state.cash, state.trading]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -1018,6 +1083,255 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             )}
           </Card>
 
+          {/* ─── Cash reconciliation (statement vs activities) ─── */}
+          {reconcile && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Cash reconciliation</CardTitle>
+                <CardDescription>
+                  Compare the PDF statement totals to the cash impact of the activities we'll
+                  import. A non-zero gap means a row is missing or mis-classified.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {/* Statement totals strip */}
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <ReconcileTile
+                    label="Opening balance"
+                    value={formatEur(reconcile.statement.opening)}
+                  />
+                  <ReconcileTile
+                    label="Money IN"
+                    value={formatEur(reconcile.statement.totalIn)}
+                    tone="positive"
+                  />
+                  <ReconcileTile
+                    label="Money OUT"
+                    value={formatEur(reconcile.statement.totalOut)}
+                    tone="negative"
+                  />
+                  <ReconcileTile
+                    label="Closing balance"
+                    value={formatEur(reconcile.statement.closing)}
+                  />
+                </div>
+
+                {/* Breakdown */}
+                {reconcile.breakdown.length > 0 && (
+                  <div className="overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Activity type</TableHead>
+                          <TableHead className="text-right">Count</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                          <TableHead className="text-right">Cash impact</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {reconcile.breakdown.map((r) => (
+                          <TableRow key={r.activityType}>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {r.activityType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-mono">{r.count}</TableCell>
+                            <TableCell className="text-right font-mono">
+                              {formatEur(r.total)}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right font-mono font-medium ${
+                                r.cashImpact > 0
+                                  ? "text-green-600 dark:text-green-400"
+                                  : r.cashImpact < 0
+                                    ? "text-red-600 dark:text-red-400"
+                                    : ""
+                              }`}
+                            >
+                              {(r.cashImpact > 0 ? "+" : "") + formatEur(r.cashImpact)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {/* Verdict */}
+                <div
+                  className={`flex items-start gap-2 rounded-md border p-3 ${
+                    Math.abs(reconcile.reconciliationGap) < 0.01
+                      ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/30"
+                      : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
+                  }`}
+                >
+                  {Math.abs(reconcile.reconciliationGap) < 0.01 ? (
+                    <Icons.CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-700 dark:text-green-300" />
+                  ) : (
+                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
+                  )}
+                  <div className="space-y-1 text-xs">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono">
+                      <span>
+                        Statement Δ: <strong>{formatEur(reconcile.statementNetDelta)}</strong>{" "}
+                        (closing − opening)
+                      </span>
+                      <span>
+                        Activities Δ: <strong>{formatEur(reconcile.expectedNetDelta)}</strong>
+                      </span>
+                      <span>
+                        Gap:{" "}
+                        <strong
+                          className={
+                            Math.abs(reconcile.reconciliationGap) < 0.01
+                              ? "text-green-700 dark:text-green-300"
+                              : "text-amber-700 dark:text-amber-300"
+                          }
+                        >
+                          {formatEur(reconcile.reconciliationGap)}
+                        </strong>
+                      </span>
+                    </div>
+                    {Math.abs(reconcile.reconciliationGap) < 0.01 ? (
+                      <p className="text-green-700 dark:text-green-300">
+                        ✓ The activities we'll import reconcile to the PDF closing balance.
+                      </p>
+                    ) : (
+                      <p className="text-amber-700 dark:text-amber-300">
+                        Off by {formatEur(reconcile.reconciliationGap)} — likely a cash row with an
+                        unrecognised type, or a parser drop-out. Check rows tagged "Refund" /
+                        "Settlement" / "Rounding" — those need a CREDIT subtype mapping.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ─── Stock-split detection (Yahoo Finance, opt-in) ─── */}
+          {state.trading.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-base">Stock splits</CardTitle>
+                    <CardDescription>
+                      TR PDFs record pre-split quantities. After a 2:1 split your imported holding
+                      will be half of reality unless a SPLIT activity is added. This check queries
+                      Yahoo Finance for splits that happened after each position's first trade.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={handleCheckSplits}
+                    variant="outline"
+                    size="sm"
+                    disabled={splitState.status === "running" || importState.status === "running"}
+                  >
+                    {splitState.status === "running" ? (
+                      <>
+                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                        Checking…
+                      </>
+                    ) : (
+                      <>
+                        <Icons.Search className="mr-2 h-4 w-4" />
+                        Check for splits
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              {splitState.status !== "idle" && (
+                <CardContent className="text-sm">
+                  {splitState.status === "running" && (
+                    <div className="text-muted-foreground">
+                      Querying Yahoo… {splitState.checked}
+                      {splitState.total > 0 ? ` / ${splitState.total}` : ""} positions checked.
+                    </div>
+                  )}
+                  {splitState.status === "error" && (
+                    <div className="flex items-start gap-2 text-red-700 dark:text-red-300">
+                      <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{splitState.message}</span>
+                    </div>
+                  )}
+                  {splitState.status === "done" && splitState.splits.length === 0 && (
+                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
+                      <Icons.CheckCircle className="h-4 w-4 shrink-0" />
+                      <span>
+                        No splits detected — checked {splitState.checked} position
+                        {splitState.checked === 1 ? "" : "s"}
+                        {splitState.errors > 0 ? ` (${splitState.errors} couldn't be queried)` : ""}
+                        .
+                      </span>
+                    </div>
+                  )}
+                  {splitState.status === "done" && splitState.splits.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                        <Icons.AlertCircle className="h-4 w-4 shrink-0" />
+                        <span>
+                          Found <strong>{splitState.splits.length}</strong> split
+                          {splitState.splits.length === 1 ? "" : "s"} affecting your TR holdings.
+                          Add a <code>SPLIT</code> activity in Donkeyfolio for each one (or your
+                          imported quantity will stay at the pre-split amount).
+                        </span>
+                      </div>
+                      <div className="overflow-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Stock</TableHead>
+                              <TableHead>Ticker</TableHead>
+                              <TableHead>WKN</TableHead>
+                              <TableHead>Split date</TableHead>
+                              <TableHead className="text-right">Ratio</TableHead>
+                              <TableHead>First trade</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {splitState.splits.map((s, i) => (
+                              <TableRow key={`${s.isin}-${s.date}-${i}`}>
+                                <TableCell className="max-w-xs truncate" title={s.stockName}>
+                                  {s.stockName}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs">{s.ticker}</TableCell>
+                                <TableCell className="text-muted-foreground font-mono text-xs">
+                                  {s.wkn || "—"}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs">{s.date}</TableCell>
+                                <TableCell className="text-right font-mono">
+                                  <Badge
+                                    variant={s.ratioMul > 1 ? "outline" : "secondary"}
+                                    className="text-xs"
+                                  >
+                                    {s.ratio}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-muted-foreground font-mono text-xs">
+                                  {s.firstTradeDate}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {splitState.errors > 0 && (
+                        <p className="text-muted-foreground text-xs">
+                          Note: {splitState.errors} ticker
+                          {splitState.errors === 1 ? "" : "s"} couldn't be queried (network /
+                          rate-limit). Re-run if needed.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              )}
+            </Card>
+          )}
+
           {state.recoveredRows > 0 && (
             <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30">
               <CardContent className="flex items-center gap-2 pt-4 text-sm text-blue-900 dark:text-blue-200">
@@ -1208,6 +1522,29 @@ function StatCard({
   );
 }
 
+function ReconcileTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "positive" | "negative";
+}) {
+  const toneClass =
+    tone === "positive"
+      ? "text-green-600 dark:text-green-400"
+      : tone === "negative"
+        ? "text-red-600 dark:text-red-400"
+        : "";
+  return (
+    <div className="bg-muted/40 rounded-md border p-3">
+      <div className="text-muted-foreground text-xs font-medium">{label}</div>
+      <div className={`mt-1 font-mono text-lg font-bold ${toneClass}`}>{value}</div>
+    </div>
+  );
+}
+
 function CashTable({ rows }: { rows: CashTransaction[] }) {
   if (rows.length === 0) {
     return (
@@ -1319,6 +1656,7 @@ function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
             <TableRow>
               <TableHead>Stock</TableHead>
               <TableHead>ISIN</TableHead>
+              <TableHead>WKN</TableHead>
               <TableHead className="text-right">Held</TableHead>
               <TableHead className="text-right">Avg cost</TableHead>
               <TableHead className="text-right">Bought</TableHead>
@@ -1334,6 +1672,9 @@ function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
                   {p.stockName}
                 </TableCell>
                 <TableCell className="font-mono text-xs">{p.isin}</TableCell>
+                <TableCell className="text-muted-foreground font-mono text-xs">
+                  {p.wkn || "—"}
+                </TableCell>
                 <TableCell className="text-right font-mono">{formatQty(p.qtyHeld)}</TableCell>
                 <TableCell className="text-right font-mono">
                   {p.avgCostBasis > 0 ? formatEur(p.avgCostBasis) : "—"}
