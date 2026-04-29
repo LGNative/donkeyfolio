@@ -19,6 +19,7 @@ import type { ActivityImport, ActivityType } from "@wealthfolio/addon-sdk";
 
 import { extractIsin } from "./tr-isin-utils";
 import type { CashTransaction, TradingTransaction } from "./tr-parser";
+import type { SplitEvent } from "./tr-splits";
 
 // The SDK only re-exports data-types as types (not runtime consts), so we
 // reference activity types by their literal string values. These match the
@@ -254,6 +255,13 @@ interface BuildOpts {
   /** Latest activity date in the cash[] — used as the date for the
    *  reconciliation activity so it appears at the end of the timeline. */
   lastActivityDate?: string;
+  /** (v2.10.2) Auto-detected stock splits to emit as SPLIT activities.
+   *  Each entry produces one SPLIT row with `amount = numerator/denominator`
+   *  (Donkeyfolio's snapshot service reads the ratio from `amount` —
+   *  see crates/core snapshot_service::calculate_split_factors).
+   *  Without these, ServiceNow-style 2:1 splits leave imported holdings at
+   *  ~half the real share count (DB 10.55 vs TR 21.10). */
+  autoSplits?: SplitEvent[];
 }
 
 // (v2.10.1) ISIN validation moved to tr-isin-utils.ts — see that file for
@@ -261,7 +269,16 @@ interface BuildOpts {
 // the word "SUBSCRIPTION", creating a fake asset that Yahoo failed to price.
 
 export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
-  const { accountId, currency, cash, trading, skipCashKeys, pdfSummary, lastActivityDate } = opts;
+  const {
+    accountId,
+    currency,
+    cash,
+    trading,
+    skipCashKeys,
+    pdfSummary,
+    lastActivityDate,
+    autoSplits,
+  } = opts;
   const activities: ActivityImport[] = [];
   let lineNumber = 1;
 
@@ -320,6 +337,49 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       isValid: true,
       isDraft: false,
     });
+  }
+
+  // 1b) (v2.10.2) Stock splits — emit one SPLIT activity per detected split.
+  //
+  // Donkeyfolio convention (verified against
+  // crates/core/src/portfolio/snapshot/snapshot_service.rs::calculate_split_factors):
+  //   - activityType = "SPLIT"
+  //   - amount       = numerator / denominator  (e.g. 2 for a 2:1 forward split)
+  //   - quantity     = 1 (placeholder — wizard requires a positive qty;
+  //                       the snapshot service reads the ratio from `amount`)
+  //   - unitPrice    = 0
+  //   - symbol       = ISIN (matches the BUY/SELL rows above so the asset_id
+  //                          resolves identically)
+  //
+  // The Rust side adjusts every NON-SPLIT activity dated BEFORE the split's
+  // date by the cumulative ratio. So a 2:1 split with `amount=2` doubles
+  // pre-split quantities, which is exactly what we want for ServiceNow.
+  if (autoSplits && autoSplits.length > 0) {
+    for (const sp of autoSplits) {
+      if (!sp.isin || !sp.date) continue;
+      const ratio = sp.numerator / sp.denominator;
+      if (!Number.isFinite(ratio) || ratio <= 0) continue;
+      activities.push({
+        accountId,
+        currency,
+        activityType: "SPLIT",
+        date: `${sp.date}T00:00:00.000Z`,
+        symbol: sp.isin,
+        symbolName: sp.stockName,
+        // SPLIT ratio lives in `amount`. quantity/unitPrice are placeholders
+        // to satisfy the import wizard's "must be positive" check.
+        amount: ratio,
+        quantity: 1,
+        unitPrice: 0,
+        fee: 0,
+        quoteCcy: currency,
+        instrumentType: "Equity",
+        comment: `TR auto-split: ${sp.ticker} ${sp.ratio} on ${sp.date} (Yahoo Finance)`,
+        lineNumber: lineNumber++,
+        isValid: true,
+        isDraft: false,
+      });
+    }
   }
 
   // 2) Cash rows NOT tied to a trade → DEPOSIT / WITHDRAWAL / INTEREST / etc.

@@ -697,6 +697,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         skipCashKeys: skipKeys,
         pdfSummary: pdfSummaryNumeric,
         lastActivityDate,
+        // (v2.10.2) Emit SPLIT activities for splits detected during parse so
+        // pre-split BUY/SELL quantities get adjusted to today's share count
+        // (e.g. ServiceNow 2:1 → DB 10.55 → 21.10 shares).
+        autoSplits: state.autoSplits,
       });
 
       if (activities.length === 0) {

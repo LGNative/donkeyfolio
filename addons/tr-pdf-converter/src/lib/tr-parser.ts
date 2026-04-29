@@ -270,7 +270,15 @@ export function enrichTradingWithQuantity(
   // containing only whitespace (" ") is truthy but parses to 0, so the lookup
   // key would be "...|0.00" and never match the trade amount, silently losing
   // the description (and its quantity).
-  const index = new Map<string, string>();
+  //
+  // PATCH (v2.10.2): the index used to be `Map<key, string>`, which means
+  // when N trades share the same (date, isin, amount.toFixed(2)) key, only
+  // the LAST cash row's description survives — silently overwriting the
+  // earlier ones. Multiple same-day same-amount buys (very common with TR
+  // savings plans @ €101.00) then all received the SAME description's
+  // quantity. We switch to `Map<key, string[]>` and consume the first
+  // unconsumed desc per trade so the mapping is 1:1.
+  const index = new Map<string, string[]>();
   for (const c of cash) {
     const desc = c.description || "";
     // (v2.10.1) Use shared validator — bare regex matches "SUBSCRIPTION".
@@ -280,12 +288,17 @@ export function enrichTradingWithQuantity(
     const inc = parseEuroAmount(c.incoming || "");
     const amount = out > 0 ? out : inc;
     if (amount <= 0) continue;
-    index.set(`${c.date}|${isin}|${amount.toFixed(2)}`, desc);
+    const key = `${c.date}|${isin}|${amount.toFixed(2)}`;
+    const queue = index.get(key);
+    if (queue) queue.push(desc);
+    else index.set(key, [desc]);
   }
 
   return trading.map((tx) => {
     const key = `${tx.date}|${tx.isin}|${tx.amount.toFixed(2)}`;
-    const originalDesc = index.get(key) ?? "";
+    const queue = index.get(key);
+    // Pop the FIRST unconsumed desc so each trade gets its own row's qty.
+    const originalDesc = queue && queue.length > 0 ? queue.shift()! : "";
     const qtyMatch = originalDesc.match(QTY_LABEL_RE);
     let quantity: number | undefined;
     if (qtyMatch) {

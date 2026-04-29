@@ -343,7 +343,11 @@ const EQUITIES: Record<string, TickerMapping> = {
   US68236H2040: { symbol: "ONDS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ondas
   US75886F1075: { symbol: "REGN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Regeneron
   US05605H1005: { symbol: "BWXT", quoteCcy: "USD", instrumentType: "EQUITY" }, // BWX Tech
-  US7731211089: { symbol: "RKLB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rocket Lab Corp (post-merger)
+  // (v2.10.2) Removed duplicate `US7731211089 → RKLB` — the canonical Rocket
+  // Lab ISIN is `US7731221062` (mapped above at line ~300). The previous
+  // entry at this slot historically pointed at RBRK (Rubrik) by mistake, then
+  // got swapped to RKLB which created a 2nd ISIN aliased to the same Yahoo
+  // ticker. Removing it eliminates the asset-collision risk.
   US5024311095: { symbol: "LHX", quoteCcy: "USD", instrumentType: "EQUITY" }, // L3Harris
   US5398301094: { symbol: "LMT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Lockheed
   US00760J1088: { symbol: "AEHR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Aehr Test
