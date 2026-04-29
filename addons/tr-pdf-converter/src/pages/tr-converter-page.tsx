@@ -1,4 +1,4 @@
-import type { Account, ActivityImport, AddonContext } from "@wealthfolio/addon-sdk";
+import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Badge,
   Button,
@@ -11,6 +11,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
   Icons,
+  Input,
   Progress,
   Table,
   TableBody,
@@ -18,16 +19,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
 } from "@wealthfolio/ui";
 import React from "react";
 
 import {
-  buildGenericCsv,
-  buildLexwareCsv,
   computeCashSanityChecks,
   computeEnhancedPnL,
   enforceChainConsistency,
@@ -44,11 +39,7 @@ import {
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
 import { analyzeSecurities, lookupTicker, type SecurityAnalysis } from "../lib/tr-isin-tickers";
-import {
-  buildActivitiesFromParsed,
-  buildDonkeyfolioCsv,
-  buildTradingCashKeys,
-} from "../lib/tr-to-activities";
+import { buildActivitiesFromParsed, buildTradingCashKeys } from "../lib/tr-to-activities";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
 import {
   extractCryptoDirectBuysFromCash,
@@ -60,8 +51,6 @@ import {
   type DiscoveryResult,
 } from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
-import { analyzeHoldings, type HoldingDiagnostic } from "../lib/tr-diagnostics";
-import DiagnosticsPanel from "../components/diagnostics-panel";
 import {
   countPending,
   loadLastFullScan,
@@ -74,8 +63,20 @@ import {
 } from "../lib/tr-splits-watcher";
 import WatcherPanel from "../components/watcher-panel";
 
+// ─── Phase labels ───────────────────────────────────────────────────────
+type ParsePhase =
+  | "reading"
+  | "parsing"
+  | "resolving-crypto"
+  | "discovering-tickers"
+  | "detecting-splits"
+  | "building"
+  | "done"
+  | "error";
+
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
+  phase?: ParsePhase;
   message?: string;
   progress?: { page: number; total: number };
   cash: CashTransaction[];
@@ -85,25 +86,19 @@ interface ParseState {
   failedChecks: number;
   recoveredRows: number;
   fileName: string;
-  /** Page-1 SUMMARY block — authoritative period totals from TR. */
   summary: StatementSummary | null;
-  /** (v2.10) Tickers auto-discovered via Yahoo search for unmapped ISINs.
-   *  Populated automatically after parse; surfaced in the unmapped panel. */
   discoveredTickers: DiscoveryResult[];
-  /** (v2.10) Auto-detected stock splits that affect imported holdings. */
   autoSplits: SplitEvent[];
+  cryptoResolved: number;
 }
 
 type ImportState =
   | { status: "idle" }
-  | { status: "running"; message: string }
+  | { status: "running"; message: string; progress?: { done: number; total: number } }
   | {
       status: "done";
       imported: number;
       skipped: number;
-      accountCreated: boolean;
-      /** Up to 3 sample failure messages, shown when skipped > 0 so the user
-       * can diagnose which assets failed (e.g. "Quote currency required"). */
       failureExamples?: string[];
     }
   | { status: "error"; message: string };
@@ -120,56 +115,10 @@ const initialState: ParseState = {
   summary: null,
   discoveredTickers: [],
   autoSplits: [],
-};
-
-// ─── Status translation (jcmpagel's parser emits German labels) ─────────
-const STATUS_EN: Record<string, string> = {
-  Offen: "Open",
-  Geschlossen: "Closed",
-  Teilweise: "Partial",
-  Verkauf: "Sold",
-  Ausgeglichen: "Balanced",
-};
-const translateStatus = (s: string | undefined): string => (s && STATUS_EN[s]) || s || "";
-
-// German TR transaction types → English (for older/mixed TR statement formats)
-const TYPE_EN: Record<string, string> = {
-  Handel: "Trade",
-  Kartenzahlung: "Card payment",
-  Karte: "Card",
-  Sparplan: "Savings plan",
-  Überweisung: "Transfer",
-  Einzahlung: "Deposit",
-  Auszahlung: "Withdrawal",
-  Lastschrift: "Direct debit",
-  Zinsen: "Interest",
-  Dividende: "Dividend",
-  Dividenden: "Dividends",
-  Steuern: "Taxes",
-  Steuer: "Tax",
-  Gebühr: "Fee",
-  Gebühren: "Fees",
-  Umbuchung: "Rebooking",
-  Rundung: "Rounding",
-  Prämie: "Bonus",
-  Rückzahlung: "Repayment",
-  Ausgleich: "Settlement",
-  Erstattung: "Refund",
-  Zahlung: "Payment",
-  Kauf: "Buy",
-  Verkauf: "Sell",
-  Ertrag: "Income",
-};
-const translateType = (s: string | undefined): string => {
-  if (!s) return "";
-  return s
-    .split(/\s+/)
-    .map((w) => TYPE_EN[w] ?? w)
-    .join(" ");
+  cryptoResolved: 0,
 };
 
 // Format-aware EUR string parser (mirrors the one in tr-parser/tr-to-activities).
-// Used here only for the statement summary panel — not in the import path.
 function parseEurDisplay(raw: string): number {
   if (!raw) return 0;
   const s = String(raw).replace(/[€\s]/g, "");
@@ -193,7 +142,6 @@ function parseEurDisplay(raw: string): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-// Map jcmpagel cash transaction shape → analytics shape used by parseTradingTransactions
 function toAnalyticsShape(tx: CashTransaction) {
   return {
     date: tx.datum,
@@ -203,50 +151,6 @@ function toAnalyticsShape(tx: CashTransaction) {
     outgoing: tx.zahlungsausgang,
     balance: tx.saldo,
   };
-}
-
-/**
- * Save text content to disk. Uses the SDK's openSaveDialog (works in Tauri
- * webview where the <a download> trick is silently blocked). Falls back to
- * the browser blob trick if the SDK call rejects (e.g. permission missing,
- * or running in a web context).
- */
-async function saveFile(
-  ctx: AddonContext,
-  filename: string,
-  content: string,
-  mimeType: string,
-): Promise<boolean> {
-  // Try the SDK first — Tauri webview blocks the synthetic-click download path
-  // we used before, so this is the reliable route inside the desktop app.
-  try {
-    if (ctx.api.files?.openSaveDialog) {
-      await ctx.api.files.openSaveDialog(content, filename);
-      return true;
-    }
-  } catch (err) {
-    ctx.api.logger.warn(
-      `[TR PDF] SDK file save failed (${(err as Error).message}); falling back to anchor download.`,
-    );
-  }
-  // Browser fallback (web context).
-  try {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    return true;
-  } catch (err) {
-    ctx.api.logger.error(`[TR PDF] File save failed: ${(err as Error).message}`);
-    return false;
-  }
 }
 
 function formatEur(value: number): string {
@@ -266,46 +170,43 @@ interface TrConverterPageProps {
   ctx: AddonContext;
 }
 
+// ─── DB holding shape used by the holdings audit panel ──────────────────
+interface DbHolding {
+  symbol: string;
+  name: string;
+  qty: number;
+  assetId: string | null;
+}
+
 export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const [state, setState] = React.useState<ParseState>(initialState);
   const [importState, setImportState] = React.useState<ImportState>({ status: "idle" });
-  const [showOnlyFailed, setShowOnlyFailed] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = React.useState(false);
 
-  // Account selection. We load all accounts on mount so the user can pick the
-  // target account explicitly (better than always auto-creating one — lets
-  // users reuse an existing TR account, and avoids the "needs setup" state if
-  // they had created one manually with the wrong trackingMode). The fallback
-  // path remains: a "Create Trade Republic account" button if nothing fits.
+  // Account selection — load on mount, prefer existing TR account.
   const [accounts, setAccounts] = React.useState<Account[]>([]);
   const [accountsLoaded, setAccountsLoaded] = React.useState(false);
   const [selectedAccountId, setSelectedAccountId] = React.useState<string>("");
   const [creatingAccount, setCreatingAccount] = React.useState(false);
 
-  // Split detection (Yahoo Finance). Opt-in: the network round-trip can take
-  // ~1 minute on large portfolios, so we only run it when the user clicks
-  // "Check for splits". Results live in component state until reset.
-  const [splitState, setSplitState] = React.useState<
-    | { status: "idle" }
-    | { status: "running"; checked: number; total: number }
-    | { status: "done"; splits: SplitEvent[]; checked: number; errors: number; skipped: number }
-    | { status: "error"; message: string }
-  >({ status: "idle" });
+  // Issues panel — collapsible.
+  const [issuesOpen, setIssuesOpen] = React.useState(true);
+  // Parsed-details disclosure (cash / mmf / trading tables).
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [activeDetailsTab, setActiveDetailsTab] = React.useState<"cash" | "mmf" | "trading">(
+    "cash",
+  );
 
-  // (v2.11.0) Holdings diagnostics — auto-runs after import completes.
-  // Compares parsed import (computed) vs current DB holdings, classifies
-  // drift causes, surfaces one-click fixes.
-  const [diagnostics, setDiagnostics] = React.useState<HoldingDiagnostic[]>([]);
-  const [diagnosticsLoading, setDiagnosticsLoading] = React.useState(false);
-  const [diagnosticsProgress, setDiagnosticsProgress] = React.useState<{
-    done: number;
-    total: number;
-  }>({ done: 0, total: 0 });
+  // Manual reconciliation panel state — keyed by ticker.
+  const [dbHoldings, setDbHoldings] = React.useState<DbHolding[]>([]);
+  const [holdingsLoading, setHoldingsLoading] = React.useState(false);
+  const [trQtyInputs, setTrQtyInputs] = React.useState<Record<string, string>>({});
+  const [reconcilePending, setReconcilePending] = React.useState<string | null>(null);
+  const [reconcileMessages, setReconcileMessages] = React.useState<Record<string, string>>({});
+  const [rebuildingHistory, setRebuildingHistory] = React.useState(false);
 
-  // (v2.12.0) Self-healing watcher — scans for new splits / ticker
-  // migrations / DRIP gaps that happened AFTER the last PDF import.
-  // Runs debounced on mount + once per 24h while the tab is open.
+  // Watcher.
   const [watcherSettings, setWatcherSettings] = React.useState<WatcherSettings>(() =>
     loadSettings(),
   );
@@ -315,21 +216,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     done: 0,
     total: 0,
   });
-
-  // (v2.13.1) Tabs row controlled state + scroll target. After import we
-  // auto-switch to the Diagnostics tab and scrollIntoView so the user
-  // immediately sees drift findings instead of having to scroll past the
-  // long Cash table to find the panel.
-  const [activeTab, setActiveTab] = React.useState<string>("cash");
-  const tabsAnchorRef = React.useRef<HTMLDivElement>(null);
-  // (v2.13.1) Reconciliation breakdown is collapsed by default — the table
-  // can be 10+ rows tall and pushed everything else off-screen.
-  const [reconcileBreakdownOpen, setReconcileBreakdownOpen] = React.useState(false);
+  const [watcherOpen, setWatcherOpen] = React.useState(false);
 
   const loadAccounts = React.useCallback(async () => {
     try {
       const all = await ctx.api.accounts.getAll();
-      // Prefer active, non-archived accounts; SECURITIES first.
       const sorted = [...all]
         .filter((a) => a.isActive && !a.isArchived)
         .sort((a, b) => {
@@ -338,14 +229,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           return a.name.localeCompare(b.name);
         });
       setAccounts(sorted);
-      // Default selection: an existing "Trade Republic" account if present.
       const trMatch = sorted.find((a) => a.name.trim().toLowerCase() === "trade republic");
-      if (trMatch) {
-        setSelectedAccountId(trMatch.id);
-      } else if (sorted.length > 0) {
-        // No TR account → leave unselected so the user has to opt in.
-        setSelectedAccountId("");
-      }
+      if (trMatch) setSelectedAccountId(trMatch.id);
     } catch (err) {
       ctx.api.logger.warn(`[TR PDF] failed to load accounts: ${(err as Error).message}`);
     } finally {
@@ -372,37 +257,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
 
-  const handleCheckSplits = React.useCallback(async () => {
-    if (state.status !== "done" || state.trading.length === 0) return;
-    setSplitState({ status: "running", checked: 0, total: 0 });
-    try {
-      const result = await detectSplitsForPositions(state.trading, (checked, total) => {
-        setSplitState({ status: "running", checked, total });
-      });
-      setSplitState({
-        status: "done",
-        splits: result.splits,
-        checked: result.checked,
-        errors: result.errors,
-        skipped: result.skipped,
-      });
-      ctx.api.logger.info(
-        `[TR PDF] split check: ${result.splits.length} splits found across ${result.checked} positions (${result.errors} errors, ${result.skipped} skipped).`,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      ctx.api.logger.error(`[TR PDF] split check failed: ${message}`);
-      setSplitState({ status: "error", message });
-    }
-  }, [ctx, state.status, state.trading]);
-
+  // ─── PDF parsing ──────────────────────────────────────────────────────
   const handleFile = React.useCallback(async (file: File) => {
     setImportState({ status: "idle" });
-    setShowOnlyFailed(false);
-    setSplitState({ status: "idle" });
+    setDbHoldings([]);
+    setTrQtyInputs({});
+    setReconcileMessages({});
     setState({
       ...initialState,
       status: "parsing",
+      phase: "reading",
       message: "Reading PDF…",
       fileName: file.name,
     });
@@ -411,32 +275,14 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       const result = await parsePDF(buffer, (page, total) => {
         setState((s) => ({
           ...s,
+          phase: "parsing",
           progress: { page, total },
-          message: `Parsing page ${page} of ${total}`,
+          message: `Parsing page ${page} of ${total}…`,
         }));
       });
 
-      // (v2.7.8) Merge continuation rows BEFORE everything else. Some TR PDF
-      // rows split the "quantity: X" fragment onto a separate visual line;
-      // pdf.js then emits it as an orphan cash row with no amount/saldo. We
-      // merge those fragments back into the previous transaction's
-      // beschreibung so the QTY_LABEL_RE in enrichTradingWithQuantity can
-      // pick them up.
       const { cash: mergedCash, merged: mergedRows } = mergeContinuationRows(result.cash);
-
-      // Auto-recover trade rows with column-swapped or missing amounts BEFORE
-      // running the sanity check — so rows we can recover no longer surface as
-      // failures.
       const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(mergedCash);
-
-      // (v2.7.4) Enforce row-level chain consistency: for each row, if the
-      // parsed In/Out doesn't match the saldo delta, rewrite In/Out to match
-      // the chain. This is the structural fix for "phantom OUT" drift caused
-      // by column-boundary misclassification on rows with weird layout (e.g.
-      // multi-line Card Transactions, very large saldos that overflow).
-      //
-      // Anchor uses the PDF SUMMARY's openingBalance when available — that's
-      // the only authoritative source for what the chain should start at.
       const summaryOpening = result.summary
         ? parseEurDisplay(result.summary.openingBalance)
         : undefined;
@@ -445,23 +291,14 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         summaryOpening,
       );
       const { transactions: cashWithChainSanity } = computeCashSanityChecks(chainConsistentCash);
-      // jcmpagel's sanity check tests the BALANCE CHAIN (prev_saldo + in - out
-      // must equal current_saldo). Even after our recovery, a single broken
-      // row upstream can cascade a "failed" flag onto rows that are themselves
-      // perfectly clean. For the user's purposes (importing into Donkeyfolio)
-      // what matters is whether each ROW is well-formed, not the chain.
-      // Override the flag: if a row has exactly one column populated (the
-      // expected one for its trade direction OR a one-sided cash flow), treat
-      // it as OK regardless of chain consistency.
       const cashWithSanity = cashWithChainSanity.map((r) => {
-        if (r._sanityCheckOk !== false) return r; // already ok, leave alone
+        if (r._sanityCheckOk !== false) return r;
         const desc = r.beschreibung || "";
         const isBuyTrade =
           /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) &&
           /\btrade\b|\bHandel\b|\bSavings plan\b/i.test(desc);
         const isSellTrade =
           /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
-        // Lightweight number parse — we only care about magnitude.
         const num = (s: string) => {
           const m = String(s || "")
             .replace(/[€\s]/g, "")
@@ -474,11 +311,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         const out = num(r.zahlungsausgang);
         const onlyOut = inc < 0.01 && out > 0.01;
         const onlyIn = inc > 0.01 && out < 0.01;
-        // Trade rows: well-formed = direction matches the populated side
         if ((isBuyTrade && onlyOut) || (isSellTrade && onlyIn)) {
           return { ...r, _sanityCheckOk: true };
         }
-        // Non-trade rows: well-formed = exactly one side populated.
         if (!isBuyTrade && !isSellTrade && (onlyOut || onlyIn)) {
           return { ...r, _sanityCheckOk: true };
         }
@@ -486,11 +321,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       });
       const failedChecks = cashWithSanity.filter((r) => r._sanityCheckOk === false).length;
       const analyticsCash = cashWithSanity.map(toAnalyticsShape);
-      // jcmpagel's parseTradingTransactions only picks up descriptions containing
-      // "Buy"/"Sell"/"Kauf"/"Verkauf" etc. — TR's recurring DCA buys are labelled
-      // "Savings plan execution", which would otherwise be missed entirely (falling
-      // through to a generic cash WITHDRAWAL). Inject "Buy " so they're classified
-      // as implicit buy trades with the same ISIN/quantity extraction.
       const analyticsCashForTrading = analyticsCash.map((c) => ({
         ...c,
         description: /^(\s*)Savings plan execution\b/i.test(c.description)
@@ -502,29 +332,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
 
-      // (v2.9 + v2.10.1) Resolve qty for crypto "Compra direta" trades.
-      // v2.9 only looked at trading[] but TR's "Compra direta" rows live
-      // in cash[] — they never reach trading[] via the standard parser.
-      // v2.10.1 adds extractCryptoDirectBuysFromCash() to scan cash[] for
-      // XF000* pseudo-ISINs with cash outflow, builds synthetic
-      // TradingTransactions, then runs the existing Yahoo-price resolver.
-      // The synthetic trades flow into state.trading, so the existing
-      // buildTradingCashKeys() automatically generates the skip keys that
-      // prevent the cash legs from becoming WITHDRAWAL activities.
+      setState((s) => ({ ...s, phase: "resolving-crypto", message: "Resolving crypto…" }));
       const { cryptoTrading: extraCryptoTrades } = extractCryptoDirectBuysFromCash(cashWithSanity);
       const tradingWithCryptoCash = trading.concat(extraCryptoTrades);
       let cryptoTrading = tradingWithCryptoCash;
+      let cryptoResolved = 0;
       try {
-        // (v2.13.0) Pass the SDK context so the resolver can read cached
-        // crypto quotes from Donkeyfolio's quotes table FIRST. Yahoo rate
-        // limits us at HTTP 429 after a couple dozen chart requests; the
-        // local cache populated by market.syncHistory() is the reliable
-        // source.
         const cryptoResult = await resolveCryptoDirectBuys(tradingWithCryptoCash, undefined, ctx);
         cryptoTrading = cryptoResult.trading;
+        cryptoResolved = cryptoResult.resolved;
         if (cryptoResult.resolved > 0 || cryptoResult.failed > 0) {
           ctx.api.logger.info(
-            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed (${extraCryptoTrades.length} pulled from cash[])`,
+            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed`,
           );
         }
       } catch (err) {
@@ -533,15 +352,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         );
       }
 
-      // (v2.10) Auto-discover Yahoo tickers for ISINs we don't have mapped.
-      // Each unmapped ISIN gets a Yahoo search with WKN > name > ISIN as
-      // the query, the result is cached in localStorage for future imports.
+      setState((s) => ({ ...s, phase: "discovering-tickers", message: "Discovering tickers…" }));
       const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
       const seenIsins = new Set<string>();
       for (const t of cryptoTrading) {
         if (!t.isin || seenIsins.has(t.isin)) continue;
         seenIsins.add(t.isin);
-        // Skip mapped + crypto pseudo-ISINs (handled separately).
         if (lookupTicker(t.isin) || t.isin.startsWith("XF000")) continue;
         unmappedRequests.push({
           isin: t.isin,
@@ -553,10 +369,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       if (unmappedRequests.length > 0) {
         try {
           discoveredTickers = await discoverTickers(unmappedRequests);
-          const succeeded = discoveredTickers.filter((d) => d.symbol).length;
-          ctx.api.logger.info(
-            `[TR PDF] ticker discovery: ${succeeded}/${unmappedRequests.length} unmapped ISINs resolved via Yahoo`,
-          );
         } catch (err) {
           ctx.api.logger.warn(
             `[TR PDF] ticker discovery failed (non-fatal): ${(err as Error).message}`,
@@ -564,34 +376,23 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         }
       }
 
-      // (v2.10) Auto-run split detector — surfaces stock splits that
-      // happened after each position's first trade so the user can apply
-      // them. We collect detected splits but don't auto-create SPLIT
-      // activities (that needs explicit user confirmation per split since
-      // TR app already shows post-split qty in some cases and the user
-      // shouldn't have it applied twice).
+      setState((s) => ({ ...s, phase: "detecting-splits", message: "Detecting splits…" }));
       let autoSplits: SplitEvent[] = [];
       try {
         const splitResult = await detectSplitsForPositions(cryptoTrading);
         autoSplits = splitResult.splits;
-        if (autoSplits.length > 0) {
-          ctx.api.logger.info(
-            `[TR PDF] auto-detected ${autoSplits.length} stock split(s) affecting your holdings`,
-          );
-        }
       } catch (err) {
         ctx.api.logger.warn(
           `[TR PDF] split detector failed (non-fatal): ${(err as Error).message}`,
         );
       }
 
-      // Use our own running-average-cost P&L (jcmpagel's calculatePnL returned
-      // €0 for every partially-sold position, which made the Realized P&L
-      // column useless for any active portfolio).
+      setState((s) => ({ ...s, phase: "building", message: "Building activities…" }));
       const pnl = cryptoTrading.length ? computeEnhancedPnL(cryptoTrading) : null;
 
       setState({
         status: "done",
+        phase: "done",
         message: undefined,
         progress: undefined,
         cash: cashWithSanity,
@@ -599,25 +400,23 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         trading: cryptoTrading,
         pnl,
         failedChecks,
-        // Roll the chain-consistency corrections into the visible "auto-
-        // corrected rows" counter — both are forms of post-parse repair.
-        // Visible "auto-corrected rows" counter rolls together all three
-        // post-parse repairs: PDF column-swap recoveries, saldo-chain
-        // re-writes, and continuation-row merges (v2.7.8).
         recoveredRows: recoveredRows + chainCorrected + mergedRows,
         fileName: file.name,
         summary: result.summary ?? null,
         discoveredTickers,
         autoSplits,
+        cryptoResolved,
       });
     } catch (err) {
       setState({
         ...initialState,
         status: "error",
+        phase: "error",
         message: err instanceof Error ? err.message : String(err),
         fileName: file.name,
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onDrop = React.useCallback(
@@ -625,13 +424,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       e.preventDefault();
       setDragOver(false);
       const file = e.dataTransfer.files?.[0];
-      if (file && file.type === "application/pdf") {
-        void handleFile(file);
-      }
+      if (file && file.type === "application/pdf") void handleFile(file);
     },
     [handleFile],
   );
-
   const onFileInput = React.useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -641,65 +437,55 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     [handleFile],
   );
 
-  const baseName = state.fileName.replace(/\.pdf$/i, "") || "tr-statements";
-
-  const exportCsv = async () => {
-    if (state.cash.length === 0) return;
-    await saveFile(
-      ctx,
-      `${baseName}-cash.csv`,
-      buildGenericCsv(state.cash as unknown as Record<string, unknown>[]),
-      "text/csv;charset=utf-8",
-    );
-  };
-  const exportLexwareCsv = async () => {
-    if (state.cash.length === 0) return;
-    await saveFile(
-      ctx,
-      `${baseName}-lexware.csv`,
-      buildLexwareCsv(state.cash as unknown as Record<string, unknown>[]),
-      "text/csv;charset=utf-8",
-    );
-  };
-  const exportJson = async (kind: "cash" | "mmf" | "trading") => {
-    const data = kind === "cash" ? state.cash : kind === "mmf" ? state.interest : state.trading;
-    if (data.length === 0) return;
-    await saveFile(
-      ctx,
-      `${baseName}-${kind}.json`,
-      JSON.stringify(data, null, 2),
-      "application/json",
-    );
-  };
-
-  /** CSV shaped for the Donkeyfolio Activities Import wizard (5-step mapping). */
-  const exportDonkeyfolioCsv = async () => {
-    if (state.status !== "done") return;
+  // ─── Reconciliation pre-import ────────────────────────────────────────
+  const reconcile: ReconcileResult | null = React.useMemo(() => {
+    if (state.status !== "done" || state.cash.length === 0) return null;
     const skipKeys = buildTradingCashKeys(state.trading);
-    // Use a placeholder accountId — the wizard lets the user map the account
-    // column or pick a default account anyway.
     const activities = buildActivitiesFromParsed({
-      accountId: "",
+      accountId: "_reconcile",
       currency: "EUR",
       cash: state.cash,
       trading: state.trading,
       skipCashKeys: skipKeys,
     });
-    if (activities.length === 0) return;
-    await saveFile(
-      ctx,
-      `${baseName}-donkeyfolio.csv`,
-      buildDonkeyfolioCsv(activities),
-      "text/csv;charset=utf-8",
-    );
-  };
+    return buildReconciliation(state.cash, activities, state.summary);
+  }, [state.status, state.cash, state.trading, state.summary]);
 
+  const securityAnalysis: SecurityAnalysis[] = React.useMemo(() => {
+    if (state.status !== "done" || state.trading.length === 0) return [];
+    return analyzeSecurities(state.trading);
+  }, [state.status, state.trading]);
+
+  const unmappedSecurities = securityAnalysis.filter((s) => s.status === "unmapped");
+
+  // Summary KPIs.
+  const cashCount = state.cash.length;
+  const tradingCount = state.trading.length;
+  const netPnl = state.pnl ? state.pnl.totalSold - state.pnl.totalBought : 0;
+  const pdfEnding = state.summary ? parseEurDisplay(state.summary.endingBalance) : null;
+
+  // Parser drift magnitude (for the "issues" line).
+  const parserDriftEur = reconcile?.parserDrift
+    ? Math.max(
+        Math.abs(reconcile.parserDrift.inDrift),
+        Math.abs(reconcile.parserDrift.outDrift),
+        Math.abs(reconcile.parserDrift.closingDrift),
+      )
+    : 0;
+
+  const issuesCount =
+    unmappedSecurities.length +
+    state.autoSplits.length +
+    (state.cryptoResolved > 0 ? 1 : 0) +
+    (parserDriftEur > 50 ? 1 : 0);
+
+  // ─── Import ───────────────────────────────────────────────────────────
   const handleImport = React.useCallback(async () => {
     if (state.status !== "done") return;
     if (!selectedAccountId) {
       setImportState({
         status: "error",
-        message: "Pick a target account first (or use 'Create Trade Republic account' below).",
+        message: "Pick a target account first (or create a Trade Republic account).",
       });
       return;
     }
@@ -711,28 +497,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     if (acct.trackingMode !== "TRANSACTIONS") {
       setImportState({
         status: "error",
-        message: `Account "${acct.name}" has trackingMode "${acct.trackingMode}". Set it to "Transactions" in account settings before importing — otherwise activities won't generate Holdings.`,
+        message: `Account "${acct.name}" has trackingMode "${acct.trackingMode}". Set it to "Transactions" before importing.`,
       });
       return;
     }
     setImportState({ status: "running", message: "Preparing activities…" });
     try {
       const skipKeys = buildTradingCashKeys(state.trading);
-      // ISIN → WKN map so failure samples can show the WKN — makes it trivial
-      // for the user to look the security up by WKN (the German ID) when a
-      // mapping is missing or wrong.
       const isinToWkn = new Map<string, string>();
       for (const t of state.trading) {
         if (t.isin && t.wkn && !isinToWkn.has(t.isin)) isinToWkn.set(t.isin, t.wkn);
       }
-      // (v2.10) Build the discovered-ticker map so unmapped ISINs that we
-      // resolved via Yahoo search get used during import (instead of
-      // falling back to ISIN-as-symbol which Yahoo often can't price).
       const discoveryMap = buildDiscoveryMap(state.discoveredTickers);
-      // (v2.8) Pass the PDF SUMMARY so the builder can emit a closing
-      // reconciliation activity if there's residual drift. Without this
-      // the cash balance can land off-target when individual rows have
-      // parsing issues we couldn't recover from.
       const pdfSummaryNumeric = state.summary
         ? {
             opening: parseEurDisplay(state.summary.openingBalance),
@@ -751,35 +527,15 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         skipCashKeys: skipKeys,
         pdfSummary: pdfSummaryNumeric,
         lastActivityDate,
-        // (v2.10.2) Emit SPLIT activities for splits detected during parse so
-        // pre-split BUY/SELL quantities get adjusted to today's share count
-        // (e.g. ServiceNow 2:1 → DB 10.55 → 21.10 shares).
         autoSplits: state.autoSplits,
       });
 
       if (activities.length === 0) {
-        setImportState({
-          status: "error",
-          message: "No importable activities found in this PDF.",
-        });
+        setImportState({ status: "error", message: "No importable activities found in this PDF." });
         return;
       }
 
-      // ── SINGLE-CREATE FOR EVERY ACTIVITY ─────────────────────────────
-      // Earlier versions tried bulk activities.import() which is fast but
-      // does not run prepare_new_activity → get_or_create_minimal_asset.
-      // Result: activities are inserted with asset_id NULL and the symbol
-      // information is discarded, leaving Holdings empty AND impossible to
-      // recover (the symbol isn't kept anywhere on the activity row).
-      //
-      // The robust fix is to call ctx.api.activities.create() per activity.
-      // Each call runs prepare_new_activity which creates the asset profile
-      // (or reuses an existing one) and links the activity correctly.
-      // Trade-off: ~50 ms per call → ~3-5 minutes for a full TR yearly
-      // statement. Acceptable given we only run this once per import.
-
-      const TR_EQUITY_EU_EXCHANGE = "XAMS"; // Euronext Amsterdam — preferred
-      // EUR listing for Irish-domiciled ETFs (avoids the GBP/LSE fallback).
+      const TR_EQUITY_EU_EXCHANGE = "XAMS";
       const isISIN = (s: string) => /^[A-Z]{2}[A-Z0-9]{10}$/.test(s);
       const isCryptoPseudo = (s: string) => /^XF000/.test(s);
       const isCashOnlySymbol = (s: string) => /^\$CASH/.test(s);
@@ -792,7 +548,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       const startMs = Date.now();
       for (let i = 0; i < activities.length; i++) {
         const a = activities[i];
-        // Update progress every 25 rows so the UI doesn't get spammed.
         if (i % 25 === 0) {
           const elapsed = (Date.now() - startMs) / 1000;
           const eta = i > 0 ? Math.round((elapsed / i) * (activities.length - i)) : 0;
@@ -801,40 +556,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             message: `Importing ${i + 1} of ${activities.length}…  (${
               eta > 0 ? `~${eta}s remaining` : "estimating"
             })`,
+            progress: { done: i, total: activities.length },
           });
         }
-
         try {
           const sym = a.symbol || "";
-          // Build the SymbolInput payload for the Rust SDK.
-          //
-          // Order of preference:
-          //   1. ISIN→ticker map (lookupTicker) — gives Yahoo a real ticker
-          //      (AAPL, BTC-EUR, CSPX.L) that resolves to live prices and
-          //      matching ticker-logos. This is the path that produces a
-          //      pretty Holdings page with logos and current values.
-          //   2. ISIN-as-symbol fallback — when no mapping exists. The
-          //      activity still imports correctly (cost basis preserved),
-          //      but Yahoo can't price it and no logo is shown.
-          //   3. Pure cash (no symbol or "$CASH…") — symbol omitted; the
-          //      Rust backend treats DEPOSIT/WITHDRAWAL as account-level.
-          //
-          // For the fallback we still set quoteCcy/instrumentType because
-          // validate_persisted_symbol_metadata REJECTS new EQUITY assets
-          // without explicit quoteCcy. CRYPTO bypasses that branch.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let symbolPayload: any;
-          // Try our hardcoded map first, fall back to runtime-discovered
-          // mappings from Yahoo search (v2.10).
           const mapped = sym ? lookupTicker(sym) || discoveryMap.get(sym) || null : null;
           if (mapped) {
             symbolPayload = {
               symbol: mapped.symbol,
               exchangeMic: mapped.exchangeMic,
-              // (v2.7.8) Prefer the friendly displayName from our map when
-              // present (e.g. "iShares Core S&P 500" instead of TR's verbose
-              // "iShares VII plc - iShares Core S&P 500 UCITS ETF USD (Acc)").
-              // Falls back to whatever the PDF description gave us.
               name: mapped.displayName || a.symbolName,
               instrumentType: mapped.instrumentType,
               quoteCcy: mapped.quoteCcy ?? acct.currency,
@@ -856,7 +589,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               quoteCcy: acct.currency,
             };
           } else if (sym && !isCashOnlySymbol(sym)) {
-            // Non-ISIN symbol (rare). Treat as equity with EUR quote.
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
@@ -864,25 +596,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               quoteCcy: acct.currency,
             };
           } else {
-            symbolPayload = undefined; // pure cash flow
+            symbolPayload = undefined;
           }
-          // (v2.7.9) Pass an explicit idempotencyKey per activity. Without
-          // this, the Rust backend computes a content-based key from
-          // (account, type, date, asset, qty, price, amount, currency,
-          // source_record_id, notes). When TR has multiple savings-plan
-          // executions on the SAME day for the SAME ETF at the SAME amount
-          // (e.g. 3 AMD buys of €100.98 on Dec 20), even though they have
-          // distinct quantities, Decimal normalization ("100.98" vs "100.980")
-          // and float precision can collapse the keys. Result: only one of
-          // the N trades survives, and the remaining shares disappear from
-          // the imported portfolio.
-          //
-          // Our addon assigns a sequential `lineNumber` per activity inside
-          // buildActivitiesFromParsed, which is unique within a single
-          // statement. We combine it with the ISIN+date for human-readable
-          // debugging and prefix with "tr-pdf-v2.7.9:" so we can audit/
-          // delete this run's activities later.
-          const idemKey = `tr-pdf-v2.7.9:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
+          const idemKey = `tr-pdf-v2.16.0:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
             a.symbol || "cash"
           }:${(a.date as string).slice(0, 10)}`;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -906,9 +622,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           imported += 1;
         } catch (err) {
           failures += 1;
-          // Tauri IPC errors come back as STRINGS (not Error objects), so
-          // (err as Error).message is undefined and msg.slice() would throw,
-          // killing the whole import loop. Coerce defensively.
           const errAny = err as { message?: unknown } | string | null | undefined;
           const rawMsg =
             typeof errAny === "string"
@@ -918,7 +631,6 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 : String(err);
           const msg = rawMsg || "(empty error)";
           if (failures <= 10) {
-            // Log only the first 10 failures so we don't flood the log.
             ctx.api.logger.warn(`[TR PDF] create failed (row ${i + 1}, ${a.symbol}): ${msg}`);
           }
           if (failureExamples.length < 3) {
@@ -934,30 +646,14 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         `[TR PDF] import done: ${imported} imported, ${failures} failed, ${totalElapsed}s`,
       );
 
-      // (v2.7.6) After import, trigger Donkeyfolio's portfolio recalculation
-      // so the Performance chart, TWR and historical valuations populate
-      // immediately. Otherwise the user has to dig into Settings → Market
-      // Data and click Rebuild History manually. This is a fire-and-forget:
-      // the call can take ~1-3 minutes for a yearly statement worth of
-      // history, but we don't block the import-done UI on it.
       setImportState({
         status: "done",
         imported,
         skipped: failures,
-        accountCreated: false,
         failureExamples: failures > 0 ? failureExamples : undefined,
       });
-      // (v2.7.12) Two-step post-import sync chain:
-      //   1) market.syncHistory() — fetches Yahoo quotes for newly-created
-      //      assets. Without quotes, holdings_snapshots have value=0 and the
-      //      Performance chart shows a flat line at 0%.
-      //   2) portfolio.recalculate() — rebuilds the daily snapshots using the
-      //      now-up-to-date quotes, populating TWR / Total Return / chart.
-      //
-      // Both run fire-and-forget so the import-done UI isn't blocked. Each is
-      // wrapped in catch so backend failures log a warning but never propagate
-      // a UI error. Order matters — recalculate after syncHistory so the
-      // computation uses the fresh quotes.
+
+      // Fire-and-forget post-import sync chain.
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const market = (ctx.api as any).market;
@@ -965,38 +661,26 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         const portfolio = (ctx.api as any).portfolio;
         const runRecalc = () => {
           if (portfolio?.recalculate) {
-            ctx.api.logger.info(
-              "[TR PDF] triggering portfolio.recalculate() to rebuild historical snapshots…",
-            );
             portfolio
               .recalculate()
-              .then(() => {
-                ctx.api.logger.info("[TR PDF] portfolio recalculation complete.");
-              })
-              .catch((err: unknown) => {
-                const m = err instanceof Error ? err.message : String(err);
-                ctx.api.logger.warn(`[TR PDF] portfolio.recalculate() failed (non-fatal): ${m}`);
-              });
+              .then(() => ctx.api.logger.info("[TR PDF] portfolio recalculation complete."))
+              .catch((err: unknown) =>
+                ctx.api.logger.warn(
+                  `[TR PDF] portfolio.recalculate() failed (non-fatal): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                ),
+              );
           } else if (portfolio?.update) {
             portfolio.update().catch(() => undefined);
           }
         };
         if (market?.syncHistory) {
-          ctx.api.logger.info("[TR PDF] triggering market.syncHistory() for new assets…");
           market
             .syncHistory()
-            .then(() => {
-              ctx.api.logger.info("[TR PDF] market sync complete — recalculating portfolio.");
-              runRecalc();
-            })
-            .catch((err: unknown) => {
-              const m = err instanceof Error ? err.message : String(err);
-              ctx.api.logger.warn(`[TR PDF] market.syncHistory() failed (non-fatal): ${m}`);
-              // Still try recalc — existing quotes may be enough.
-              runRecalc();
-            });
+            .then(() => runRecalc())
+            .catch(() => runRecalc());
         } else {
-          // SDK doesn't expose syncHistory — go straight to recalc.
           runRecalc();
         }
       } catch (err) {
@@ -1012,93 +696,172 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         message: message.length > 300 ? message.slice(0, 300) + "…" : message,
       });
     }
-  }, [ctx, accounts, selectedAccountId, state.cash, state.status, state.trading]);
+  }, [ctx, accounts, selectedAccountId, state]);
 
-  // (v2.11.0) Run diagnostics: read DB activities for the selected account,
-  // run the analyzer, store results. Auto-invoked after import completes
-  // and re-runnable from the panel.
-  const runDiagnostics = React.useCallback(async () => {
-    if (state.status !== "done" || !selectedAccountId) {
-      setDiagnostics([]);
-      return;
-    }
-    setDiagnosticsLoading(true);
-    setDiagnosticsProgress({ done: 0, total: 0 });
+  // ─── Holdings audit (manual reconciliation) ───────────────────────────
+  const loadDbHoldings = React.useCallback(async () => {
+    if (!selectedAccountId) return;
+    setHoldingsLoading(true);
     try {
       const dbActivities = await ctx.api.activities.getAll(selectedAccountId);
-      const acct = accounts.find((a) => a.id === selectedAccountId);
-      const result = await analyzeHoldings(
+      // Aggregate net qty by symbol, applying SPLIT factors.
+      const bySymbol = new Map<
+        string,
         {
-          trading: state.trading,
-          dbActivities: dbActivities.map((a) => ({
-            activityType: a.activityType,
-            quantity: a.quantity,
-            unitPrice: a.unitPrice,
-            amount: a.amount,
-            fee: a.fee,
-            assetSymbol: a.assetSymbol,
-            assetId: a.assetId,
-            comment: a.comment,
-            date: a.date,
-          })),
-          autoSplits: state.autoSplits,
-          accountCurrency: acct?.currency || "EUR",
-        },
-        {
-          onProgress: (done, total) => setDiagnosticsProgress({ done, total }),
-        },
-      );
-      setDiagnostics(result);
-      ctx.api.logger.info(
-        `[TR PDF] diagnostics: ${result.length} holdings analyzed (${
-          result.filter((d) => d.severity !== "ok").length
-        } drifting).`,
-      );
+          qty: number;
+          name: string;
+          assetId: string | null;
+          splits: { date: string; factor: number }[];
+        }
+      >();
+      // First pass: collect splits per symbol.
+      for (const a of dbActivities) {
+        if (a.activityType !== "SPLIT") continue;
+        const sym = a.assetSymbol || "";
+        if (!sym) continue;
+        const factor = parseFloat(String(a.amount ?? 0));
+        if (!Number.isFinite(factor) || factor <= 0) continue;
+        const date = String(a.date ?? "").slice(0, 10);
+        if (!bySymbol.has(sym)) {
+          bySymbol.set(sym, { qty: 0, name: "", assetId: a.assetId ?? null, splits: [] });
+        }
+        bySymbol.get(sym)!.splits.push({ date, factor });
+      }
+      // Second pass: BUY/SELL with split factor applied to pre-split qty.
+      for (const a of dbActivities) {
+        if (a.activityType !== "BUY" && a.activityType !== "SELL") continue;
+        const sym = a.assetSymbol || "";
+        if (!sym) continue;
+        const qty = parseFloat(String(a.quantity ?? 0));
+        if (!Number.isFinite(qty) || qty === 0) continue;
+        const date = String(a.date ?? "").slice(0, 10);
+        const entry = bySymbol.get(sym) ?? {
+          qty: 0,
+          name: "",
+          assetId: a.assetId ?? null,
+          splits: [],
+        };
+        // Multiply by all splits dated AFTER this activity.
+        let effQty = qty;
+        for (const s of entry.splits) {
+          if (s.date > date) effQty *= s.factor;
+        }
+        entry.qty += a.activityType === "BUY" ? effQty : -effQty;
+        if (!entry.assetId && a.assetId) entry.assetId = a.assetId;
+        bySymbol.set(sym, entry);
+      }
+      // Merge a name from the parsed trading set if missing.
+      const tradingNameByIsin = new Map<string, string>();
+      for (const t of state.trading) {
+        if (t.isin) tradingNameByIsin.set(t.isin, t.cleanStockName || t.stockName);
+      }
+      const holdings: DbHolding[] = [];
+      for (const [sym, v] of bySymbol.entries()) {
+        if (Math.abs(v.qty) < 1e-6) continue; // skip closed positions
+        const name = v.name || tradingNameByIsin.get(sym) || sym;
+        holdings.push({ symbol: sym, name, qty: v.qty, assetId: v.assetId });
+      }
+      holdings.sort((a, b) => a.symbol.localeCompare(b.symbol));
+      setDbHoldings(holdings);
     } catch (err) {
-      ctx.api.logger.warn(`[TR PDF] diagnostics failed: ${(err as Error).message}`);
-      setDiagnostics([]);
+      ctx.api.logger.warn(`[TR PDF] failed to load DB holdings: ${(err as Error).message}`);
     } finally {
-      setDiagnosticsLoading(false);
+      setHoldingsLoading(false);
     }
-  }, [accounts, ctx, selectedAccountId, state.autoSplits, state.status, state.trading]);
+  }, [ctx, selectedAccountId, state.trading]);
 
-  // Auto-run diagnostics after import completes — the user shouldn't need
-  // to click anything to see drift.
+  // After import completes, load holdings for the audit panel.
   React.useEffect(() => {
-    if (
-      importState.status === "done" &&
-      state.status === "done" &&
-      selectedAccountId &&
-      diagnostics.length === 0 &&
-      !diagnosticsLoading
-    ) {
-      void runDiagnostics();
+    if (importState.status === "done" && selectedAccountId) {
+      void loadDbHoldings();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importState.status]);
 
-  // (v2.13.1) Auto-switch to Diagnostics tab + scroll into view when
-  // import finishes. Drift findings are the most actionable post-import
-  // signal so we surface them automatically.
-  React.useEffect(() => {
-    if (importState.status === "done" && state.trading.length > 0) {
-      setActiveTab("diagnostics");
-      // Defer scroll to next frame so the tab content has rendered.
-      requestAnimationFrame(() => {
-        tabsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importState.status]);
-
-  const exportDiagnosticsFile = React.useCallback(
-    async (filename: string, content: string, mime: string) => {
-      await saveFile(ctx, filename, content, mime);
+  const handleApplyReconcile = React.useCallback(
+    async (holding: DbHolding) => {
+      const raw = trQtyInputs[holding.symbol] ?? "";
+      const trQty = parseFloat(raw.replace(",", "."));
+      if (!Number.isFinite(trQty) || trQty <= 0) {
+        setReconcileMessages((m) => ({
+          ...m,
+          [holding.symbol]: "Enter a positive quantity from your TR app.",
+        }));
+        return;
+      }
+      if (Math.abs(holding.qty) < 1e-6) {
+        setReconcileMessages((m) => ({
+          ...m,
+          [holding.symbol]: "DB qty is zero — can't compute ratio.",
+        }));
+        return;
+      }
+      const ratio = trQty / holding.qty;
+      if (!Number.isFinite(ratio) || ratio <= 0) {
+        setReconcileMessages((m) => ({
+          ...m,
+          [holding.symbol]: "Computed ratio is invalid.",
+        }));
+        return;
+      }
+      const acct = accounts.find((a) => a.id === selectedAccountId);
+      if (!acct) return;
+      setReconcilePending(holding.symbol);
+      setReconcileMessages((m) => ({ ...m, [holding.symbol]: "" }));
+      try {
+        // SPLIT activity: Rust core reads `amount` as the ratio. Date = today
+        // so the ratio applies to ALL prior activities for this asset.
+        const today = new Date().toISOString();
+        await ctx.api.activities.create({
+          accountId: acct.id,
+          activityType: "SPLIT",
+          activityDate: today,
+          symbol: { symbol: holding.symbol, name: holding.name },
+          quantity: 0,
+          unitPrice: 0,
+          amount: ratio,
+          currency: acct.currency,
+          fee: 0,
+          comment: `TR PDF v2.16.0 manual reconcile: TR ${trQty} / DB ${holding.qty.toFixed(6)} = ratio ${ratio.toFixed(4)}`,
+        });
+        setReconcileMessages((m) => ({
+          ...m,
+          [holding.symbol]: `Applied ratio ${ratio.toFixed(4)} — recalculate history to refresh.`,
+        }));
+        // Refresh holdings + portfolio so DB qty updates.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const portfolio = (ctx.api as any).portfolio;
+        if (portfolio?.recalculate) {
+          portfolio.recalculate().catch(() => undefined);
+        }
+        await loadDbHoldings();
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        ctx.api.logger.warn(`[TR PDF] manual reconcile failed for ${holding.symbol}: ${m}`);
+        setReconcileMessages((mm) => ({ ...mm, [holding.symbol]: `Failed: ${m}` }));
+      } finally {
+        setReconcilePending(null);
+      }
     },
-    [ctx],
+    [accounts, ctx, loadDbHoldings, selectedAccountId, trQtyInputs],
   );
 
-  // (v2.12.0) Self-healing watcher: read DB activities and scan Yahoo.
+  const handleRebuildHistory = React.useCallback(async () => {
+    setRebuildingHistory(true);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const portfolio = (ctx.api as any).portfolio;
+      if (portfolio?.recalculate) {
+        await portfolio.recalculate();
+      }
+    } catch (err) {
+      ctx.api.logger.warn(`[TR PDF] rebuild history failed: ${(err as Error).message}`);
+    } finally {
+      setRebuildingHistory(false);
+    }
+  }, [ctx]);
+
+  // ─── Watcher lifecycle ────────────────────────────────────────────────
   const runWatcher = React.useCallback(async () => {
     if (!selectedAccountId) return;
     if (!watcherSettings.autoCheckSplits) return;
@@ -1123,10 +886,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       });
       setWatcherFindings(findings);
       ctx.api.logger.info(
-        `[TR PDF watcher] scan: ${findings.splits.length} splits, ${findings.tickerMigrations.length} migrations, ${findings.dripGaps.length} drip gaps (checked ${findings.checkedTickers}, fresh ${findings.skippedFresh}, errors ${findings.errors}).`,
+        `[TR PDF watcher] scan: ${findings.splits.length} splits, ${findings.tickerMigrations.length} migrations, ${findings.dripGaps.length} drip gaps.`,
       );
-
-      // Auto-apply if user opted in.
       if (watcherSettings.autoApplySplits && findings.splits.length > 0) {
         const acct = accounts.find((a) => a.id === selectedAccountId);
         const ccy = acct?.currency || "EUR";
@@ -1143,19 +904,17 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               amount: factor,
               currency: ccy,
               fee: 0,
-              comment: `TR PDF v2.12.0 watcher — auto-applied ${s.ratio} split (${s.date}).`,
+              comment: `TR PDF v2.16.0 watcher — auto-applied ${s.ratio} split (${s.date}).`,
             });
             writeLastAppliedSplit(s.ticker, s.date);
           } catch (err) {
             ctx.api.logger.warn(
-              `[TR PDF watcher] auto-apply failed for ${s.ticker} ${s.date}: ${(err as Error).message}`,
+              `[TR PDF watcher] auto-apply failed for ${s.ticker} ${s.date}: ${
+                (err as Error).message
+              }`,
             );
           }
         }
-        // Re-scan so the applied splits drop off the pending list.
-        ctx.api.logger.info(
-          `[TR PDF watcher] auto-applied ${findings.splits.length} split(s); refreshing.`,
-        );
       }
     } catch (err) {
       ctx.api.logger.warn(`[TR PDF watcher] scan failed: ${(err as Error).message}`);
@@ -1164,33 +923,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     }
   }, [accounts, ctx, selectedAccountId, watcherSettings]);
 
-  // Watcher lifecycle:
-  //   • Debounced 30s after page mount (avoid hammering Yahoo on nav)
-  //   • Daily setInterval while page is open
-  //   • Re-runs when settings.autoCheckSplits flips ON
   React.useEffect(() => {
     if (!selectedAccountId) return;
     if (!watcherSettings.autoCheckSplits) return;
-
     let cancelled = false;
     const initialDelay = 30_000;
     const dayMs = 24 * 60 * 60 * 1000;
-
-    // Skip initial scan if last full scan was within the last 24h.
     const lastScan = loadLastFullScan();
     const dueImmediately = Date.now() - lastScan > dayMs;
-
     const t1 = setTimeout(
       () => {
         if (cancelled) return;
         if (dueImmediately) void runWatcher();
-        else {
-          // Even if we don't re-scan, surface the last findings as null —
-          // the per-ticker localStorage cache will repopulate on next due cycle.
-          ctx.api.logger.info(
-            `[TR PDF watcher] last full scan ${Math.round((Date.now() - lastScan) / 3600_000)}h ago — skipping initial run.`,
-          );
-        }
       },
       dueImmediately ? initialDelay : 1_000,
     );
@@ -1210,1108 +954,717 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   }, []);
 
   const watcherPendingCount = countPending(watcherFindings);
+  const watcherLastScan = loadLastFullScan();
 
   const reset = () => {
     setState(initialState);
     setImportState({ status: "idle" });
-    setShowOnlyFailed(false);
-    setSplitState({ status: "idle" });
-    setDiagnostics([]);
-    setDiagnosticsLoading(false);
+    setDbHoldings([]);
+    setTrQtyInputs({});
+    setReconcileMessages({});
   };
-  const progressPct =
-    state.progress && state.progress.total > 0
-      ? (state.progress.page / state.progress.total) * 100
-      : 0;
 
-  const tabsAvailable: Array<"cash" | "mmf" | "trading" | "diagnostics" | "splits" | "mapping"> =
-    [];
-  if (state.cash.length > 0) tabsAvailable.push("cash");
-  if (state.interest.length > 0) tabsAvailable.push("mmf");
-  if (state.trading.length > 0) tabsAvailable.push("trading");
-  // (v2.13.1) Diagnostics / Stock splits / Securities mapping moved into
-  // the tabs row so high-value action panels surface above the parsed-
-  // data tables.
-  if (state.trading.length > 0) tabsAvailable.push("diagnostics");
-  if (state.trading.length > 0) tabsAvailable.push("splits");
+  // ─── Phase progress ───────────────────────────────────────────────────
+  const phaseProgress = (() => {
+    if (state.status !== "parsing") return 0;
+    switch (state.phase) {
+      case "reading":
+        return 5;
+      case "parsing":
+        if (state.progress && state.progress.total > 0) {
+          return 10 + (state.progress.page / state.progress.total) * 60;
+        }
+        return 30;
+      case "resolving-crypto":
+        return 75;
+      case "discovering-tickers":
+        return 82;
+      case "detecting-splits":
+        return 90;
+      case "building":
+        return 96;
+      default:
+        return 0;
+    }
+  })();
 
-  const visibleCash = showOnlyFailed
-    ? state.cash.filter((r) => r._sanityCheckOk === false)
-    : state.cash;
+  // Match the post-import preferred tab.
+  const isImported = importState.status === "done";
 
-  const tradingImportable = state.trading.filter((t) => t.quantity && t.quantity > 0).length;
-  const tradingTotal = state.trading.length;
-  const savingsPlanCount = state.trading.filter((t) => t.isSavingsPlan).length;
-
-  // Reconciliation: compute statement totals + activity-type breakdown +
-  // expected net cash delta, so the user can spot a parser/classification
-  // mismatch BEFORE clicking import. Memoised — re-runs only when parsed
-  // data changes.
-  const reconcile: ReconcileResult | null = React.useMemo(() => {
-    if (state.status !== "done" || state.cash.length === 0) return null;
-    const skipKeys = buildTradingCashKeys(state.trading);
-    const activities = buildActivitiesFromParsed({
-      // accountId/currency don't affect totals — placeholders are fine.
-      accountId: "_reconcile",
-      currency: "EUR",
-      cash: state.cash,
-      trading: state.trading,
-      skipCashKeys: skipKeys,
-    });
-    return buildReconciliation(state.cash, activities, state.summary);
-  }, [state.status, state.cash, state.trading, state.summary]);
-
-  // (v2.7.11) Per-ISIN classification: which securities are mapped to a
-  // Yahoo ticker, which are crypto (mapped via pseudo-ISIN), and which are
-  // unmapped — the user wants to see the unmapped ones explicitly so we
-  // can extend the ticker map together.
-  const securityAnalysis: SecurityAnalysis[] = React.useMemo(() => {
-    if (state.status !== "done" || state.trading.length === 0) return [];
-    return analyzeSecurities(state.trading);
-  }, [state.status, state.trading]);
-
-  // (v2.13.1) Securities mapping tab — only show when we have securities to
-  // classify. Pushed here so it depends on the memoized analysis above.
-  if (securityAnalysis.length > 0) tabsAvailable.push("mapping");
-  const unmappedCount = securityAnalysis.filter((s) => s.status === "unmapped").length;
-  const diagnosticsDriftCount = diagnostics.filter((d) => d.severity !== "ok").length;
-
+  // ─── RENDER ───────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* ─── Header ─── */}
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
+      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Trade Republic PDF Converter</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Extract cash transactions, money market funds, and trading P&L from Trade Republic
-            statements. Runs 100% locally on your device.
+            Drop a TR PDF, review issues, import. Manual reconciliation finishes the job.
           </p>
         </div>
         {state.status === "done" && (
           <Button variant="outline" size="sm" onClick={reset}>
             <Icons.RefreshCw className="mr-2 h-4 w-4" />
-            New PDF
+            Import another PDF
           </Button>
         )}
       </div>
 
-      {/* ─── Upload zone (idle + error) ─── */}
+      {/* ─── STATE 1: Empty (idle / error) ─── */}
       {(state.status === "idle" || state.status === "error") && (
-        <Card>
-          <CardContent className="pt-6">
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed px-8 py-12 transition ${
-                dragOver
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50 hover:bg-muted/40"
-              }`}
-            >
-              <div className="bg-muted group-hover:bg-primary/10 flex h-12 w-12 items-center justify-center rounded-full transition">
-                <Icons.Upload className="text-muted-foreground group-hover:text-primary h-6 w-6 transition" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium">Drop a Trade Republic PDF here</p>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  or click to browse · no size limit · 100% local
-                </p>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf"
-                className="hidden"
-                onChange={onFileInput}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── Parsing progress ─── */}
-      {state.status === "parsing" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Icons.Spinner className="h-4 w-4 animate-spin" />
-              Processing {state.fileName}
-            </CardTitle>
-            <CardDescription>{state.message}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Progress value={progressPct} className="h-2" />
-            {state.progress && (
-              <p className="text-muted-foreground mt-2 text-xs">
-                Page {state.progress.page} of {state.progress.total}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── Error ─── */}
-      {state.status === "error" && (
-        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base text-red-900 dark:text-red-200">
-              <Icons.AlertCircle className="h-4 w-4" />
-              Parsing failed
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-red-800 dark:text-red-300">
-            {state.message}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── (v2.12.0) Self-Healing watcher — always visible when an
-              account is selected so the user sees pending corrections even
-              without a fresh PDF parse. ─── */}
-      {selectedAccountId && (
-        <WatcherPanel
-          ctx={ctx}
-          findings={watcherFindings}
-          scanning={watcherScanning}
-          scanProgress={watcherProgress}
-          settings={watcherSettings}
-          onSettingsChange={handleWatcherSettingsChange}
-          onRunNow={runWatcher}
-          onAfterApply={runWatcher}
-          accountId={selectedAccountId}
-          accountCurrency={selectedAccount?.currency || "EUR"}
-        />
-      )}
-
-      {/* ─── Results ─── */}
-      {state.status === "done" && (
         <>
-          {/* Stats cards */}
-          <div className="grid gap-4 md:grid-cols-4">
-            <StatCard
-              label="Cash transactions"
-              value={state.cash.length}
-              icon={<Icons.CreditCard className="h-4 w-4" />}
-            />
-            <StatCard
-              label="Money market funds"
-              value={state.interest.length}
-              icon={<Icons.BarChart className="h-4 w-4" />}
-            />
-            <StatCard
-              label="Trades"
-              value={state.trading.length}
-              icon={<Icons.TrendingUp className="h-4 w-4" />}
-            />
-            {state.pnl ? (
-              <StatCard
-                // "Realized P&L" requires precise cost-basis tracking with
-                // historical FX rates and fee accounting per individual fill —
-                // none of which we can do reliably from a TR statement alone.
-                // The honest headline figure is the cash-flow delta (sold
-                // proceeds minus buy spend). Donkeyfolio will compute the real
-                // P&L after the activities are imported (with live market data).
-                label="Sold − Bought"
-                value={formatEur(state.pnl.totalSold - state.pnl.totalBought)}
-                icon={<Icons.DollarSign className="h-4 w-4" />}
-              />
-            ) : (
-              <StatCard
-                label="Sold − Bought"
-                value="—"
-                icon={<Icons.DollarSign className="h-4 w-4" />}
-              />
-            )}
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed px-8 py-16 transition ${
+                  dragOver
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/50 hover:bg-muted/40"
+                }`}
+              >
+                <div className="bg-muted group-hover:bg-primary/10 flex h-14 w-14 items-center justify-center rounded-full transition">
+                  <Icons.Upload className="text-muted-foreground group-hover:text-primary h-7 w-7 transition" />
+                </div>
+                <div className="text-center">
+                  <p className="text-base font-semibold">Drop a Trade Republic PDF</p>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    or click to choose · 100% local · no upload
+                  </p>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={onFileInput}
+                />
+              </div>
+            </CardContent>
+          </Card>
 
-          {/* ─── Direct import to Donkeyfolio ─── */}
+          {state.status === "error" && (
+            <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+              <CardContent className="flex items-start gap-2 pt-4 text-sm text-red-800 dark:text-red-300">
+                <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{state.message}</span>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Self-healing watcher — collapsed when nothing pending. */}
+          {selectedAccountId && (
+            <WatcherSummaryCard
+              pendingCount={watcherPendingCount}
+              scanning={watcherScanning}
+              lastScan={watcherLastScan}
+              open={watcherOpen || watcherPendingCount > 0}
+              onOpenChange={setWatcherOpen}
+            >
+              <WatcherPanel
+                ctx={ctx}
+                findings={watcherFindings}
+                scanning={watcherScanning}
+                scanProgress={watcherProgress}
+                settings={watcherSettings}
+                onSettingsChange={handleWatcherSettingsChange}
+                onRunNow={runWatcher}
+                onAfterApply={runWatcher}
+                accountId={selectedAccountId}
+                accountCurrency={selectedAccount?.currency || "EUR"}
+              />
+            </WatcherSummaryCard>
+          )}
+        </>
+      )}
+
+      {/* ─── STATE 2: Parsing ─── */}
+      {state.status === "parsing" && (
+        <>
           <Card>
             <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-base">Import to Donkeyfolio</CardTitle>
-                  <CardDescription>
-                    Pick the target account, then import activities directly — or export a CSV
-                    shaped for the Import Activities wizard.
-                  </CardDescription>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Icons.Spinner className="h-4 w-4 animate-spin" />
+                {state.message || "Working…"}
+              </CardTitle>
+              <CardDescription>{state.fileName}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Progress value={phaseProgress} className="h-2" />
+            </CardContent>
+          </Card>
+          <div className="grid grid-cols-3 gap-3">
+            <SkeletonTile />
+            <SkeletonTile />
+            <SkeletonTile />
+          </div>
+        </>
+      )}
+
+      {/* ─── STATE 3 & 5: Done parse → ready to import / imported ─── */}
+      {state.status === "done" && (
+        <>
+          {/* Account picker (compact). */}
+          <Card>
+            <CardContent className="flex flex-wrap items-end gap-3 pt-6 text-sm">
+              <div className="min-w-[260px] flex-1">
+                <label
+                  htmlFor="tr-account-select"
+                  className="text-muted-foreground mb-1 block text-xs font-medium"
+                >
+                  Target account
+                </label>
+                <select
+                  id="tr-account-select"
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  disabled={importState.status === "running" || !accountsLoaded || creatingAccount}
+                  className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">
+                    {accountsLoaded
+                      ? accounts.length === 0
+                        ? "No accounts found — create one →"
+                        : "Select an account…"
+                      : "Loading accounts…"}
+                  </option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} · {a.accountType} · {a.currency}
+                      {a.trackingMode !== "TRANSACTIONS" ? " ⚠" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                onClick={handleCreateTRAccount}
+                variant="outline"
+                size="sm"
+                disabled={importState.status === "running" || creatingAccount || !accountsLoaded}
+              >
+                {creatingAccount ? (
+                  <>
+                    <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  <>
+                    <Icons.Plus className="mr-2 h-4 w-4" />
+                    Create TR account
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* ─── Ready-to-import card (pre-import only) ─── */}
+          {!isImported && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Ready to import</CardTitle>
+                <CardDescription>{state.fileName} · all checks ran automatically</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {/* KPI tiles */}
+                <div className="grid grid-cols-3 gap-3">
+                  <KpiTile
+                    label="Cash transactions"
+                    value={cashCount.toLocaleString("en-US")}
+                    icon={<Icons.CreditCard className="h-4 w-4" />}
+                  />
+                  <KpiTile
+                    label="Trades"
+                    value={tradingCount.toLocaleString("en-US")}
+                    icon={<Icons.TrendingUp className="h-4 w-4" />}
+                  />
+                  <KpiTile
+                    label="Net (sold − bought)"
+                    value={state.pnl ? formatEur(netPnl) : "—"}
+                    tone={netPnl >= 0 ? "positive" : "negative"}
+                    icon={<Icons.DollarSign className="h-4 w-4" />}
+                  />
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+
+                {/* Cash reconciliation summary */}
+                {pdfEnding != null && (
+                  <div className="bg-muted/40 flex items-start gap-2 rounded-md border p-3 text-xs">
+                    <Icons.CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                    <span>
+                      PDF says <strong>{formatEur(pdfEnding)}</strong> ending balance — we'll match
+                      it exactly via auto-reconciliation activity.
+                    </span>
+                  </div>
+                )}
+
+                {/* Issues panel */}
+                {issuesCount > 0 ? (
+                  <Collapsible open={issuesOpen} onOpenChange={setIssuesOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                      >
+                        {issuesOpen ? (
+                          <Icons.ChevronDown className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Icons.ChevronRight className="mr-2 h-4 w-4" />
+                        )}
+                        <Icons.AlertCircle className="mr-2 h-4 w-4" />
+                        {issuesCount} issue{issuesCount === 1 ? "" : "s"} to review
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-3 space-y-2">
+                      {/* Unmapped securities */}
+                      {unmappedSecurities.length > 0 && (
+                        <div className="rounded-md border p-3 text-xs">
+                          <div className="mb-2 flex items-center gap-2 font-medium">
+                            <Icons.AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                            {unmappedSecurities.length} unmapped securit
+                            {unmappedSecurities.length === 1 ? "y" : "ies"}
+                          </div>
+                          <p className="text-muted-foreground mb-2">
+                            These import correctly (cost basis preserved) but Yahoo may not price
+                            them automatically. Lookup the ticker and report it for inclusion.
+                          </p>
+                          <div className="overflow-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Stock</TableHead>
+                                  <TableHead>ISIN</TableHead>
+                                  <TableHead>WKN</TableHead>
+                                  <TableHead className="text-right">Spent</TableHead>
+                                  <TableHead>Action</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {unmappedSecurities.map((s) => (
+                                  <TableRow key={s.isin}>
+                                    <TableCell
+                                      className="max-w-[260px] truncate"
+                                      title={s.stockName}
+                                    >
+                                      {s.stockName}
+                                    </TableCell>
+                                    <TableCell className="font-mono text-xs">{s.isin}</TableCell>
+                                    <TableCell className="text-muted-foreground font-mono text-xs">
+                                      {s.wkn || "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {formatEur(s.totalSpent)}
+                                    </TableCell>
+                                    <TableCell>
+                                      <a
+                                        href={s.yahooLookupUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                      >
+                                        Lookup on Yahoo →
+                                      </a>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Detected splits */}
+                      {state.autoSplits.length > 0 && (
+                        <div className="rounded-md border p-3 text-xs">
+                          <div className="mb-2 flex items-center gap-2 font-medium">
+                            <Icons.AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                            {state.autoSplits.length} stock split
+                            {state.autoSplits.length === 1 ? "" : "s"} detected
+                          </div>
+                          <p className="text-muted-foreground mb-2">
+                            SPLIT activities will be created automatically on import — pre-split BUY
+                            quantities scale to today's share count.
+                          </p>
+                          <div className="overflow-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Stock</TableHead>
+                                  <TableHead>Ticker</TableHead>
+                                  <TableHead>Date</TableHead>
+                                  <TableHead className="text-right">Ratio</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {state.autoSplits.map((s, i) => (
+                                  <TableRow key={`${s.isin}-${s.date}-${i}`}>
+                                    <TableCell
+                                      className="max-w-[260px] truncate"
+                                      title={s.stockName}
+                                    >
+                                      {s.stockName}
+                                    </TableCell>
+                                    <TableCell className="font-mono text-xs">{s.ticker}</TableCell>
+                                    <TableCell className="font-mono text-xs">{s.date}</TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      <Badge variant="outline" className="text-xs">
+                                        {s.ratio}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Crypto resolved */}
+                      {state.cryptoResolved > 0 && (
+                        <div className="flex items-start gap-2 rounded-md border p-3 text-xs">
+                          <Icons.CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                          <span>
+                            <strong>{state.cryptoResolved}</strong> crypto Compra direta trade
+                            {state.cryptoResolved === 1 ? "" : "s"} resolved via DB cache — qty
+                            computed from cached daily closes.
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Parser drift */}
+                      {parserDriftEur > 50 && (
+                        <div className="flex items-start gap-2 rounded-md border p-3 text-xs">
+                          <Icons.CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                          <span>
+                            Parser drift <strong>{formatEur(parserDriftEur)}</strong> detected —
+                            auto-reconciliation activity will close it on import.
+                          </span>
+                        </div>
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-300">
+                    <Icons.CheckCircle className="h-4 w-4" />
+                    No issues — clean import.
+                  </div>
+                )}
+
+                {selectedAccount && selectedAccount.trackingMode !== "TRANSACTIONS" && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    ⚠ Account uses trackingMode <code>{selectedAccount.trackingMode}</code>. Set it
+                    to <strong>Transactions</strong> in Donkeyfolio account settings before
+                    importing.
+                  </p>
+                )}
+
+                {/* Big import button */}
+                <div className="pt-2">
                   <Button
                     onClick={handleImport}
                     disabled={
                       importState.status === "running" || !selectedAccountId || !accountsLoaded
                     }
-                    size="sm"
+                    size="lg"
+                    className="w-full bg-green-600 text-white hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-800"
                   >
                     {importState.status === "running" ? (
                       <>
-                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                        <Icons.Spinner className="mr-2 h-5 w-5 animate-spin" />
                         Importing…
                       </>
                     ) : (
                       <>
-                        <Icons.Download className="mr-2 h-4 w-4" />
+                        <Icons.Download className="mr-2 h-5 w-5" />
                         Import to Donkeyfolio
                       </>
                     )}
                   </Button>
-                  <Button
-                    onClick={exportDonkeyfolioCsv}
-                    variant="outline"
-                    size="sm"
-                    disabled={importState.status === "running"}
-                  >
-                    <Icons.Download className="mr-2 h-4 w-4" />
-                    Activities CSV
-                  </Button>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0 text-sm">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="min-w-[260px] flex-1">
-                  <label
-                    htmlFor="tr-account-select"
-                    className="text-muted-foreground mb-1 block text-xs font-medium"
-                  >
-                    Target account
-                  </label>
-                  <select
-                    id="tr-account-select"
-                    value={selectedAccountId}
-                    onChange={(e) => setSelectedAccountId(e.target.value)}
-                    disabled={
-                      importState.status === "running" || !accountsLoaded || creatingAccount
-                    }
-                    className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="">
-                      {accountsLoaded
-                        ? accounts.length === 0
-                          ? "No accounts found — create one below"
-                          : "Select an account…"
-                        : "Loading accounts…"}
-                    </option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name} · {a.accountType} · {a.currency}
-                        {a.trackingMode !== "TRANSACTIONS" ? " ⚠" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <Button
-                  onClick={handleCreateTRAccount}
-                  variant="outline"
-                  size="sm"
-                  disabled={importState.status === "running" || creatingAccount || !accountsLoaded}
-                >
-                  {creatingAccount ? (
-                    <>
-                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
-                      Creating…
-                    </>
-                  ) : (
-                    <>
-                      <Icons.Plus className="mr-2 h-4 w-4" />
-                      Create Trade Republic account
-                    </>
-                  )}
-                </Button>
-              </div>
-              {selectedAccount && selectedAccount.trackingMode !== "TRANSACTIONS" && (
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  ⚠ This account uses trackingMode <code>{selectedAccount.trackingMode}</code>. Set
-                  it to <strong>Transactions</strong> in Donkeyfolio account settings before
-                  importing — otherwise activities won't generate Holdings.
-                </p>
-              )}
-              {accountsLoaded && accounts.length === 0 && (
-                <p className="text-muted-foreground text-xs">
-                  No accounts found in this Donkeyfolio install. Click{" "}
-                  <strong>Create Trade Republic account</strong> to add one with the right tracking
-                  mode.
-                </p>
-              )}
-            </CardContent>
-            {(importState.status === "running" ||
-              importState.status === "done" ||
-              importState.status === "error") && (
-              <CardContent className="text-sm">
+
+                {/* STATE 4: Importing — progress */}
                 {importState.status === "running" && (
-                  <p className="text-muted-foreground">{importState.message}</p>
-                )}
-                {importState.status === "done" && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-                      <Icons.CheckCircle className="h-4 w-4 shrink-0" />
-                      <span>
-                        Imported <strong>{importState.imported}</strong> activities
-                        {importState.skipped > 0 && ` · ${importState.skipped} skipped`}
-                        {importState.accountCreated && " · account created"}
-                      </span>
-                    </div>
-                    {importState.failureExamples && importState.failureExamples.length > 0 && (
-                      <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-                        <div className="font-medium">Sample failures:</div>
-                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                          {importState.failureExamples.map((msg, i) => (
-                            <li key={i} className="font-mono">
-                              {msg}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                  <div className="space-y-2 text-xs">
+                    <p className="text-muted-foreground">{importState.message}</p>
+                    {importState.progress && importState.progress.total > 0 && (
+                      <Progress
+                        value={(importState.progress.done / importState.progress.total) * 100}
+                        className="h-2"
+                      />
                     )}
                   </div>
                 )}
                 {importState.status === "error" && (
-                  <div className="flex items-start gap-2 text-red-700 dark:text-red-300">
+                  <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
                     <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{importState.message}</span>
                   </div>
                 )}
-                {savingsPlanCount > 0 && (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    Includes <strong>{savingsPlanCount}</strong> Savings plan execution(s) —
-                    imported as BUY with €0 fee. Manual Buy/Sell trades get the standard TR €1 fee
-                    separated out (amount = qty × price, fee = €1).
-                  </p>
-                )}
-                {tradingTotal > tradingImportable && (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    Note: {tradingTotal - tradingImportable} trade(s) lack a quantity and will be
-                    skipped during import.
-                  </p>
-                )}
-              </CardContent>
-            )}
-          </Card>
-
-          {/* ─── Cash reconciliation (statement vs activities) ─── */}
-          {reconcile && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Cash reconciliation</CardTitle>
-                <CardDescription>
-                  {reconcile.pdfSummary
-                    ? "PDF summary block (page 1) is the authoritative ground-truth — what TR officially says about the period. We compare our row-by-row parsing against it to catch parser drift, then compare our import activities against the summary."
-                    : "Couldn't locate the PDF summary block on page 1. Falling back to row-by-row totals (less reliable)."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 text-sm">
-                {/* PDF summary tiles (preferred) — falls back to row-derived. */}
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  <ReconcileTile
-                    label="Opening balance"
-                    value={formatEur(
-                      reconcile.pdfSummary
-                        ? reconcile.pdfSummary.opening
-                        : reconcile.rowDerived.opening,
-                    )}
-                  />
-                  <ReconcileTile
-                    label="Money IN"
-                    value={formatEur(
-                      reconcile.pdfSummary
-                        ? reconcile.pdfSummary.moneyIn
-                        : reconcile.rowDerived.totalIn,
-                    )}
-                    tone="positive"
-                  />
-                  <ReconcileTile
-                    label="Money OUT"
-                    value={formatEur(
-                      reconcile.pdfSummary
-                        ? reconcile.pdfSummary.moneyOut
-                        : reconcile.rowDerived.totalOut,
-                    )}
-                    tone="negative"
-                  />
-                  <ReconcileTile
-                    label="Closing balance"
-                    value={formatEur(
-                      reconcile.pdfSummary
-                        ? reconcile.pdfSummary.ending
-                        : reconcile.rowDerived.closing,
-                    )}
-                  />
-                </div>
-
-                {/* Parser-drift warning: when our row-by-row sums disagree
-                    with the PDF summary, the parser has dropped or
-                    double-counted rows. Show how much we're off so the user
-                    can see the diagnosis directly. */}
-                {reconcile.parserDrift &&
-                  (Math.abs(reconcile.parserDrift.inDrift) > 0.01 ||
-                    Math.abs(reconcile.parserDrift.outDrift) > 0.01 ||
-                    Math.abs(reconcile.parserDrift.closingDrift) > 0.01) && (
-                    <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-xs dark:border-orange-900 dark:bg-orange-950/30">
-                      <div className="flex items-start gap-2">
-                        <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-orange-700 dark:text-orange-300" />
-                        <div className="space-y-1">
-                          <p className="font-medium text-orange-900 dark:text-orange-200">
-                            Parser drift detected — our row-by-row sum disagrees with the PDF
-                            summary block.
-                          </p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-orange-800 dark:text-orange-300">
-                            <span>
-                              IN drift: <strong>{formatEur(reconcile.parserDrift.inDrift)}</strong>
-                            </span>
-                            <span>
-                              OUT drift:{" "}
-                              <strong>{formatEur(reconcile.parserDrift.outDrift)}</strong>
-                            </span>
-                            <span>
-                              Closing drift:{" "}
-                              <strong>{formatEur(reconcile.parserDrift.closingDrift)}</strong>
-                            </span>
-                          </div>
-                          <p className="text-orange-800 dark:text-orange-300">
-                            Positive = parser counted MORE than the summary. Negative = parser
-                            MISSED rows. The reconciliation below uses the PDF summary as
-                            ground-truth, so the import will still aim at the correct closing
-                            balance.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                {/* Breakdown — collapsed by default. Long & secondary
-                    info; the verdict row above is what most users need. */}
-                {reconcile.breakdown.length > 0 && (
-                  <Collapsible
-                    open={reconcileBreakdownOpen}
-                    onOpenChange={setReconcileBreakdownOpen}
-                  >
-                    <CollapsibleTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-foreground -ml-2 h-7 gap-1 text-xs"
-                      >
-                        {reconcileBreakdownOpen ? (
-                          <Icons.ChevronDown className="h-3 w-3" />
-                        ) : (
-                          <Icons.ChevronRight className="h-3 w-3" />
-                        )}
-                        {reconcileBreakdownOpen ? "Hide" : "Show"} breakdown by activity type (
-                        {reconcile.breakdown.length})
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="mt-2">
-                      <div className="overflow-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Activity type</TableHead>
-                              <TableHead className="text-right">Count</TableHead>
-                              <TableHead className="text-right">Total</TableHead>
-                              <TableHead className="text-right">Cash impact</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {reconcile.breakdown.map((r) => (
-                              <TableRow key={r.activityType}>
-                                <TableCell>
-                                  <Badge variant="outline" className="font-mono text-xs">
-                                    {r.activityType}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-right font-mono">{r.count}</TableCell>
-                                <TableCell className="text-right font-mono">
-                                  {formatEur(r.total)}
-                                </TableCell>
-                                <TableCell
-                                  className={`text-right font-mono font-medium ${
-                                    r.cashImpact > 0
-                                      ? "text-green-600 dark:text-green-400"
-                                      : r.cashImpact < 0
-                                        ? "text-red-600 dark:text-red-400"
-                                        : ""
-                                  }`}
-                                >
-                                  {(r.cashImpact > 0 ? "+" : "") + formatEur(r.cashImpact)}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                )}
-
-                {/* Verdict */}
-                <div
-                  className={`flex items-start gap-2 rounded-md border p-3 ${
-                    Math.abs(reconcile.reconciliationGap) < 0.01
-                      ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/30"
-                      : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30"
-                  }`}
-                >
-                  {Math.abs(reconcile.reconciliationGap) < 0.01 ? (
-                    <Icons.CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-700 dark:text-green-300" />
-                  ) : (
-                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
-                  )}
-                  <div className="space-y-1 text-xs">
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono">
-                      <span>
-                        {reconcile.pdfSummary ? "PDF Δ" : "Statement Δ"}:{" "}
-                        <strong>{formatEur(reconcile.authoritativeNetDelta)}</strong> (
-                        {reconcile.pdfSummary ? "ending − opening" : "closing − opening"})
-                      </span>
-                      <span>
-                        Activities Δ: <strong>{formatEur(reconcile.activitiesNetDelta)}</strong>
-                      </span>
-                      <span>
-                        Gap:{" "}
-                        <strong
-                          className={
-                            Math.abs(reconcile.reconciliationGap) < 0.01
-                              ? "text-green-700 dark:text-green-300"
-                              : "text-amber-700 dark:text-amber-300"
-                          }
-                        >
-                          {formatEur(reconcile.reconciliationGap)}
-                        </strong>
-                      </span>
-                    </div>
-                    {Math.abs(reconcile.reconciliationGap) < 0.01 ? (
-                      <p className="text-green-700 dark:text-green-300">
-                        ✓ The activities we'll import reconcile to the PDF closing balance.
-                      </p>
-                    ) : (
-                      <p className="text-amber-700 dark:text-amber-300">
-                        Off by {formatEur(reconcile.reconciliationGap)} — likely a cash row with an
-                        unrecognised type, or a parser drop-out. Check rows tagged "Refund" /
-                        "Settlement" / "Rounding" — those need a CREDIT subtype mapping.
-                      </p>
-                    )}
-                  </div>
-                </div>
               </CardContent>
             </Card>
           )}
 
-          {/* ─── Validation summary (v2.10) ─────────────────────────── */}
-          {state.status === "done" && (
-            <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20">
-              <CardHeader>
-                <CardTitle className="text-base">Import readiness</CardTitle>
-                <CardDescription>
-                  Automatic checks run after parsing your PDF. Anything flagged below is
-                  pre-resolved or surfaced for you to verify — no manual work needed unless an item
-                  is marked ⚠.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                  <span>
-                    <strong>{state.cash.length}</strong> cash transactions parsed,{" "}
-                    <strong>{state.trading.length}</strong> trades detected.
-                  </span>
-                </div>
-                {state.summary && (
-                  <div className="flex items-center gap-2">
-                    <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                    <span>
-                      PDF SUMMARY block read (opening {state.summary.openingBalance} → ending{" "}
-                      {state.summary.endingBalance}).
+          {/* ─── STATE 5: Imported (success) ─── */}
+          {isImported && importState.status === "done" && (
+            <>
+              <Card className="border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20">
+                <CardContent className="space-y-3 pt-6 text-sm">
+                  <div className="flex items-center gap-2 text-green-800 dark:text-green-200">
+                    <Icons.CheckCircle className="h-5 w-5 shrink-0" />
+                    <span className="text-base font-semibold">
+                      Imported {importState.imported} activities
+                      {importState.skipped > 0 ? ` · ${importState.skipped} skipped` : ""}
                     </span>
                   </div>
-                )}
-                {state.recoveredRows > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                    <span>
-                      <strong>{state.recoveredRows}</strong> row(s) auto-corrected (column-swap +
-                      chain consistency + multi-line merge).
-                    </span>
-                  </div>
-                )}
-                {state.discoveredTickers.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    {state.discoveredTickers.filter((d) => d.symbol).length ===
-                    state.discoveredTickers.length ? (
-                      <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                    ) : (
-                      <Icons.AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                    )}
-                    <span>
-                      <strong>
-                        {state.discoveredTickers.filter((d) => d.symbol).length}/
-                        {state.discoveredTickers.length}
-                      </strong>{" "}
-                      unmapped ISINs auto-resolved via Yahoo search.
-                    </span>
-                  </div>
-                )}
-                {state.autoSplits.length > 0 && (
-                  <div className="flex items-start gap-2">
-                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                    <span>
-                      ⚠ <strong>{state.autoSplits.length}</strong> stock split(s) detected after
-                      your first trade — review the Stock splits panel below and add SPLIT
-                      activities in Donkeyfolio if TR doesn't already reflect them.
-                    </span>
-                  </div>
-                )}
-                {state.failedChecks > 0 && (
-                  <div className="flex items-start gap-2">
-                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                    <span>
-                      ⚠ <strong>{state.failedChecks}</strong> sanity check(s) failed —
-                      reconciliation will close any residual gap automatically (v2.8 feature).
-                    </span>
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                  <span>
-                    Cash will reconcile to PDF SUMMARY ending balance via auto-reconciliation
-                    activity (if drift exists).
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ─── Stock-split detection (Yahoo Finance, opt-in) ─── */}
-          {state.trading.length > 0 && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-base">Stock splits</CardTitle>
-                    <CardDescription>
-                      TR PDFs record pre-split quantities. After a 2:1 split your imported holding
-                      will be half of reality unless a SPLIT activity is added. This check queries
-                      Yahoo Finance for splits that happened after each position's first trade.
-                    </CardDescription>
-                  </div>
-                  <Button
-                    onClick={handleCheckSplits}
-                    variant="outline"
-                    size="sm"
-                    disabled={splitState.status === "running" || importState.status === "running"}
-                  >
-                    {splitState.status === "running" ? (
-                      <>
-                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
-                        Checking…
-                      </>
-                    ) : (
-                      <>
-                        <Icons.Search className="mr-2 h-4 w-4" />
-                        Check for splits
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </CardHeader>
-              {splitState.status !== "idle" && (
-                <CardContent className="text-sm">
-                  {splitState.status === "running" && (
-                    <div className="text-muted-foreground">
-                      Querying Yahoo… {splitState.checked}
-                      {splitState.total > 0 ? ` / ${splitState.total}` : ""} positions checked.
-                    </div>
-                  )}
-                  {splitState.status === "error" && (
-                    <div className="flex items-start gap-2 text-red-700 dark:text-red-300">
-                      <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>{splitState.message}</span>
-                    </div>
-                  )}
-                  {splitState.status === "done" && splitState.splits.length === 0 && (
-                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-                      <Icons.CheckCircle className="h-4 w-4 shrink-0" />
-                      <span>
-                        No splits detected — checked {splitState.checked} position
-                        {splitState.checked === 1 ? "" : "s"}
-                        {splitState.errors > 0 ? ` (${splitState.errors} couldn't be queried)` : ""}
-                        .
-                      </span>
-                    </div>
-                  )}
-                  {splitState.status === "done" && splitState.splits.length > 0 && (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
-                        <Icons.AlertCircle className="h-4 w-4 shrink-0" />
-                        <span>
-                          Found <strong>{splitState.splits.length}</strong> split
-                          {splitState.splits.length === 1 ? "" : "s"} affecting your TR holdings.
-                          Add a <code>SPLIT</code> activity in Donkeyfolio for each one (or your
-                          imported quantity will stay at the pre-split amount).
-                        </span>
-                      </div>
-                      <div className="overflow-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Stock</TableHead>
-                              <TableHead>Ticker</TableHead>
-                              <TableHead>WKN</TableHead>
-                              <TableHead>Split date</TableHead>
-                              <TableHead className="text-right">Ratio</TableHead>
-                              <TableHead>First trade</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {splitState.splits.map((s, i) => (
-                              <TableRow key={`${s.isin}-${s.date}-${i}`}>
-                                <TableCell className="max-w-xs truncate" title={s.stockName}>
-                                  {s.stockName}
-                                </TableCell>
-                                <TableCell className="font-mono text-xs">{s.ticker}</TableCell>
-                                <TableCell className="text-muted-foreground font-mono text-xs">
-                                  {s.wkn || "—"}
-                                </TableCell>
-                                <TableCell className="font-mono text-xs">{s.date}</TableCell>
-                                <TableCell className="text-right font-mono">
-                                  <Badge
-                                    variant={s.ratioMul > 1 ? "outline" : "secondary"}
-                                    className="text-xs"
-                                  >
-                                    {s.ratio}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-muted-foreground font-mono text-xs">
-                                  {s.firstTradeDate}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                      {splitState.errors > 0 && (
-                        <p className="text-muted-foreground text-xs">
-                          Note: {splitState.errors} ticker
-                          {splitState.errors === 1 ? "" : "s"} couldn't be queried (network /
-                          rate-limit). Re-run if needed.
-                        </p>
-                      )}
+                  {importState.failureExamples && importState.failureExamples.length > 0 && (
+                    <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                      <div className="font-medium">Sample failures:</div>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                        {importState.failureExamples.map((msg, i) => (
+                          <li key={i} className="font-mono">
+                            {msg}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </CardContent>
-              )}
-            </Card>
-          )}
+              </Card>
 
-          {/* ─── Unmapped securities panel (v2.7.11) ─── */}
-          {securityAnalysis.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Securities mapping status</CardTitle>
-                <CardDescription>
-                  Each ISIN in your statement is classified by whether the addon has a Yahoo ticker
-                  mapping. Unmapped securities still import (cost basis is preserved) but Yahoo may
-                  not find live prices automatically. Click "Lookup on Yahoo" to find the correct
-                  ticker and tell me which ones to add to the map.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 text-sm">
-                {/* Summary tiles */}
-                <div className="grid grid-cols-3 gap-3">
-                  <ReconcileTile
-                    label="Mapped to Yahoo"
-                    value={`${securityAnalysis.filter((s) => s.status === "mapped").length}`}
-                    tone="positive"
-                  />
-                  <ReconcileTile
-                    label="Crypto (pseudo-ISIN)"
-                    value={`${securityAnalysis.filter((s) => s.status === "crypto").length}`}
-                  />
-                  <ReconcileTile
-                    label="Unmapped (verify)"
-                    value={`${securityAnalysis.filter((s) => s.status === "unmapped").length}`}
-                    tone="negative"
-                  />
-                </div>
-
-                {/* Table — show unmapped first (sorted by spend), then crypto, then mapped */}
-                <div className="overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Stock</TableHead>
-                        <TableHead>ISIN</TableHead>
-                        <TableHead>WKN</TableHead>
-                        <TableHead>Yahoo ticker</TableHead>
-                        <TableHead className="text-right">Net qty</TableHead>
-                        <TableHead className="text-right">Spent</TableHead>
-                        <TableHead>Verify</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {securityAnalysis.map((s) => (
-                        <TableRow
-                          key={s.isin}
-                          className={
-                            s.status === "unmapped"
-                              ? "bg-amber-50/50 dark:bg-amber-950/10"
-                              : undefined
-                          }
-                        >
-                          <TableCell>
-                            <Badge
-                              variant={
-                                s.status === "mapped"
-                                  ? "outline"
-                                  : s.status === "crypto"
-                                    ? "secondary"
-                                    : "destructive"
-                              }
-                              className="text-xs"
-                            >
-                              {s.status === "mapped"
-                                ? "✓ Mapped"
-                                : s.status === "crypto"
-                                  ? "Crypto"
-                                  : "⚠ Unmapped"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell
-                            className="max-w-xs truncate"
-                            title={s.mappedName || s.stockName}
-                          >
-                            {s.mappedName || s.stockName}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{s.isin}</TableCell>
-                          <TableCell className="text-muted-foreground font-mono text-xs">
-                            {s.wkn || "—"}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            {s.mappedSymbol || "—"}
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {formatQty(s.netQty)}
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {formatEur(s.totalSpent)}
-                          </TableCell>
-                          <TableCell>
-                            <a
-                              href={s.yahooLookupUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                            >
-                              Lookup on Yahoo →
-                            </a>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                <p className="text-muted-foreground text-xs">
-                  💡 Tip: when you find the correct Yahoo ticker for an unmapped security, send me
-                  the ISIN + ticker and I&apos;ll add it to the addon&apos;s map so future imports
-                  resolve it automatically.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          {state.recoveredRows > 0 && (
-            <Card className="border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30">
-              <CardContent className="flex items-center gap-2 pt-4 text-sm text-blue-900 dark:text-blue-200">
-                <Icons.CheckCircle className="h-4 w-4 shrink-0" />
-                <span>
-                  Auto-corrected <strong>{state.recoveredRows}</strong> trade row
-                  {state.recoveredRows === 1 ? "" : "s"} where the PDF parser placed the amount in
-                  the wrong column or dropped it — recovered from the trade direction and balance
-                  delta.
-                </span>
-              </CardContent>
-            </Card>
-          )}
-
-          {state.failedChecks > 0 && (
-            <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30">
-              <CardContent className="flex items-center justify-between gap-2 pt-4 text-sm text-amber-900 dark:text-amber-200">
-                <div className="flex items-center gap-2">
-                  <Icons.AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>
-                    <strong>{state.failedChecks}</strong> balance sanity check
-                    {state.failedChecks === 1 ? "" : "s"} still failed after auto-recovery — check
-                    the highlighted rows.
-                  </span>
-                </div>
-                <Button
-                  size="sm"
-                  variant={showOnlyFailed ? "default" : "outline"}
-                  onClick={() => setShowOnlyFailed((v) => !v)}
-                >
-                  {showOnlyFailed ? "Show all" : "Show only failed"}
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Tabs with tables */}
-          {tabsAvailable.length > 0 && (
-            <div ref={tabsAnchorRef} className="scroll-mt-4">
-              <Tabs
-                value={
-                  (tabsAvailable as string[]).includes(activeTab) ? activeTab : tabsAvailable[0]
-                }
-                onValueChange={setActiveTab}
-                className="space-y-4"
-              >
-                <TabsList>
-                  {tabsAvailable.includes("cash") && (
-                    <TabsTrigger value="cash">
-                      Cash
-                      <Badge variant="secondary" className="ml-2">
-                        {state.cash.length}
-                      </Badge>
-                    </TabsTrigger>
-                  )}
-                  {tabsAvailable.includes("mmf") && (
-                    <TabsTrigger value="mmf">
-                      Money Market
-                      <Badge variant="secondary" className="ml-2">
-                        {state.interest.length}
-                      </Badge>
-                    </TabsTrigger>
-                  )}
-                  {tabsAvailable.includes("trading") && (
-                    <TabsTrigger value="trading">
-                      Trading P&L
-                      <Badge variant="secondary" className="ml-2">
-                        {state.trading.length}
-                      </Badge>
-                      <Badge variant="outline" className="ml-2 text-[10px] uppercase">
-                        Beta
-                      </Badge>
-                    </TabsTrigger>
-                  )}
-                  {state.trading.length > 0 && (
-                    <TabsTrigger value="diagnostics">
-                      Diagnostics
-                      {diagnostics.length > 0 && (
-                        <Badge variant="secondary" className="ml-2">
-                          {diagnostics.filter((d) => d.severity !== "ok").length}/
-                          {diagnostics.length}
-                        </Badge>
+              {/* Holdings audit / manual reconciliation */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-base">Holdings audit</CardTitle>
+                      <CardDescription>
+                        Compare DB qty against what your TR app shows. Type the TR qty for any
+                        holding that drifts and click Apply — a SPLIT activity is emitted to align
+                        Donkeyfolio with TR.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={loadDbHoldings}
+                      disabled={holdingsLoading}
+                    >
+                      {holdingsLoading ? (
+                        <>
+                          <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                          Loading…
+                        </>
+                      ) : (
+                        <>
+                          <Icons.RefreshCw className="mr-2 h-4 w-4" />
+                          Refresh
+                        </>
                       )}
-                      <Badge variant="outline" className="ml-2 text-[10px] uppercase">
-                        New
-                      </Badge>
-                    </TabsTrigger>
-                  )}
-                </TabsList>
-
-                {tabsAvailable.includes("cash") && (
-                  <TabsContent value="cash" className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button size="sm" onClick={exportCsv}>
-                        <Icons.Download className="mr-2 h-4 w-4" />
-                        Export CSV
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={exportLexwareCsv}>
-                        Lexware CSV
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => exportJson("cash")}>
-                        JSON
-                      </Button>
-                      {state.failedChecks > 0 && (
-                        <Button
-                          size="sm"
-                          variant={showOnlyFailed ? "default" : "outline"}
-                          onClick={() => setShowOnlyFailed((v) => !v)}
-                        >
-                          {showOnlyFailed
-                            ? `Showing ${state.failedChecks} failed`
-                            : "Only failed sanity checks"}
-                        </Button>
-                      )}
-                    </div>
-                    <CashTable rows={visibleCash} />
-                  </TabsContent>
-                )}
-
-                {tabsAvailable.includes("mmf") && (
-                  <TabsContent value="mmf" className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => exportJson("mmf")}>
-                        <Icons.Download className="mr-2 h-4 w-4" />
-                        Export JSON
-                      </Button>
-                    </div>
-                    <InterestTable rows={state.interest} />
-                  </TabsContent>
-                )}
-
-                {tabsAvailable.includes("trading") && state.pnl && (
-                  <TabsContent value="trading" className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => exportJson("trading")}>
-                        <Icons.Download className="mr-2 h-4 w-4" />
-                        Export JSON
-                      </Button>
-                    </div>
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {dbHoldings.length === 0 && !holdingsLoading && (
                     <p className="text-muted-foreground text-xs">
-                      Per-position approximation. The accurate P&L is computed by Donkeyfolio after
-                      import using live market prices and your full holdings history.
+                      No open holdings found in DB for this account.
                     </p>
-                    <TradingTable pnl={state.pnl} />
-                  </TabsContent>
-                )}
+                  )}
+                  {dbHoldings.length > 0 && (
+                    <div className="overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Ticker</TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead className="text-right">DB qty</TableHead>
+                            <TableHead className="w-[160px]">TR app qty</TableHead>
+                            <TableHead className="text-right">Drift</TableHead>
+                            <TableHead className="w-[140px]">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {dbHoldings.map((h) => {
+                            const raw = trQtyInputs[h.symbol] ?? "";
+                            const trQty = parseFloat(raw.replace(",", "."));
+                            const drift =
+                              Number.isFinite(trQty) && trQty > 0 ? trQty - h.qty : null;
+                            const driftPct =
+                              drift != null && h.qty !== 0 ? Math.abs(drift / h.qty) : 0;
+                            const msg = reconcileMessages[h.symbol];
+                            return (
+                              <TableRow key={h.symbol}>
+                                <TableCell className="font-mono text-xs">{h.symbol}</TableCell>
+                                <TableCell className="max-w-[260px] truncate" title={h.name}>
+                                  {h.name}
+                                </TableCell>
+                                <TableCell className="text-right font-mono">
+                                  {formatQty(h.qty)}
+                                </TableCell>
+                                <TableCell>
+                                  <Input
+                                    value={raw}
+                                    onChange={(e) =>
+                                      setTrQtyInputs((m) => ({
+                                        ...m,
+                                        [h.symbol]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder="—"
+                                    className="h-8 font-mono text-xs"
+                                    inputMode="decimal"
+                                  />
+                                </TableCell>
+                                <TableCell
+                                  className={`text-right font-mono text-xs ${
+                                    drift == null
+                                      ? "text-muted-foreground"
+                                      : Math.abs(drift) < 1e-6
+                                        ? "text-green-600 dark:text-green-400"
+                                        : driftPct >= 0.01
+                                          ? "text-red-600 dark:text-red-400"
+                                          : "text-amber-600 dark:text-amber-400"
+                                  }`}
+                                >
+                                  {drift == null
+                                    ? "—"
+                                    : `${drift > 0 ? "+" : ""}${formatQty(drift)}`}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={
+                                      reconcilePending === h.symbol ||
+                                      drift == null ||
+                                      Math.abs(drift) < 1e-6
+                                    }
+                                    onClick={() => handleApplyReconcile(h)}
+                                  >
+                                    {reconcilePending === h.symbol ? (
+                                      <>
+                                        <Icons.Spinner className="mr-1 h-3 w-3 animate-spin" />…
+                                      </>
+                                    ) : (
+                                      "Apply fix"
+                                    )}
+                                  </Button>
+                                  {msg && (
+                                    <p className="text-muted-foreground mt-1 text-[10px]">{msg}</p>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRebuildHistory}
+                      disabled={rebuildingHistory}
+                    >
+                      {rebuildingHistory ? (
+                        <>
+                          <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                          Rebuilding…
+                        </>
+                      ) : (
+                        <>
+                          <Icons.RefreshCw className="mr-2 h-4 w-4" />
+                          Rebuild History
+                        </>
+                      )}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={reset}>
+                      <Icons.Plus className="mr-2 h-4 w-4" />
+                      Import another PDF
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
 
-                {state.trading.length > 0 && (
-                  <TabsContent value="diagnostics" className="space-y-3">
-                    {!selectedAccountId ? (
-                      <div className="text-muted-foreground rounded border p-4 text-xs">
-                        Select a target account above to enable diagnostics — we need to read DB
-                        activities to compare against the parsed import.
-                      </div>
-                    ) : diagnostics.length === 0 && !diagnosticsLoading ? (
-                      <div className="rounded border p-4 text-xs">
-                        <p className="text-muted-foreground mb-2">
-                          Diagnostics auto-runs after import. You can also run it manually now to
-                          see drift between this parse and what's currently in DB.
-                        </p>
-                        <Button size="sm" onClick={runDiagnostics}>
-                          <Icons.Search className="mr-2 h-4 w-4" />
-                          Run diagnostics now
-                        </Button>
-                      </div>
-                    ) : (
-                      <DiagnosticsPanel
-                        ctx={ctx}
-                        diagnostics={diagnostics}
-                        loading={diagnosticsLoading}
-                        progress={diagnosticsProgress}
-                        onRefresh={runDiagnostics}
-                        autoSplits={state.autoSplits}
-                        accountId={selectedAccountId}
-                        accountCurrency={selectedAccount?.currency || "EUR"}
-                        onExport={exportDiagnosticsFile}
-                      />
-                    )}
-                  </TabsContent>
-                )}
-              </Tabs>
-            </div>
+              {/* Watcher (post-import). */}
+              {selectedAccountId && (
+                <WatcherSummaryCard
+                  pendingCount={watcherPendingCount}
+                  scanning={watcherScanning}
+                  lastScan={watcherLastScan}
+                  open={watcherOpen || watcherPendingCount > 0}
+                  onOpenChange={setWatcherOpen}
+                >
+                  <WatcherPanel
+                    ctx={ctx}
+                    findings={watcherFindings}
+                    scanning={watcherScanning}
+                    scanProgress={watcherProgress}
+                    settings={watcherSettings}
+                    onSettingsChange={handleWatcherSettingsChange}
+                    onRunNow={runWatcher}
+                    onAfterApply={runWatcher}
+                    accountId={selectedAccountId}
+                    accountCurrency={selectedAccount?.currency || "EUR"}
+                  />
+                </WatcherSummaryCard>
+              )}
+            </>
           )}
+
+          {/* Show parsed details (collapsed). */}
+          <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-foreground -ml-2">
+                {detailsOpen ? (
+                  <Icons.ChevronDown className="mr-2 h-4 w-4" />
+                ) : (
+                  <Icons.ChevronRight className="mr-2 h-4 w-4" />
+                )}
+                {detailsOpen ? "Hide" : "Show"} parsed details ({cashCount} cash · {tradingCount}{" "}
+                trades · {state.interest.length} MMF)
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3">
+              <div className="flex flex-wrap gap-1 border-b">
+                {(["cash", "trading", "mmf"] as const).map((t) =>
+                  (t === "cash" && cashCount === 0) ||
+                  (t === "trading" && tradingCount === 0) ||
+                  (t === "mmf" && state.interest.length === 0) ? null : (
+                    <button
+                      key={t}
+                      onClick={() => setActiveDetailsTab(t)}
+                      className={`border-b-2 px-3 py-2 text-xs font-medium transition ${
+                        activeDetailsTab === t
+                          ? "border-primary text-foreground"
+                          : "text-muted-foreground hover:text-foreground border-transparent"
+                      }`}
+                    >
+                      {t === "cash"
+                        ? `Cash (${cashCount})`
+                        : t === "trading"
+                          ? `Trading (${tradingCount})`
+                          : `MMF (${state.interest.length})`}
+                    </button>
+                  ),
+                )}
+              </div>
+              {activeDetailsTab === "cash" && cashCount > 0 && <CashTable rows={state.cash} />}
+              {activeDetailsTab === "trading" && state.pnl && <TradingTable pnl={state.pnl} />}
+              {activeDetailsTab === "mmf" && state.interest.length > 0 && (
+                <InterestTable rows={state.interest} />
+              )}
+            </CollapsibleContent>
+          </Collapsible>
         </>
       )}
 
-      {/* ─── Footer credit ─── */}
+      {/* Footer credit */}
       <div className="text-muted-foreground border-t pt-4 text-xs">
         Built on{" "}
         <a
@@ -2330,8 +1683,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           className="hover:text-foreground underline"
         >
           @jcmpagel
-        </a>{" "}
-        — parser logic vendored with attribution. React UI ported for Donkeyfolio.
+        </a>
+        .
       </div>
     </div>
   );
@@ -2341,14 +1694,14 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────
 
-function StatCard({
+function KpiTile({
   label,
   value,
   icon,
   tone,
 }: {
   label: string;
-  value: string | number;
+  value: string;
   icon: React.ReactNode;
   tone?: "positive" | "negative";
 }) {
@@ -2359,54 +1712,80 @@ function StatCard({
         ? "text-red-600 dark:text-red-400"
         : "";
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="text-muted-foreground flex items-center justify-between text-xs font-medium">
-          <span>{label}</span>
-          {icon}
-        </div>
-        <div className={`mt-2 text-2xl font-bold ${toneClass}`}>{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ReconcileTile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "positive" | "negative";
-}) {
-  const toneClass =
-    tone === "positive"
-      ? "text-green-600 dark:text-green-400"
-      : tone === "negative"
-        ? "text-red-600 dark:text-red-400"
-        : "";
-  return (
     <div className="bg-muted/40 rounded-md border p-3">
-      <div className="text-muted-foreground text-xs font-medium">{label}</div>
-      <div className={`mt-1 font-mono text-lg font-bold ${toneClass}`}>{value}</div>
+      <div className="text-muted-foreground flex items-center justify-between text-xs font-medium">
+        <span>{label}</span>
+        {icon}
+      </div>
+      <div className={`mt-1 text-xl font-bold ${toneClass}`}>{value}</div>
     </div>
   );
 }
 
-function CashTable({ rows }: { rows: CashTransaction[] }) {
-  if (rows.length === 0) {
-    return (
+function SkeletonTile() {
+  return (
+    <div className="bg-muted/40 animate-pulse rounded-md border p-3">
+      <div className="bg-muted h-3 w-1/2 rounded" />
+      <div className="bg-muted mt-3 h-6 w-3/4 rounded" />
+    </div>
+  );
+}
+
+function WatcherSummaryCard({
+  pendingCount,
+  scanning,
+  lastScan,
+  open,
+  onOpenChange,
+  children,
+}: {
+  pendingCount: number;
+  scanning: boolean;
+  lastScan: number;
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  children: React.ReactNode;
+}) {
+  const lastScanLabel =
+    lastScan > 0 ? `${Math.round((Date.now() - lastScan) / 3600_000)}h ago` : "never";
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
       <Card>
-        <CardContent className="text-muted-foreground pt-6 text-center text-sm">
-          No rows to show with the current filter.
-        </CardContent>
+        <CollapsibleTrigger asChild>
+          <CardContent className="flex cursor-pointer items-center justify-between gap-3 pb-4 pt-4 text-sm">
+            <div className="flex items-center gap-2">
+              {scanning ? (
+                <Icons.Spinner className="h-4 w-4 animate-spin" />
+              ) : pendingCount > 0 ? (
+                <Icons.AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              ) : (
+                <Icons.CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+              )}
+              <span className="font-medium">Self-healing watcher</span>
+              <span className="text-muted-foreground text-xs">
+                · last scan {lastScanLabel}
+                {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
+              </span>
+            </div>
+            {open ? (
+              <Icons.ChevronDown className="h-4 w-4" />
+            ) : (
+              <Icons.ChevronRight className="h-4 w-4" />
+            )}
+          </CardContent>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="border-t p-4">{children}</div>
+        </CollapsibleContent>
       </Card>
-    );
-  }
+    </Collapsible>
+  );
+}
+
+function CashTable({ rows }: { rows: CashTransaction[] }) {
   return (
     <Card>
-      <div className="overflow-auto">
+      <div className="max-h-[480px] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -2429,18 +1808,9 @@ function CashTable({ rows }: { rows: CashTransaction[] }) {
                       ? "bg-blue-50/60 dark:bg-blue-950/20"
                       : undefined
                 }
-                title={
-                  r._sanityCheckOk === false
-                    ? "Balance sanity check failed"
-                    : r._recovered === "swapped"
-                      ? "Auto-corrected: amount was in the wrong column"
-                      : r._recovered === "filled-from-balance"
-                        ? "Auto-corrected: amount recovered from balance delta"
-                        : undefined
-                }
               >
                 <TableCell className="font-mono text-xs">{r.datum}</TableCell>
-                <TableCell>{translateType(r.typ)}</TableCell>
+                <TableCell>{r.typ}</TableCell>
                 <TableCell className="max-w-md truncate" title={r.beschreibung}>
                   {r.beschreibung}
                 </TableCell>
@@ -2480,7 +1850,7 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
             {rows.map((r, i) => (
               <TableRow key={i}>
                 <TableCell className="font-mono text-xs">{r.datum}</TableCell>
-                <TableCell>{translateType(r.zahlungsart)}</TableCell>
+                <TableCell>{r.zahlungsart}</TableCell>
                 <TableCell className="max-w-md truncate" title={r.geldmarktfonds}>
                   {r.geldmarktfonds}
                 </TableCell>
@@ -2499,18 +1869,16 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
 function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
   return (
     <Card>
-      <div className="overflow-auto">
+      <div className="max-h-[480px] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Stock</TableHead>
               <TableHead>ISIN</TableHead>
-              <TableHead>WKN</TableHead>
               <TableHead className="text-right">Held</TableHead>
               <TableHead className="text-right">Avg cost</TableHead>
               <TableHead className="text-right">Bought</TableHead>
               <TableHead className="text-right">Sold</TableHead>
-              <TableHead className="text-right">Realized P&L</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -2521,26 +1889,12 @@ function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
                   {p.stockName}
                 </TableCell>
                 <TableCell className="font-mono text-xs">{p.isin}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">
-                  {p.wkn || "—"}
-                </TableCell>
                 <TableCell className="text-right font-mono">{formatQty(p.qtyHeld)}</TableCell>
                 <TableCell className="text-right font-mono">
                   {p.avgCostBasis > 0 ? formatEur(p.avgCostBasis) : "—"}
                 </TableCell>
                 <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
                 <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
-                <TableCell
-                  className={`text-right font-mono font-medium ${
-                    p.realizedPnL > 0
-                      ? "text-green-600 dark:text-green-400"
-                      : p.realizedPnL < 0
-                        ? "text-red-600 dark:text-red-400"
-                        : ""
-                  }`}
-                >
-                  {p.qtySold > 0 ? formatEur(p.realizedPnL) : "—"}
-                </TableCell>
                 <TableCell>
                   <Badge
                     variant={p.status === "Open" ? "outline" : "secondary"}
