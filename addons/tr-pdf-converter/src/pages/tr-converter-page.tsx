@@ -502,7 +502,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       const tradingWithCryptoCash = trading.concat(extraCryptoTrades);
       let cryptoTrading = tradingWithCryptoCash;
       try {
-        const cryptoResult = await resolveCryptoDirectBuys(tradingWithCryptoCash);
+        // (v2.13.0) Pass the SDK context so the resolver can read cached
+        // crypto quotes from Donkeyfolio's quotes table FIRST. Yahoo rate
+        // limits us at HTTP 429 after a couple dozen chart requests; the
+        // local cache populated by market.syncHistory() is the reliable
+        // source.
+        const cryptoResult = await resolveCryptoDirectBuys(tradingWithCryptoCash, undefined, ctx);
         cryptoTrading = cryptoResult.trading;
         if (cryptoResult.resolved > 0 || cryptoResult.failed > 0) {
           ctx.api.logger.info(

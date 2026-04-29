@@ -202,9 +202,73 @@ export interface ResolverResult {
  * Best-effort: returns the input array unmodified on any catastrophic
  * failure rather than throwing.
  */
+/**
+ * Minimal subset of the addon SDK we need to read cached crypto quotes from
+ * Donkeyfolio's local DB. Inlined as `unknown`-typed to avoid pulling SDK
+ * type-deps into this pure module.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SdkLike = any;
+
+/**
+ * (v2.13.0) Build {date → close price} map from Donkeyfolio's cached quotes
+ * for the symbols we know map to a crypto pseudo-ISIN. Falls back to Yahoo
+ * only when the cache is empty or the symbol isn't in DB.
+ *
+ * Why: Yahoo's chart endpoint is rate-limited (HTTP 429). On any active
+ * import session we may already have ETH-EUR / BTC-EUR / SOL-EUR data in
+ * Donkeyfolio's quotes table from earlier market.syncHistory() runs.
+ * Reading those is instant + offline + zero rate-limit risk.
+ */
+async function loadCachedCryptoPrices(
+  ctxLike: SdkLike | undefined,
+  yahooTickers: string[],
+): Promise<Map<string, Map<string, number>>> {
+  const out = new Map<string, Map<string, number>>();
+  if (!ctxLike?.api?.assets?.getAll || !ctxLike?.api?.quotes?.getHistory) {
+    return out;
+  }
+  try {
+    const assets: Array<{ id: string; symbol?: string; name?: string }> =
+      await ctxLike.api.assets.getAll();
+    // Donkeyfolio's crypto assets store the bare ticker ("BTC") not the
+    // Yahoo-style "BTC-EUR". Strip "-EUR" / "-USD" before matching.
+    const symbolToTicker = new Map<string, string>();
+    for (const ticker of yahooTickers) {
+      const stripped = ticker.replace(/-(EUR|USD|USDT)$/i, "");
+      symbolToTicker.set(stripped.toUpperCase(), ticker);
+    }
+    for (const a of assets) {
+      const sym = (a.symbol || "").toUpperCase();
+      const ticker = symbolToTicker.get(sym);
+      if (!ticker) continue;
+      try {
+        const quotes: Array<{ day?: string; close?: number | string }> =
+          await ctxLike.api.quotes.getHistory(a.id);
+        if (!quotes?.length) continue;
+        const map = new Map<string, number>();
+        for (const q of quotes) {
+          if (!q.day) continue;
+          const c = typeof q.close === "string" ? parseFloat(q.close) : q.close;
+          if (typeof c === "number" && Number.isFinite(c) && c > 0) {
+            map.set(String(q.day).slice(0, 10), c);
+          }
+        }
+        if (map.size > 0) out.set(ticker, map);
+      } catch {
+        // Per-asset failures don't break the rest.
+      }
+    }
+  } catch {
+    // SDK-level failure → silently fall through to Yahoo.
+  }
+  return out;
+}
+
 export async function resolveCryptoDirectBuys(
   trading: TradingTransaction[],
   onProgress?: (done: number, total: number) => void,
+  ctxLike?: SdkLike,
 ): Promise<ResolverResult> {
   // Bucket trades-needing-resolve by Yahoo ticker.
   const buckets = new Map<string, TradingTransaction[]>();
@@ -220,23 +284,33 @@ export async function resolveCryptoDirectBuys(
 
   if (buckets.size === 0) return { trading, resolved: 0, failed: 0 };
 
-  // Fetch daily closes for each ticker, in parallel.
-  type FetchResult = { ticker: string; prices: Map<string, number> | null };
-  const fetches = await Promise.all<FetchResult>(
-    [...buckets.entries()].map(async ([ticker, ts]) => {
-      const dateMs = ts.map((t) => parseTradeDateMs(t.date)).filter(Number.isFinite);
-      if (dateMs.length === 0) return { ticker, prices: null };
-      const fromMs = Math.min(...dateMs);
-      const toMs = Math.max(...dateMs);
-      const prices = await fetchYahooDailyCloses(ticker, fromMs, toMs);
-      return { ticker, prices };
-    }),
-  );
+  // (v2.13.0) Try cached quotes from Donkeyfolio's quotes table FIRST.
+  // Yahoo rate-limits aggressively (HTTP 429) on the chart endpoint after
+  // a few dozen requests. Donkeyfolio's market.syncHistory() already pulled
+  // BTC-EUR / ETH-EUR / SOL-EUR / ADA-EUR / XRP-EUR daily closes via its
+  // own internal throttler — using those is faster, offline, and immune.
+  const tickerList = [...buckets.keys()];
+  const priceMaps = await loadCachedCryptoPrices(ctxLike, tickerList);
+  const cachedTickers = new Set(priceMaps.keys());
 
-  // Build a map of ticker → prices for resolution lookup.
-  const priceMaps = new Map<string, Map<string, number>>();
-  for (const f of fetches) {
-    if (f.prices) priceMaps.set(f.ticker, f.prices);
+  // Hit Yahoo only for tickers that aren't in the local cache.
+  const tickersNeedingYahoo = tickerList.filter((t) => !cachedTickers.has(t));
+  type FetchResult = { ticker: string; prices: Map<string, number> | null };
+  if (tickersNeedingYahoo.length > 0) {
+    const fetches = await Promise.all<FetchResult>(
+      tickersNeedingYahoo.map(async (ticker) => {
+        const ts = buckets.get(ticker) || [];
+        const dateMs = ts.map((t) => parseTradeDateMs(t.date)).filter(Number.isFinite);
+        if (dateMs.length === 0) return { ticker, prices: null };
+        const fromMs = Math.min(...dateMs);
+        const toMs = Math.max(...dateMs);
+        const prices = await fetchYahooDailyCloses(ticker, fromMs, toMs);
+        return { ticker, prices };
+      }),
+    );
+    for (const f of fetches) {
+      if (f.prices) priceMaps.set(f.ticker, f.prices);
+    }
   }
 
   // Resolve each trade and produce a fresh trading array (non-mutating).

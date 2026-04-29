@@ -1,7 +1,7 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "2.12.1",
+  "version": "2.13.0",
   "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Direct import to Donkeyfolio activities with quantity + unit price. Includes Holdings Diagnostics panel and self-healing portfolio watcher: auto-detects new stock splits, ticker migrations, and DRIP gaps that happen AFTER your last PDF import. Ported from @jcmpagel's open-source converter.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
@@ -32,6 +32,16 @@
       "category": "market",
       "functions": ["syncHistory", "sync"],
       "purpose": "Trigger market data sync after import so newly-created assets get historical quotes from Yahoo Finance — required for the Performance chart, current prices, and Holdings valuation to be accurate."
+    },
+    {
+      "category": "quotes",
+      "functions": ["getHistory"],
+      "purpose": "(v2.13.0) Read Donkeyfolio's cached historical quotes for crypto assets to compute qty for TR 'Compra direta' rows when Yahoo's chart API is rate-limiting (HTTP 429). Donkeyfolio's market sync already maintains daily closes for BTC/ETH/SOL/ADA/XRP/etc., which we use as a fallback to make the crypto direct-buy resolver resilient to Yahoo throttling."
+    },
+    {
+      "category": "assets",
+      "functions": ["getAll"],
+      "purpose": "(v2.13.0) Look up asset_id for crypto symbols (BTC, ETH, SOL, ADA, XRP) so the resolver can fetch cached quotes via quotes.getHistory(assetId) instead of hitting Yahoo."
     },
     {
       "category": "files",
