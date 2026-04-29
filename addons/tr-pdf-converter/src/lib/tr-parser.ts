@@ -658,6 +658,72 @@ export function buildLexwareCsv(rows: Record<string, unknown>[]): string {
 }
 
 /**
+ * Merge continuation rows into their parent transaction. (v2.7.8)
+ *
+ * Some TR PDF rows have descriptions that span multiple visual lines:
+ *
+ *   16                                                  ← day
+ *               Savings plan execution DK0062498333 NOVO-NORDISK AS B DK 0,1,
+ *   Apr  Trade                                  €10.00  €3,879.03   ← amounts
+ *               quantity: 0.176991                                   ← qty on its own line
+ *   2025                                                              ← year
+ *
+ * Pdf.js groups text items by y-coordinate. When the line gaps exceed our
+ * grouping threshold, these continuation lines end up as SEPARATE cash rows
+ * with no amount, no saldo, no date — just a description fragment. The
+ * "quantity: 0.176991" then never gets matched to the trade above and the
+ * BUY activity gets imported with quantity=undefined.
+ *
+ * On a typical TR yearly statement this affects ~50 NVO savings plans, ~20
+ * ASML, ~15 CSPX (the longer-described ETFs). Cumulatively that's the
+ * ~0.5-2 missing shares per holding the user has been seeing.
+ *
+ * Strategy: walk the cash rows, and whenever we find a fragment row
+ * (no datum, no in, no out, no saldo, only beschreibung text) merge its
+ * beschreibung into the previous proper row. Drop the empty row after.
+ */
+export function mergeContinuationRows(cash: CashTransaction[]): {
+  cash: CashTransaction[];
+  merged: number;
+} {
+  if (cash.length === 0) return { cash, merged: 0 };
+
+  const isFragmentRow = (row: CashTransaction): boolean => {
+    const hasNumeric = (s: string | undefined): boolean => /\d/.test((s || "").trim());
+    const datumHasContent = !!(row.datum || "").trim();
+    const inHasContent = hasNumeric(row.zahlungseingang);
+    const outHasContent = hasNumeric(row.zahlungsausgang);
+    const saldoHasContent = hasNumeric(row.saldo);
+    const descHasContent = !!(row.beschreibung || "").trim();
+    // Fragment: only the description column has substantive content.
+    // Allow datum to optionally carry "2025" or similar year fragments —
+    // those still indicate this is a continuation, not a real transaction.
+    if (inHasContent || outHasContent || saldoHasContent) return false;
+    // Either pure description fragment (year-line "2025" has datum but
+    // no description, so treat that as fragment too).
+    return descHasContent || (datumHasContent && /^\d{2,4}$/.test(row.datum.trim()));
+  };
+
+  const out: CashTransaction[] = [];
+  let merged = 0;
+  for (const row of cash) {
+    if (out.length > 0 && isFragmentRow(row)) {
+      const last = out[out.length - 1];
+      const extra = (row.beschreibung || "").trim();
+      if (extra) {
+        last.beschreibung = (last.beschreibung || "").trim() + " " + extra;
+      }
+      // Year-only rows have no useful description, but still count as
+      // merged for the diagnostic counter so the user knows we saw them.
+      merged += 1;
+      continue;
+    }
+    out.push({ ...row });
+  }
+  return { cash: out, merged };
+}
+
+/**
  * Enforce row-level consistency against the SALDO CHAIN. (v2.7.4)
  *
  * Background: the PDF parser reads each row's `saldo` column directly from

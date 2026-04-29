@@ -25,6 +25,12 @@
  */
 
 export interface TickerMapping {
+  /** Friendly display name override. When set, this is used instead of the
+   *  raw security name from the TR PDF description (e.g. "Core S&P 500"
+   *  instead of "iShares VII plc - iShares Core S&P 500 UCITS ETF USD (Acc)").
+   *  Only applied at FIRST asset creation — existing assets keep their
+   *  current name (Donkeyfolio backend dedups by ISIN). */
+  displayName?: string;
   /** Yahoo-compatible symbol (e.g. "AAPL", "CSPX.L", "BTC-EUR"). */
   symbol: string;
   /** ISO-10383 MIC for the listing (e.g. "XLON", "XAMS"). Optional —
@@ -59,6 +65,7 @@ const ETFS: Record<string, TickerMapping> = {
   // (TR trades all UCITS ETFs in EUR via Xetra; switched from CSPX.L LSE
   // to SXR8.DE Xetra to match TR's reference price.)
   IE00B5BMR087: {
+    displayName: "iShares Core S&P 500",
     symbol: "SXR8.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -66,6 +73,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // iShares Core MSCI World UCITS ETF USD (Acc) — Xetra EUR
   IE00B4L5Y983: {
+    displayName: "iShares Core MSCI World",
     symbol: "EUNL.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -73,6 +81,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // iShares MSCI World Small Cap UCITS ETF — Xetra EUR
   IE00BF4RFH31: {
+    displayName: "iShares MSCI World Small Cap",
     symbol: "IUSN.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -80,6 +89,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // iShares Core MSCI Europe UCITS ETF EUR (Acc) — Xetra EUR
   IE00B4K48X80: {
+    displayName: "iShares Core MSCI Europe",
     symbol: "SXR7.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -87,6 +97,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // iShares S&P 500 Information Technology Sector USD (Acc) — Xetra EUR
   IE00B3WJKG14: {
+    displayName: "iShares S&P 500 Information Technology",
     symbol: "QDVE.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -94,6 +105,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // iShares S&P 500 Consumer Discretionary Sector USD (Acc) — Xetra EUR
   IE00B4MCHD36: {
+    displayName: "iShares S&P 500 Consumer Discretionary",
     symbol: "QDVK.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -101,6 +113,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Vanguard S&P 500 UCITS ETF (USD) Accumulating — Xetra EUR
   IE00BFMXXD54: {
+    displayName: "Vanguard S&P 500",
     symbol: "VUAA.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -108,6 +121,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Dist — Xetra EUR
   IE00B8GKDB10: {
+    displayName: "Vanguard FTSE All-World High Dividend Yield (Dist)",
     symbol: "VGWD.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -117,6 +131,7 @@ const ETFS: Record<string, TickerMapping> = {
   // (Corrected from a previous mis-mapping that pointed this ISIN at Fidelity
   //  US Quality Income — verified against TR statement description.)
   IE00BK5BR626: {
+    displayName: "Vanguard FTSE All-World High Dividend Yield (Acc)",
     symbol: "VGWE.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -124,6 +139,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Fidelity US Quality Income UCITS ETF (Distributing) — Xetra EUR
   IE00BYXVGZ48: {
+    displayName: "Fidelity US Quality Income (Dist)",
     symbol: "FUSD.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -131,6 +147,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Fidelity US Quality Income UCITS ETF EUR Hedged Acc — Xetra EUR
   IE00BD52YH13: {
+    displayName: "Fidelity US Quality Income (EUR Hedged Acc)",
     symbol: "FUSU.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -138,6 +155,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Xtrackers MSCI World UCITS ETF 1C — Xetra EUR
   IE00BJ0KDQ92: {
+    displayName: "Xtrackers MSCI World",
     symbol: "XDWD.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -145,6 +163,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Xtrackers Russell 2000 UCITS ETF 1C — Xetra EUR
   IE00BJZ2DD79: {
+    displayName: "Xtrackers Russell 2000",
     symbol: "XRS2.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
@@ -152,6 +171,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Amundi MSCI Emerging Markets Swap UCITS ETF EUR Acc — Paris EUR
   LU1681045370: {
+    displayName: "Amundi MSCI Emerging Markets",
     symbol: "AEEM.PA",
     exchangeMic: "XPAR",
     quoteCcy: "EUR",
@@ -159,6 +179,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Amundi MSCI Semiconductors UCITS ETF Acc — Paris EUR
   LU1900066033: {
+    displayName: "Amundi MSCI Semiconductors",
     symbol: "CHIP.PA",
     exchangeMic: "XPAR",
     quoteCcy: "EUR",
@@ -166,6 +187,7 @@ const ETFS: Record<string, TickerMapping> = {
   },
   // Invesco Physical Gold ETC — Xetra EUR
   IE00B579F325: {
+    displayName: "Invesco Physical Gold",
     symbol: "8PSG.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",

@@ -29,6 +29,7 @@ import {
   computeEnhancedPnL,
   enforceChainConsistency,
   enrichTradingWithQuantity,
+  mergeContinuationRows,
   parsePDF,
   parseTradingTransactions,
   recoverCashAmounts,
@@ -350,10 +351,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         }));
       });
 
+      // (v2.7.8) Merge continuation rows BEFORE everything else. Some TR PDF
+      // rows split the "quantity: X" fragment onto a separate visual line;
+      // pdf.js then emits it as an orphan cash row with no amount/saldo. We
+      // merge those fragments back into the previous transaction's
+      // beschreibung so the QTY_LABEL_RE in enrichTradingWithQuantity can
+      // pick them up.
+      const { cash: mergedCash, merged: mergedRows } = mergeContinuationRows(result.cash);
+
       // Auto-recover trade rows with column-swapped or missing amounts BEFORE
       // running the sanity check — so rows we can recover no longer surface as
       // failures.
-      const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(result.cash);
+      const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(mergedCash);
 
       // (v2.7.4) Enforce row-level chain consistency: for each row, if the
       // parsed In/Out doesn't match the saldo delta, rewrite In/Out to match
@@ -443,7 +452,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         failedChecks,
         // Roll the chain-consistency corrections into the visible "auto-
         // corrected rows" counter — both are forms of post-parse repair.
-        recoveredRows: recoveredRows + chainCorrected,
+        // Visible "auto-corrected rows" counter rolls together all three
+        // post-parse repairs: PDF column-swap recoveries, saldo-chain
+        // re-writes, and continuation-row merges (v2.7.8).
+        recoveredRows: recoveredRows + chainCorrected + mergedRows,
         fileName: file.name,
         summary: result.summary ?? null,
       });
@@ -642,7 +654,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             symbolPayload = {
               symbol: mapped.symbol,
               exchangeMic: mapped.exchangeMic,
-              name: a.symbolName,
+              // (v2.7.8) Prefer the friendly displayName from our map when
+              // present (e.g. "iShares Core S&P 500" instead of TR's verbose
+              // "iShares VII plc - iShares Core S&P 500 UCITS ETF USD (Acc)").
+              // Falls back to whatever the PDF description gave us.
+              name: mapped.displayName || a.symbolName,
               instrumentType: mapped.instrumentType,
               quoteCcy: mapped.quoteCcy ?? acct.currency,
             };
