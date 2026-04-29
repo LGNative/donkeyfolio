@@ -27,6 +27,7 @@ import {
   buildLexwareCsv,
   computeCashSanityChecks,
   computeEnhancedPnL,
+  enforceChainConsistency,
   enrichTradingWithQuantity,
   parsePDF,
   parseTradingTransactions,
@@ -353,7 +354,23 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // running the sanity check — so rows we can recover no longer surface as
       // failures.
       const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(result.cash);
-      const { transactions: cashWithChainSanity } = computeCashSanityChecks(recoveredCash);
+
+      // (v2.7.4) Enforce row-level chain consistency: for each row, if the
+      // parsed In/Out doesn't match the saldo delta, rewrite In/Out to match
+      // the chain. This is the structural fix for "phantom OUT" drift caused
+      // by column-boundary misclassification on rows with weird layout (e.g.
+      // multi-line Card Transactions, very large saldos that overflow).
+      //
+      // Anchor uses the PDF SUMMARY's openingBalance when available — that's
+      // the only authoritative source for what the chain should start at.
+      const summaryOpening = result.summary
+        ? parseEurDisplay(result.summary.openingBalance)
+        : undefined;
+      const { cash: chainConsistentCash, corrected: chainCorrected } = enforceChainConsistency(
+        recoveredCash,
+        summaryOpening,
+      );
+      const { transactions: cashWithChainSanity } = computeCashSanityChecks(chainConsistentCash);
       // jcmpagel's sanity check tests the BALANCE CHAIN (prev_saldo + in - out
       // must equal current_saldo). Even after our recovery, a single broken
       // row upstream can cascade a "failed" flag onto rows that are themselves
@@ -424,7 +441,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         trading,
         pnl,
         failedChecks,
-        recoveredRows,
+        // Roll the chain-consistency corrections into the visible "auto-
+        // corrected rows" counter — both are forms of post-parse repair.
+        recoveredRows: recoveredRows + chainCorrected,
         fileName: file.name,
         summary: result.summary ?? null,
       });

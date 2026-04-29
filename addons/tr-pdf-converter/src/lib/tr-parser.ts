@@ -658,6 +658,118 @@ export function buildLexwareCsv(rows: Record<string, unknown>[]): string {
 }
 
 /**
+ * Enforce row-level consistency against the SALDO CHAIN. (v2.7.4)
+ *
+ * Background: the PDF parser reads each row's `saldo` column directly from
+ * the printed running balance, which is reliable. It also reads the In/Out
+ * columns by x-position, which is fragile — column boundaries can drift on
+ * certain row geometries (multi-line descriptions, page transitions, very
+ * wide saldo numbers). The result is that on a 285-page yearly statement,
+ * ~80 rows end up with the wrong In/Out values even though their saldo is
+ * fine. Sum-wise this typically over-counts OUT by €15-20k, leaving the
+ * cash balance off by the same amount after import.
+ *
+ * Strategy: for each row, compare what the parser said the cash flow was
+ * (In - Out) against what the saldo chain says (saldo[i] - saldo[i-1]).
+ * If they disagree, the saldo chain wins — we rewrite In/Out to match.
+ *
+ * By construction this guarantees:
+ *   sum(In) - sum(Out) = saldo[last] - opening
+ * which makes the row-level totals match the PDF SUMMARY block exactly.
+ *
+ * Caveat: if the PDF parser misses a row ENTIRELY, the saldo chain has a
+ * gap, and the next row absorbs the missing flow as one large In or Out.
+ * That shows up as an unusually large activity which is easy to spot.
+ *
+ * @param cash Parsed cash rows. Mutated to have consistent In/Out.
+ * @param openingBalance The PDF SUMMARY's opening balance, used as the
+ *        "before-row-0" anchor for the chain. When omitted we infer it
+ *        from the first row (less reliable).
+ * @returns A diagnostic count of how many rows were corrected.
+ */
+export function enforceChainConsistency(
+  cash: CashTransaction[],
+  openingBalance: number | undefined,
+): { cash: CashTransaction[]; corrected: number } {
+  if (cash.length === 0) return { cash, corrected: 0 };
+
+  // Anchor: prefer the explicit summary opening; fall back to inferring from
+  // row 0 (its saldo minus its parsed signed amount). The fallback is wrong
+  // for the same reason the original opening computation was wrong, but
+  // when no summary is available it's the best we have.
+  const inferredOpening = (() => {
+    const first = cash[0];
+    const inc0 = parseEuroAmount(first.zahlungseingang);
+    const out0 = parseEuroAmount(first.zahlungsausgang);
+    const sal0 = parseEuroAmount(first.saldo);
+    return sal0 - (inc0 - out0);
+  })();
+  const anchor = Number.isFinite(openingBalance ?? NaN)
+    ? (openingBalance as number)
+    : inferredOpening;
+
+  let prevSaldo = anchor;
+  let corrected = 0;
+
+  const fixed = cash.map((row): CashTransaction => {
+    const currSaldo = parseEuroAmount(row.saldo);
+    if (!Number.isFinite(currSaldo)) {
+      // Saldo unparseable — keep the row as-is, can't enforce.
+      return row;
+    }
+
+    const expectedSigned = currSaldo - prevSaldo;
+    const parsedIn = parseEuroAmount(row.zahlungseingang);
+    const parsedOut = parseEuroAmount(row.zahlungsausgang);
+    const parsedSigned = parsedIn - parsedOut;
+
+    // Allow up to €0.01 of float-rounding tolerance.
+    const mismatch = Math.abs(expectedSigned - parsedSigned) > 0.01;
+
+    if (!mismatch) {
+      prevSaldo = currSaldo;
+      return row;
+    }
+
+    // Rewrite In/Out from the chain. Use the German "1.234,56 €" formatting
+    // since that's what the rest of the parser expects (jcmpagel pre-format).
+    const formatted = (n: number) =>
+      n.toLocaleString("de-DE", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }) + " €";
+
+    corrected += 1;
+    prevSaldo = currSaldo;
+    if (expectedSigned > 0) {
+      return {
+        ...row,
+        zahlungseingang: formatted(expectedSigned),
+        zahlungsausgang: "",
+        _recovered: row._recovered ?? "filled-from-balance",
+      };
+    } else if (expectedSigned < 0) {
+      return {
+        ...row,
+        zahlungseingang: "",
+        zahlungsausgang: formatted(-expectedSigned),
+        _recovered: row._recovered ?? "filled-from-balance",
+      };
+    } else {
+      // Zero-flow row (likely a metadata-only entry). Clear both columns.
+      return {
+        ...row,
+        zahlungseingang: "",
+        zahlungsausgang: "",
+        _recovered: row._recovered ?? "filled-from-balance",
+      };
+    }
+  });
+
+  return { cash: fixed, corrected };
+}
+
+/**
  * Fix PDF-extraction artefacts in trade rows where the amount ended up in
  * the wrong column (or got dropped entirely) because the column-boundary
  * heuristic fell over for certain row geometries.
