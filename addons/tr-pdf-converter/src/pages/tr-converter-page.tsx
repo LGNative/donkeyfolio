@@ -57,6 +57,8 @@ import {
   type DiscoveryResult,
 } from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
+import { analyzeHoldings, type HoldingDiagnostic } from "../lib/tr-diagnostics";
+import DiagnosticsPanel from "../components/diagnostics-panel";
 
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
@@ -276,6 +278,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     | { status: "done"; splits: SplitEvent[]; checked: number; errors: number; skipped: number }
     | { status: "error"; message: string }
   >({ status: "idle" });
+
+  // (v2.11.0) Holdings diagnostics — auto-runs after import completes.
+  // Compares parsed import (computed) vs current DB holdings, classifies
+  // drift causes, surfaces one-click fixes.
+  const [diagnostics, setDiagnostics] = React.useState<HoldingDiagnostic[]>([]);
+  const [diagnosticsLoading, setDiagnosticsLoading] = React.useState(false);
+  const [diagnosticsProgress, setDiagnosticsProgress] = React.useState<{
+    done: number;
+    total: number;
+  }>({ done: 0, total: 0 });
 
   const loadAccounts = React.useCallback(async () => {
     try {
@@ -960,11 +972,83 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     }
   }, [ctx, accounts, selectedAccountId, state.cash, state.status, state.trading]);
 
+  // (v2.11.0) Run diagnostics: read DB activities for the selected account,
+  // run the analyzer, store results. Auto-invoked after import completes
+  // and re-runnable from the panel.
+  const runDiagnostics = React.useCallback(async () => {
+    if (state.status !== "done" || !selectedAccountId) {
+      setDiagnostics([]);
+      return;
+    }
+    setDiagnosticsLoading(true);
+    setDiagnosticsProgress({ done: 0, total: 0 });
+    try {
+      const dbActivities = await ctx.api.activities.getAll(selectedAccountId);
+      const acct = accounts.find((a) => a.id === selectedAccountId);
+      const result = await analyzeHoldings(
+        {
+          trading: state.trading,
+          dbActivities: dbActivities.map((a) => ({
+            activityType: a.activityType,
+            quantity: a.quantity,
+            unitPrice: a.unitPrice,
+            amount: a.amount,
+            fee: a.fee,
+            assetSymbol: a.assetSymbol,
+            assetId: a.assetId,
+            comment: a.comment,
+            date: a.date,
+          })),
+          autoSplits: state.autoSplits,
+          accountCurrency: acct?.currency || "EUR",
+        },
+        {
+          onProgress: (done, total) => setDiagnosticsProgress({ done, total }),
+        },
+      );
+      setDiagnostics(result);
+      ctx.api.logger.info(
+        `[TR PDF] diagnostics: ${result.length} holdings analyzed (${
+          result.filter((d) => d.severity !== "ok").length
+        } drifting).`,
+      );
+    } catch (err) {
+      ctx.api.logger.warn(`[TR PDF] diagnostics failed: ${(err as Error).message}`);
+      setDiagnostics([]);
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }, [accounts, ctx, selectedAccountId, state.autoSplits, state.status, state.trading]);
+
+  // Auto-run diagnostics after import completes — the user shouldn't need
+  // to click anything to see drift.
+  React.useEffect(() => {
+    if (
+      importState.status === "done" &&
+      state.status === "done" &&
+      selectedAccountId &&
+      diagnostics.length === 0 &&
+      !diagnosticsLoading
+    ) {
+      void runDiagnostics();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importState.status]);
+
+  const exportDiagnosticsFile = React.useCallback(
+    async (filename: string, content: string, mime: string) => {
+      await saveFile(ctx, filename, content, mime);
+    },
+    [ctx],
+  );
+
   const reset = () => {
     setState(initialState);
     setImportState({ status: "idle" });
     setShowOnlyFailed(false);
     setSplitState({ status: "idle" });
+    setDiagnostics([]);
+    setDiagnosticsLoading(false);
   };
   const progressPct =
     state.progress && state.progress.total > 0
@@ -1886,6 +1970,19 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                     </Badge>
                   </TabsTrigger>
                 )}
+                {state.trading.length > 0 && (
+                  <TabsTrigger value="diagnostics">
+                    Diagnostics
+                    {diagnostics.length > 0 && (
+                      <Badge variant="secondary" className="ml-2">
+                        {diagnostics.filter((d) => d.severity !== "ok").length}/{diagnostics.length}
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="ml-2 text-[10px] uppercase">
+                      New
+                    </Badge>
+                  </TabsTrigger>
+                )}
               </TabsList>
 
               {tabsAvailable.includes("cash") && (
@@ -1942,6 +2039,40 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                     import using live market prices and your full holdings history.
                   </p>
                   <TradingTable pnl={state.pnl} />
+                </TabsContent>
+              )}
+
+              {state.trading.length > 0 && (
+                <TabsContent value="diagnostics" className="space-y-3">
+                  {!selectedAccountId ? (
+                    <div className="text-muted-foreground rounded border p-4 text-xs">
+                      Select a target account above to enable diagnostics — we need to read DB
+                      activities to compare against the parsed import.
+                    </div>
+                  ) : diagnostics.length === 0 && !diagnosticsLoading ? (
+                    <div className="rounded border p-4 text-xs">
+                      <p className="text-muted-foreground mb-2">
+                        Diagnostics auto-runs after import. You can also run it manually now to see
+                        drift between this parse and what's currently in DB.
+                      </p>
+                      <Button size="sm" onClick={runDiagnostics}>
+                        <Icons.Search className="mr-2 h-4 w-4" />
+                        Run diagnostics now
+                      </Button>
+                    </div>
+                  ) : (
+                    <DiagnosticsPanel
+                      ctx={ctx}
+                      diagnostics={diagnostics}
+                      loading={diagnosticsLoading}
+                      progress={diagnosticsProgress}
+                      onRefresh={runDiagnostics}
+                      autoSplits={state.autoSplits}
+                      accountId={selectedAccountId}
+                      accountCurrency={selectedAccount?.currency || "EUR"}
+                      onExport={exportDiagnosticsFile}
+                    />
+                  )}
                 </TabsContent>
               )}
             </Tabs>
