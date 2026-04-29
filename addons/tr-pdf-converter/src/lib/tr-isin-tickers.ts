@@ -55,11 +55,13 @@ const CRYPTO: Record<string, TickerMapping> = {
 // or Xetra for funds with no LSE presence. Currency follows the listing:
 // LSE GBp/USD, Xetra/Amsterdam EUR.
 const ETFS: Record<string, TickerMapping> = {
-  // iShares Core S&P 500 UCITS ETF USD (Acc) — LSE GBp
+  // iShares Core S&P 500 UCITS ETF USD (Acc) — Xetra EUR
+  // (TR trades all UCITS ETFs in EUR via Xetra; switched from CSPX.L LSE
+  // to SXR8.DE Xetra to match TR's reference price.)
   IE00B5BMR087: {
-    symbol: "CSPX.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "SXR8.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
   // iShares Core MSCI World UCITS ETF USD (Acc) — Xetra EUR
@@ -83,18 +85,18 @@ const ETFS: Record<string, TickerMapping> = {
     quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // iShares S&P 500 IT Sector — LSE USD
+  // iShares S&P 500 Information Technology Sector USD (Acc) — Xetra EUR
   IE00B3WJKG14: {
-    symbol: "IUIT.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "QDVE.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // iShares S&P 500 Consumer Discretionary — LSE USD
+  // iShares S&P 500 Consumer Discretionary Sector USD (Acc) — Xetra EUR
   IE00B4MCHD36: {
-    symbol: "IUCD.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "QDVK.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
   // Vanguard S&P 500 UCITS ETF (USD) Accumulating — Xetra EUR
@@ -104,18 +106,18 @@ const ETFS: Record<string, TickerMapping> = {
     quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // Vanguard FTSE All-World High Dividend Yield (USD) Distributing — LSE USD
+  // Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Dist — Xetra EUR
   IE00B8GKDB10: {
-    symbol: "VHYL.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "VGWD.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // Invesco FTSE All-World High Dividend Acc — Xetra EUR (closest match)
+  // Fidelity US Quality Income UCITS ETF (USD) — Xetra EUR
   IE00BK5BR626: {
-    symbol: "FUSD.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "FUSU.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
   // Xtrackers MSCI World UCITS ETF 1C — Xetra EUR
@@ -146,11 +148,11 @@ const ETFS: Record<string, TickerMapping> = {
     quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // Invesco Physical Gold ETC — LSE USD
+  // Invesco Physical Gold ETC — Xetra EUR
   IE00B579F325: {
-    symbol: "SGLD.L",
-    exchangeMic: "XLON",
-    quoteCcy: "USD",
+    symbol: "8PSG.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
 };

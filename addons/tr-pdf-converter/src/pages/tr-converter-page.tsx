@@ -717,6 +717,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         `[TR PDF] import done: ${imported} imported, ${failures} failed, ${totalElapsed}s`,
       );
 
+      // (v2.7.6) After import, trigger Donkeyfolio's portfolio recalculation
+      // so the Performance chart, TWR and historical valuations populate
+      // immediately. Otherwise the user has to dig into Settings → Market
+      // Data and click Rebuild History manually. This is a fire-and-forget:
+      // the call can take ~1-3 minutes for a yearly statement worth of
+      // history, but we don't block the import-done UI on it.
       setImportState({
         status: "done",
         imported,
@@ -724,6 +730,31 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         accountCreated: false,
         failureExamples: failures > 0 ? failureExamples : undefined,
       });
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const portfolio = (ctx.api as any).portfolio;
+        if (portfolio?.recalculate) {
+          ctx.api.logger.info(
+            "[TR PDF] triggering portfolio.recalculate() to rebuild historical snapshots…",
+          );
+          portfolio
+            .recalculate()
+            .then(() => {
+              ctx.api.logger.info("[TR PDF] portfolio recalculation complete.");
+            })
+            .catch((err: unknown) => {
+              const m = err instanceof Error ? err.message : String(err);
+              ctx.api.logger.warn(`[TR PDF] portfolio.recalculate() failed (non-fatal): ${m}`);
+            });
+        } else if (portfolio?.update) {
+          // Fallback: older SDKs only expose `update()`.
+          portfolio.update().catch(() => undefined);
+        }
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] could not trigger portfolio recalc: ${(err as Error).message}`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.api.logger.error(`[TR PDF] Import failed: ${message}`);
