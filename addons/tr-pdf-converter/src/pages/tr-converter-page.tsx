@@ -59,6 +59,17 @@ import {
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 import { analyzeHoldings, type HoldingDiagnostic } from "../lib/tr-diagnostics";
 import DiagnosticsPanel from "../components/diagnostics-panel";
+import {
+  countPending,
+  loadLastFullScan,
+  loadSettings,
+  runWatcherScan,
+  saveSettings,
+  writeLastAppliedSplit,
+  type WatcherFindings,
+  type WatcherSettings,
+} from "../lib/tr-splits-watcher";
+import WatcherPanel from "../components/watcher-panel";
 
 interface ParseState {
   status: "idle" | "parsing" | "done" | "error";
@@ -288,6 +299,19 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     done: number;
     total: number;
   }>({ done: 0, total: 0 });
+
+  // (v2.12.0) Self-healing watcher — scans for new splits / ticker
+  // migrations / DRIP gaps that happened AFTER the last PDF import.
+  // Runs debounced on mount + once per 24h while the tab is open.
+  const [watcherSettings, setWatcherSettings] = React.useState<WatcherSettings>(() =>
+    loadSettings(),
+  );
+  const [watcherFindings, setWatcherFindings] = React.useState<WatcherFindings | null>(null);
+  const [watcherScanning, setWatcherScanning] = React.useState(false);
+  const [watcherProgress, setWatcherProgress] = React.useState<{ done: number; total: number }>({
+    done: 0,
+    total: 0,
+  });
 
   const loadAccounts = React.useCallback(async () => {
     try {
@@ -1042,6 +1066,119 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     [ctx],
   );
 
+  // (v2.12.0) Self-healing watcher: read DB activities and scan Yahoo.
+  const runWatcher = React.useCallback(async () => {
+    if (!selectedAccountId) return;
+    if (!watcherSettings.autoCheckSplits) return;
+    setWatcherScanning(true);
+    setWatcherProgress({ done: 0, total: 0 });
+    try {
+      const dbActivities = await ctx.api.activities.getAll(selectedAccountId);
+      const findings = await runWatcherScan({
+        dbActivities: dbActivities.map((a) => ({
+          id: a.id,
+          activityType: a.activityType,
+          quantity: a.quantity,
+          amount: a.amount,
+          unitPrice: a.unitPrice,
+          assetSymbol: a.assetSymbol,
+          assetId: a.assetId,
+          comment: a.comment,
+          date: a.date,
+        })),
+        settings: watcherSettings,
+        onProgress: (done, total) => setWatcherProgress({ done, total }),
+      });
+      setWatcherFindings(findings);
+      ctx.api.logger.info(
+        `[TR PDF watcher] scan: ${findings.splits.length} splits, ${findings.tickerMigrations.length} migrations, ${findings.dripGaps.length} drip gaps (checked ${findings.checkedTickers}, fresh ${findings.skippedFresh}, errors ${findings.errors}).`,
+      );
+
+      // Auto-apply if user opted in.
+      if (watcherSettings.autoApplySplits && findings.splits.length > 0) {
+        const acct = accounts.find((a) => a.id === selectedAccountId);
+        const ccy = acct?.currency || "EUR";
+        for (const s of findings.splits) {
+          try {
+            const factor = s.numerator / s.denominator;
+            await ctx.api.activities.create({
+              accountId: selectedAccountId,
+              activityType: "SPLIT",
+              activityDate: s.date,
+              symbol: { symbol: s.ticker, name: s.name },
+              quantity: 0,
+              unitPrice: 0,
+              amount: factor,
+              currency: ccy,
+              fee: 0,
+              comment: `TR PDF v2.12.0 watcher — auto-applied ${s.ratio} split (${s.date}).`,
+            });
+            writeLastAppliedSplit(s.ticker, s.date);
+          } catch (err) {
+            ctx.api.logger.warn(
+              `[TR PDF watcher] auto-apply failed for ${s.ticker} ${s.date}: ${(err as Error).message}`,
+            );
+          }
+        }
+        // Re-scan so the applied splits drop off the pending list.
+        ctx.api.logger.info(
+          `[TR PDF watcher] auto-applied ${findings.splits.length} split(s); refreshing.`,
+        );
+      }
+    } catch (err) {
+      ctx.api.logger.warn(`[TR PDF watcher] scan failed: ${(err as Error).message}`);
+    } finally {
+      setWatcherScanning(false);
+    }
+  }, [accounts, ctx, selectedAccountId, watcherSettings]);
+
+  // Watcher lifecycle:
+  //   • Debounced 30s after page mount (avoid hammering Yahoo on nav)
+  //   • Daily setInterval while page is open
+  //   • Re-runs when settings.autoCheckSplits flips ON
+  React.useEffect(() => {
+    if (!selectedAccountId) return;
+    if (!watcherSettings.autoCheckSplits) return;
+
+    let cancelled = false;
+    const initialDelay = 30_000;
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    // Skip initial scan if last full scan was within the last 24h.
+    const lastScan = loadLastFullScan();
+    const dueImmediately = Date.now() - lastScan > dayMs;
+
+    const t1 = setTimeout(
+      () => {
+        if (cancelled) return;
+        if (dueImmediately) void runWatcher();
+        else {
+          // Even if we don't re-scan, surface the last findings as null —
+          // the per-ticker localStorage cache will repopulate on next due cycle.
+          ctx.api.logger.info(
+            `[TR PDF watcher] last full scan ${Math.round((Date.now() - lastScan) / 3600_000)}h ago — skipping initial run.`,
+          );
+        }
+      },
+      dueImmediately ? initialDelay : 1_000,
+    );
+    const interval = setInterval(() => {
+      if (!cancelled) void runWatcher();
+    }, dayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearInterval(interval);
+    };
+  }, [ctx, runWatcher, selectedAccountId, watcherSettings.autoCheckSplits]);
+
+  const handleWatcherSettingsChange = React.useCallback((next: WatcherSettings) => {
+    setWatcherSettings(next);
+    saveSettings(next);
+  }, []);
+
+  const watcherPendingCount = countPending(watcherFindings);
+
   const reset = () => {
     setState(initialState);
     setImportState({ status: "idle" });
@@ -1187,6 +1324,24 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             {state.message}
           </CardContent>
         </Card>
+      )}
+
+      {/* ─── (v2.12.0) Self-Healing watcher — always visible when an
+              account is selected so the user sees pending corrections even
+              without a fresh PDF parse. ─── */}
+      {selectedAccountId && (
+        <WatcherPanel
+          ctx={ctx}
+          findings={watcherFindings}
+          scanning={watcherScanning}
+          scanProgress={watcherProgress}
+          settings={watcherSettings}
+          onSettingsChange={handleWatcherSettingsChange}
+          onRunNow={runWatcher}
+          onAfterApply={runWatcher}
+          accountId={selectedAccountId}
+          accountCurrency={selectedAccount?.currency || "EUR"}
+        />
       )}
 
       {/* ─── Results ─── */}
