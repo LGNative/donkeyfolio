@@ -239,6 +239,20 @@ interface BuildOpts {
   trading: TradingTransaction[];
   /** Set of date|ISIN keys that should be skipped from cash (already covered by trading). */
   skipCashKeys: Set<string>;
+  /** (v2.8) PDF SUMMARY's authoritative period totals. When provided, the
+   *  builder appends a final RECONCILIATION activity that closes any drift
+   *  between (sum of activity cash impacts) and the PDF's (ending − opening).
+   *  This guarantees the imported cash balance matches TR's reported balance
+   *  exactly — even when individual rows can't be parsed perfectly. */
+  pdfSummary?: {
+    opening: number;
+    moneyIn: number;
+    moneyOut: number;
+    ending: number;
+  };
+  /** Latest activity date in the cash[] — used as the date for the
+   *  reconciliation activity so it appears at the end of the timeline. */
+  lastActivityDate?: string;
 }
 
 function extractIsin(text: string): string | undefined {
@@ -246,7 +260,7 @@ function extractIsin(text: string): string | undefined {
 }
 
 export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
-  const { accountId, currency, cash, trading, skipCashKeys } = opts;
+  const { accountId, currency, cash, trading, skipCashKeys, pdfSummary, lastActivityDate } = opts;
   const activities: ActivityImport[] = [];
   let lineNumber = 1;
 
@@ -353,6 +367,66 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       isValid: true,
       isDraft: false,
     });
+  }
+
+  // 3) (v2.8) Auto-reconciliation: if the PDF SUMMARY block was parsed,
+  // compute the gap between sum-of-activity-cash-impacts and the period's
+  // (ending − opening) and emit a single CREDIT/WITHDRAWAL activity to
+  // close it. This guarantees the imported cash balance matches TR's
+  // reported balance exactly, even when row-level parsing has residual
+  // drift (multi-line layouts, lost rows, etc.).
+  if (pdfSummary && Number.isFinite(pdfSummary.ending - pdfSummary.opening)) {
+    const targetNet = pdfSummary.ending - pdfSummary.opening;
+    let actualNet = 0;
+    for (const a of activities) {
+      const amt = typeof a.amount === "number" ? a.amount : parseFloat(a.amount || "0") || 0;
+      const fee = typeof a.fee === "number" ? a.fee : parseFloat(a.fee || "0") || 0;
+      switch (a.activityType) {
+        case ACT.DEPOSIT:
+        case ACT.DIVIDEND:
+        case ACT.INTEREST:
+        case ACT.CREDIT:
+          actualNet += amt;
+          break;
+        case ACT.WITHDRAWAL:
+        case ACT.TAX:
+        case ACT.FEE:
+          actualNet -= amt;
+          break;
+        case ACT.BUY:
+          actualNet -= amt + fee;
+          break;
+        case ACT.SELL:
+          actualNet += amt - fee;
+          break;
+      }
+    }
+    const gap = targetNet - actualNet;
+    // Only emit if gap is material (> €0.50) — sub-cent rounding noise
+    // doesn't deserve its own activity. Above that threshold the
+    // reconciliation is meaningful and auditable.
+    if (Math.abs(gap) >= 0.5) {
+      const isInflow = gap > 0;
+      const reconcileDate = lastActivityDate || new Date().toISOString();
+      activities.push({
+        accountId,
+        currency,
+        activityType: isInflow ? ACT.CREDIT : ACT.WITHDRAWAL,
+        subtype: "TR_RECONCILIATION",
+        date: reconcileDate,
+        symbol: "$CASH-EUR",
+        amount: Math.abs(gap),
+        quantity: 1,
+        unitPrice: Math.abs(gap),
+        fee: 0,
+        quoteCcy: currency,
+        instrumentType: "Cash",
+        comment: `Auto-reconciliation: closes €${gap.toFixed(2)} drift between activities (€${actualNet.toFixed(2)}) and PDF SUMMARY net flow (€${targetNet.toFixed(2)}). Cash now matches TR's reported ending balance €${pdfSummary.ending.toFixed(2)}.`,
+        lineNumber: lineNumber++,
+        isValid: true,
+        isDraft: false,
+      });
+    }
   }
 
   return activities;

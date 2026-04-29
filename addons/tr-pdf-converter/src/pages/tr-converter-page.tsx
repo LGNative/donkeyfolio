@@ -574,12 +574,28 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       for (const t of state.trading) {
         if (t.isin && t.wkn && !isinToWkn.has(t.isin)) isinToWkn.set(t.isin, t.wkn);
       }
+      // (v2.8) Pass the PDF SUMMARY so the builder can emit a closing
+      // reconciliation activity if there's residual drift. Without this
+      // the cash balance can land off-target when individual rows have
+      // parsing issues we couldn't recover from.
+      const pdfSummaryNumeric = state.summary
+        ? {
+            opening: parseEurDisplay(state.summary.openingBalance),
+            moneyIn: parseEurDisplay(state.summary.moneyIn),
+            moneyOut: parseEurDisplay(state.summary.moneyOut),
+            ending: parseEurDisplay(state.summary.endingBalance),
+          }
+        : undefined;
+      const lastActivityDate =
+        state.cash.length > 0 ? state.cash[state.cash.length - 1].datum : undefined;
       const activities = buildActivitiesFromParsed({
         accountId: acct.id,
         currency: acct.currency,
         cash: state.cash,
         trading: state.trading,
         skipCashKeys: skipKeys,
+        pdfSummary: pdfSummaryNumeric,
+        lastActivityDate,
       });
 
       if (activities.length === 0) {
@@ -770,29 +786,61 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         accountCreated: false,
         failureExamples: failures > 0 ? failureExamples : undefined,
       });
+      // (v2.7.12) Two-step post-import sync chain:
+      //   1) market.syncHistory() — fetches Yahoo quotes for newly-created
+      //      assets. Without quotes, holdings_snapshots have value=0 and the
+      //      Performance chart shows a flat line at 0%.
+      //   2) portfolio.recalculate() — rebuilds the daily snapshots using the
+      //      now-up-to-date quotes, populating TWR / Total Return / chart.
+      //
+      // Both run fire-and-forget so the import-done UI isn't blocked. Each is
+      // wrapped in catch so backend failures log a warning but never propagate
+      // a UI error. Order matters — recalculate after syncHistory so the
+      // computation uses the fresh quotes.
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const market = (ctx.api as any).market;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const portfolio = (ctx.api as any).portfolio;
-        if (portfolio?.recalculate) {
-          ctx.api.logger.info(
-            "[TR PDF] triggering portfolio.recalculate() to rebuild historical snapshots…",
-          );
-          portfolio
-            .recalculate()
+        const runRecalc = () => {
+          if (portfolio?.recalculate) {
+            ctx.api.logger.info(
+              "[TR PDF] triggering portfolio.recalculate() to rebuild historical snapshots…",
+            );
+            portfolio
+              .recalculate()
+              .then(() => {
+                ctx.api.logger.info("[TR PDF] portfolio recalculation complete.");
+              })
+              .catch((err: unknown) => {
+                const m = err instanceof Error ? err.message : String(err);
+                ctx.api.logger.warn(`[TR PDF] portfolio.recalculate() failed (non-fatal): ${m}`);
+              });
+          } else if (portfolio?.update) {
+            portfolio.update().catch(() => undefined);
+          }
+        };
+        if (market?.syncHistory) {
+          ctx.api.logger.info("[TR PDF] triggering market.syncHistory() for new assets…");
+          market
+            .syncHistory()
             .then(() => {
-              ctx.api.logger.info("[TR PDF] portfolio recalculation complete.");
+              ctx.api.logger.info("[TR PDF] market sync complete — recalculating portfolio.");
+              runRecalc();
             })
             .catch((err: unknown) => {
               const m = err instanceof Error ? err.message : String(err);
-              ctx.api.logger.warn(`[TR PDF] portfolio.recalculate() failed (non-fatal): ${m}`);
+              ctx.api.logger.warn(`[TR PDF] market.syncHistory() failed (non-fatal): ${m}`);
+              // Still try recalc — existing quotes may be enough.
+              runRecalc();
             });
-        } else if (portfolio?.update) {
-          // Fallback: older SDKs only expose `update()`.
-          portfolio.update().catch(() => undefined);
+        } else {
+          // SDK doesn't expose syncHistory — go straight to recalc.
+          runRecalc();
         }
       } catch (err) {
         ctx.api.logger.warn(
-          `[TR PDF] could not trigger portfolio recalc: ${(err as Error).message}`,
+          `[TR PDF] could not trigger market/portfolio sync: ${(err as Error).message}`,
         );
       }
     } catch (err) {

@@ -1,7 +1,7 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "2.7.11",
+  "version": "2.8.0",
   "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Direct import to Donkeyfolio activities with quantity + unit price. Ported from @jcmpagel's open-source converter.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
@@ -27,6 +27,11 @@
       "category": "portfolio",
       "functions": ["recalculate", "update"],
       "purpose": "Trigger Rebuild History after a successful import so the Performance chart, TWR and historical valuations populate immediately without the user having to dig into Settings → Market Data."
+    },
+    {
+      "category": "market",
+      "functions": ["syncHistory", "sync"],
+      "purpose": "Trigger market data sync after import so newly-created assets get historical quotes from Yahoo Finance — required for the Performance chart, current prices, and Holdings valuation to be accurate."
     },
     {
       "category": "files",
