@@ -462,7 +462,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // The synthetic trades flow into state.trading, so the existing
       // buildTradingCashKeys() automatically generates the skip keys that
       // prevent the cash legs from becoming WITHDRAWAL activities.
-      const { cryptoTrading: extraCryptoTrades } = extractCryptoDirectBuysFromCash(cash);
+      const { cryptoTrading: extraCryptoTrades } = extractCryptoDirectBuysFromCash(cashWithSanity);
       const tradingWithCryptoCash = trading.concat(extraCryptoTrades);
       let cryptoTrading = tradingWithCryptoCash;
       try {

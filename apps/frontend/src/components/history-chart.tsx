@@ -347,7 +347,12 @@ export function HistoryChart({
           stroke="var(--muted-foreground)"
           fill="transparent"
           strokeDasharray="5 5"
-          strokeOpacity={isChartHovered ? 0.8 : 0}
+          // (UI tweak) Always show the deposits line so the gap between
+          // total value and contributions = pure market gains is obvious
+          // at a glance. Previously this was 0 (invisible) until hover —
+          // making the chart look like total value alone, which conflates
+          // deposits with returns.
+          strokeOpacity={isChartHovered ? 0.9 : 0.4}
           style={{ pointerEvents: "none" }}
         />
         {/* Snapshot markers - diamond shape */}
