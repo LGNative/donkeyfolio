@@ -47,6 +47,7 @@ import {
   buildTradingCashKeys,
 } from "../lib/tr-to-activities";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
+import { resolveCryptoDirectBuys } from "../lib/tr-crypto-resolver";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 
 interface ParseState {
@@ -436,10 +437,31 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         ? (parseTradingTransactions(analyticsCashForTrading) as TradingTransaction[])
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
+
+      // (v2.9) Resolve qty for crypto "Compra direta" trades by hitting
+      // Yahoo Finance for the historical price on the trade date and
+      // computing qty = amount / price. TR's PDF doesn't include the
+      // crypto qty for direct-buy executions, so without this we lose
+      // ~30-50% of crypto holdings on import.
+      let cryptoTrading = trading;
+      try {
+        const cryptoResult = await resolveCryptoDirectBuys(trading);
+        cryptoTrading = cryptoResult.trading;
+        if (cryptoResult.resolved > 0 || cryptoResult.failed > 0) {
+          ctx.api.logger.info(
+            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed`,
+          );
+        }
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] crypto resolver failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
+
       // Use our own running-average-cost P&L (jcmpagel's calculatePnL returned
       // €0 for every partially-sold position, which made the Realized P&L
       // column useless for any active portfolio).
-      const pnl = trading.length ? computeEnhancedPnL(trading) : null;
+      const pnl = cryptoTrading.length ? computeEnhancedPnL(cryptoTrading) : null;
 
       setState({
         status: "done",
@@ -447,7 +469,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         progress: undefined,
         cash: cashWithSanity,
         interest: result.interest,
-        trading,
+        trading: cryptoTrading,
         pnl,
         failedChecks,
         // Roll the chain-consistency corrections into the visible "auto-
