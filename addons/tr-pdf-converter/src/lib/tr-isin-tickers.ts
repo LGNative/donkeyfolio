@@ -24,6 +24,35 @@
  * be extended freely as new ISINs come up.
  */
 
+/** Per-ISIN analysis used by the "Unmapped securities" panel. */
+export interface SecurityAnalysis {
+  isin: string;
+  /** Stock name from the PDF description (best effort). */
+  stockName: string;
+  /** WKN if extracted from any trade for this ISIN. */
+  wkn?: string;
+  /** Total shares bought minus sold (across the statement period). */
+  netQty: number;
+  /** Total € spent (sum of buy amounts) — useful to gauge how important
+   *  it is to map this ISIN correctly. Cents-precision rounding ok. */
+  totalSpent: number;
+  /** Number of distinct trades for this ISIN. */
+  tradeCount: number;
+  /** Classification:
+   *  - "mapped"   : in tr-isin-tickers map → Yahoo will price correctly
+   *  - "crypto"   : TR pseudo-ISIN (XF000...) → resolves to a crypto pair
+   *  - "unmapped" : no entry in our map → imports as ISIN-as-symbol, Yahoo
+   *                 may or may not find it, prices may not flow */
+  status: "mapped" | "crypto" | "unmapped";
+  /** Mapped Yahoo ticker (only when status === "mapped" or "crypto"). */
+  mappedSymbol?: string;
+  /** Mapped display name (only when status === "mapped" or "crypto"). */
+  mappedName?: string;
+  /** Yahoo lookup URL pre-filled with the stock name — handy for the user
+   *  to verify what the canonical Yahoo ticker is. Always present. */
+  yahooLookupUrl: string;
+}
+
 export interface TickerMapping {
   /** Friendly display name override. When set, this is used instead of the
    *  raw security name from the TR PDF description (e.g. "Core S&P 500"
@@ -386,4 +415,110 @@ const ISIN_TO_TICKER: Record<string, TickerMapping> = {
  */
 export function lookupTicker(isin: string): TickerMapping | null {
   return ISIN_TO_TICKER[isin] ?? null;
+}
+
+/**
+ * (v2.7.11) Analyze every ISIN in the parsed trades and classify it as
+ * mapped / crypto / unmapped. Returns rows sorted by importance (largest
+ * total € spend first) so the user can see at a glance which positions
+ * matter most to verify.
+ *
+ * For each unmapped ISIN we generate a Yahoo lookup URL pre-filled with
+ * the stock name — the user can click it, see what Yahoo's actual ticker
+ * is, and tell us so we can add it to the map for future imports.
+ *
+ * Caveats:
+ *   - We use the FIRST cleanStockName seen for each ISIN. PDF descriptions
+ *     can be truncated ("INC." for MercadoLibre, ".A NEW" for ARM, etc.) so
+ *     the lookup URL may not always be helpful. WKN (when present) is more
+ *     reliable as a unique identifier.
+ *   - "Unmapped" doesn't necessarily mean Yahoo won't price it — Yahoo's
+ *     ISIN search sometimes resolves directly. But the mapping path is
+ *     more deterministic and survives Yahoo data inconsistencies.
+ */
+export interface AnalyzedTrade {
+  isin: string;
+  stockName?: string;
+  cleanStockName?: string;
+  wkn?: string;
+  isBuy: boolean;
+  amount: number;
+  quantity?: number;
+}
+
+export function analyzeSecurities(trades: AnalyzedTrade[]): SecurityAnalysis[] {
+  const byIsin = new Map<
+    string,
+    {
+      isin: string;
+      stockName: string;
+      wkn?: string;
+      buyQty: number;
+      sellQty: number;
+      buyAmount: number;
+      tradeCount: number;
+    }
+  >();
+
+  for (const t of trades) {
+    if (!t.isin) continue;
+    const cur = byIsin.get(t.isin) ?? {
+      isin: t.isin,
+      stockName: t.cleanStockName || t.stockName || t.isin,
+      wkn: t.wkn,
+      buyQty: 0,
+      sellQty: 0,
+      buyAmount: 0,
+      tradeCount: 0,
+    };
+    if (t.isBuy) {
+      cur.buyQty += t.quantity ?? 0;
+      cur.buyAmount += Math.abs(t.amount);
+    } else {
+      cur.sellQty += t.quantity ?? 0;
+    }
+    cur.tradeCount += 1;
+    if (!cur.wkn && t.wkn) cur.wkn = t.wkn;
+    if (!cur.stockName && (t.cleanStockName || t.stockName)) {
+      cur.stockName = t.cleanStockName || t.stockName!;
+    }
+    byIsin.set(t.isin, cur);
+  }
+
+  const out: SecurityAnalysis[] = [];
+  for (const [isin, info] of byIsin) {
+    const mapped = lookupTicker(isin);
+    const status: SecurityAnalysis["status"] = mapped
+      ? mapped.instrumentType === "CRYPTO"
+        ? "crypto"
+        : "mapped"
+      : "unmapped";
+    // Yahoo's lookup URL accepts query strings via /lookup?s=... It's not a
+    // documented API but it's stable and links to the lookup UI directly.
+    // Use the WKN when present (more unique) else the cleaned stock name.
+    const lookupQuery = info.wkn || info.stockName || isin;
+    const yahooLookupUrl = `https://finance.yahoo.com/lookup?s=${encodeURIComponent(lookupQuery)}`;
+    out.push({
+      isin,
+      stockName: info.stockName,
+      wkn: info.wkn,
+      netQty: info.buyQty - info.sellQty,
+      totalSpent: info.buyAmount,
+      tradeCount: info.tradeCount,
+      status,
+      mappedSymbol: mapped?.symbol,
+      mappedName: mapped?.displayName,
+      yahooLookupUrl,
+    });
+  }
+  // Sort by status priority then by spend descending — unmapped first so
+  // the user's eye lands on what needs attention.
+  const STATUS_ORDER = { unmapped: 0, crypto: 1, mapped: 2 } as const;
+  out.sort((a, b) => {
+    const sa = STATUS_ORDER[a.status];
+    const sb = STATUS_ORDER[b.status];
+    if (sa !== sb) return sa - sb;
+    return b.totalSpent - a.totalSpent;
+  });
+  return out;
 }

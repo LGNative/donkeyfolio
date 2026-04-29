@@ -40,7 +40,7 @@ import {
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
-import { lookupTicker } from "../lib/tr-isin-tickers";
+import { analyzeSecurities, lookupTicker, type SecurityAnalysis } from "../lib/tr-isin-tickers";
 import {
   buildActivitiesFromParsed,
   buildDonkeyfolioCsv,
@@ -847,6 +847,15 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     return buildReconciliation(state.cash, activities, state.summary);
   }, [state.status, state.cash, state.trading, state.summary]);
 
+  // (v2.7.11) Per-ISIN classification: which securities are mapped to a
+  // Yahoo ticker, which are crypto (mapped via pseudo-ISIN), and which are
+  // unmapped — the user wants to see the unmapped ones explicitly so we
+  // can extend the ticker map together.
+  const securityAnalysis: SecurityAnalysis[] = React.useMemo(() => {
+    if (state.status !== "done" || state.trading.length === 0) return [];
+    return analyzeSecurities(state.trading);
+  }, [state.status, state.trading]);
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       {/* ─── Header ─── */}
@@ -1450,6 +1459,124 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   )}
                 </CardContent>
               )}
+            </Card>
+          )}
+
+          {/* ─── Unmapped securities panel (v2.7.11) ─── */}
+          {securityAnalysis.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Securities mapping status</CardTitle>
+                <CardDescription>
+                  Each ISIN in your statement is classified by whether the addon has a Yahoo ticker
+                  mapping. Unmapped securities still import (cost basis is preserved) but Yahoo may
+                  not find live prices automatically. Click "Lookup on Yahoo" to find the correct
+                  ticker and tell me which ones to add to the map.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                {/* Summary tiles */}
+                <div className="grid grid-cols-3 gap-3">
+                  <ReconcileTile
+                    label="Mapped to Yahoo"
+                    value={`${securityAnalysis.filter((s) => s.status === "mapped").length}`}
+                    tone="positive"
+                  />
+                  <ReconcileTile
+                    label="Crypto (pseudo-ISIN)"
+                    value={`${securityAnalysis.filter((s) => s.status === "crypto").length}`}
+                  />
+                  <ReconcileTile
+                    label="Unmapped (verify)"
+                    value={`${securityAnalysis.filter((s) => s.status === "unmapped").length}`}
+                    tone="negative"
+                  />
+                </div>
+
+                {/* Table — show unmapped first (sorted by spend), then crypto, then mapped */}
+                <div className="overflow-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Stock</TableHead>
+                        <TableHead>ISIN</TableHead>
+                        <TableHead>WKN</TableHead>
+                        <TableHead>Yahoo ticker</TableHead>
+                        <TableHead className="text-right">Net qty</TableHead>
+                        <TableHead className="text-right">Spent</TableHead>
+                        <TableHead>Verify</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {securityAnalysis.map((s) => (
+                        <TableRow
+                          key={s.isin}
+                          className={
+                            s.status === "unmapped"
+                              ? "bg-amber-50/50 dark:bg-amber-950/10"
+                              : undefined
+                          }
+                        >
+                          <TableCell>
+                            <Badge
+                              variant={
+                                s.status === "mapped"
+                                  ? "outline"
+                                  : s.status === "crypto"
+                                    ? "secondary"
+                                    : "destructive"
+                              }
+                              className="text-xs"
+                            >
+                              {s.status === "mapped"
+                                ? "✓ Mapped"
+                                : s.status === "crypto"
+                                  ? "Crypto"
+                                  : "⚠ Unmapped"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell
+                            className="max-w-xs truncate"
+                            title={s.mappedName || s.stockName}
+                          >
+                            {s.mappedName || s.stockName}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{s.isin}</TableCell>
+                          <TableCell className="text-muted-foreground font-mono text-xs">
+                            {s.wkn || "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {s.mappedSymbol || "—"}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatQty(s.netQty)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatEur(s.totalSpent)}
+                          </TableCell>
+                          <TableCell>
+                            <a
+                              href={s.yahooLookupUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                            >
+                              Lookup on Yahoo →
+                            </a>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <p className="text-muted-foreground text-xs">
+                  💡 Tip: when you find the correct Yahoo ticker for an unmapped security, send me
+                  the ISIN + ticker and I&apos;ll add it to the addon&apos;s map so future imports
+                  resolve it automatically.
+                </p>
+              </CardContent>
             </Card>
           )}
 
