@@ -129,10 +129,10 @@
     {
       "id": "tr-pdf-converter-addon",
       "name": "TR PDF Converter",
-      "version": "2.14.0",
+      "version": "2.15.0",
       "description": "Native Trade Republic PDF parser — extracts cash, MMF, trading P&L, crypto. Direct one-click import to Donkeyfolio with quantity + unit price + fee. Multi-language (DE/EN/PT/ES/IT/FR). v2.12.0 adds Self-Healing Portfolio: background watcher detects new stock splits, ticker migrations, and DRIP gaps that happen AFTER your last PDF import — surfaces them with one-click apply. v2.11.0 adds Holdings Diagnostics Panel that auto-runs after import: surfaces drift per holding vs DB, classifies cause (split needed, crypto resolver, stale price, FX, qty collision, cost basis), offers one-click fixes. Saldo-chain enforcement. Multi-line description merging. WKN extraction. Auto-running stock-split detection that AUTO-APPLIES detected splits as SPLIT activities. Auto-discovering Yahoo tickers for unmapped ISINs (no more €0 holdings for stocks not in the hardcoded map). Crypto direct-buy resolver computes qty from Yahoo daily close — also scans cash[] for Compra direta rows with corrected pseudo-ISINs (recovers BTC/ETH/SOL/ADA/XRP holdings). Cash auto-reconciliation against PDF SUMMARY ground truth. Pre-import readiness panel surfacing every check that needs attention. ISIN validation via Luhn-mod-10 prevents false-positive assets like SUBSCRIPTION. ETFs target Xetra EUR listings. Auto-triggers portfolio.recalculate() after import. Ported from jcmpagel's open-source code.",
       "author": "Donkeyfolio",
-      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-2.14.0.zip",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/addons-v1/tr-pdf-converter-2.15.0.zip",
       "downloads": 0,
       "rating": 0,
       "reviewCount": 0,

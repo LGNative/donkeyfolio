@@ -157,6 +157,32 @@ const KEYWORDS = {
   ],
   interest: ["zins", "interest", "juros", "rendimento"],
   dividend: ["dividend", "dividendo", "dividendos"],
+  // (v2.15.0) Dividend reinvestment plan — TR sometimes pays dividend
+  // directly as fractional shares of the same security ("DRIP"). When
+  // detected, classify as DIVIDEND with subtype=DRIP so Wealthfolio's
+  // import wizard treats it as an asset-backed cash event.
+  drip: [
+    "drip",
+    "reinvest",
+    "réinvest",
+    "reinvestido",
+    "dividend reinvestment",
+    "dividendo reinvestido",
+    "wiederanlage",
+  ],
+  // (v2.15.0) Stock distribution / dividend-in-kind / spin-off — extra
+  // shares received from a corporate action. Classified as BUY with
+  // subtype=DIVIDEND_IN_KIND so the share count grows but no cash flows.
+  stockDistribution: [
+    "stock distribution",
+    "dividend in kind",
+    "dividend in shares",
+    "dividendo em ações",
+    "dividendo em acoes",
+    "spin-off",
+    "spinoff",
+    "ausschüttung in aktien",
+  ],
   tax: ["steuer", "tax", "imposto", "withhold", "retenção", "retencao"],
   fee: [
     "gebühr",
@@ -193,6 +219,16 @@ function classifyCashType(
   // Staking → INTEREST with STAKING_REWARD subtype (Donkeyfolio convention).
   if (matchAny(probe, KEYWORDS.staking)) {
     return { type: ACT.INTEREST, subtype: "STAKING_REWARD" };
+  }
+  // (v2.15.0) Dividend reinvestment / stock distribution — check BEFORE
+  // generic dividend so the more specific subtype wins. DRIP and stock
+  // distributions both end up as DIVIDEND in TR's cash section, but with
+  // distinct payout mechanisms (reinvested as shares vs. extra shares).
+  if (matchAny(probe, KEYWORDS.drip)) {
+    return { type: ACT.DIVIDEND, subtype: "DRIP" };
+  }
+  if (matchAny(probe, KEYWORDS.stockDistribution)) {
+    return { type: ACT.DIVIDEND, subtype: "DIVIDEND_IN_KIND" };
   }
   if (matchAny(probe, KEYWORDS.dividend)) return { type: ACT.DIVIDEND };
   if (matchAny(probe, KEYWORDS.interest)) return { type: ACT.INTEREST };
@@ -282,6 +318,26 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   const activities: ActivityImport[] = [];
   let lineNumber = 1;
 
+  // (v2.15.0) Deduplicate SELL rows by (date, isin, qty, amount). The TR
+  // PDF parser sometimes emits the same SELL row twice when the
+  // confirmation line is split across multiple visual lines (e.g. MSFT
+  // 2024-08-05: 1 BUY 20 shares + 2 phantom SELLs of 20 shares). Real same-
+  // day same-amount SELLs would have the SAME tradeId — so dedup keeps the
+  // first occurrence and drops subsequent ones with identical signature.
+  // BUYs are NOT deduplicated because legitimate same-day same-amount
+  // savings-plan executions are common (handled by the qty queue in
+  // enrichTradingWithQuantity, not here).
+  const sellSeen = new Set<string>();
+  const dedupedTrading: TradingTransaction[] = [];
+  for (const tx of trading) {
+    if (!tx.isBuy) {
+      const sig = `${tx.date}|${tx.isin}|${tx.quantity}|${Math.abs(tx.amount).toFixed(2)}`;
+      if (sellSeen.has(sig)) continue;
+      sellSeen.add(sig);
+    }
+    dedupedTrading.push(tx);
+  }
+
   // 1) Trading → BUY / SELL
   // Trade Republic fee model:
   //   - Manual Buy / Sell of stocks/ETFs: €1 flat external fee
@@ -291,7 +347,7 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   //   amount = qty × unitPrice  (gross trade value, NO fee)
   //   fee   = the €1 (or €0)    (separate field)
   // So we have to back the fee out of the cash amount before storing it.
-  for (const tx of trading) {
+  for (const tx of dedupedTrading) {
     if (!tx.isin || !tx.date) continue;
     const qty = tx.quantity;
     if (!qty || qty <= 0) {
