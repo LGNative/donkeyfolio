@@ -1,6 +1,6 @@
 {
   "name": "tr-pdf-converter",
-  "version": "2.7.8",
+  "version": "2.7.9",
   "description": "Native React TR PDF parser (ported from jcmpagel's open-source converter)",
   "type": "module",
   "main": "dist/addon.js",

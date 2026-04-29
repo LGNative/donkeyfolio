@@ -689,7 +689,27 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           } else {
             symbolPayload = undefined; // pure cash flow
           }
-          await ctx.api.activities.create({
+          // (v2.7.9) Pass an explicit idempotencyKey per activity. Without
+          // this, the Rust backend computes a content-based key from
+          // (account, type, date, asset, qty, price, amount, currency,
+          // source_record_id, notes). When TR has multiple savings-plan
+          // executions on the SAME day for the SAME ETF at the SAME amount
+          // (e.g. 3 AMD buys of €100.98 on Dec 20), even though they have
+          // distinct quantities, Decimal normalization ("100.98" vs "100.980")
+          // and float precision can collapse the keys. Result: only one of
+          // the N trades survives, and the remaining shares disappear from
+          // the imported portfolio.
+          //
+          // Our addon assigns a sequential `lineNumber` per activity inside
+          // buildActivitiesFromParsed, which is unique within a single
+          // statement. We combine it with the ISIN+date for human-readable
+          // debugging and prefix with "tr-pdf-v2.7.9:" so we can audit/
+          // delete this run's activities later.
+          const idemKey = `tr-pdf-v2.7.9:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
+            a.symbol || "cash"
+          }:${(a.date as string).slice(0, 10)}`;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const createPayload: any = {
             accountId: acct.id,
             activityType: a.activityType,
             activityDate: a.date as string,
@@ -701,7 +721,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             currency: a.currency,
             fee: a.fee ?? 0,
             comment: a.comment ?? null,
-          });
+            idempotencyKey: idemKey,
+            sourceSystem: "TR_PDF",
+            sourceRecordId: idemKey,
+          };
+          await ctx.api.activities.create(createPayload);
           imported += 1;
         } catch (err) {
           failures += 1;
