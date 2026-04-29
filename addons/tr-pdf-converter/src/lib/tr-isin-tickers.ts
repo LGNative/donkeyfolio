@@ -343,11 +343,14 @@ const EQUITIES: Record<string, TickerMapping> = {
   US68236H2040: { symbol: "ONDS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ondas
   US75886F1075: { symbol: "REGN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Regeneron
   US05605H1005: { symbol: "BWXT", quoteCcy: "USD", instrumentType: "EQUITY" }, // BWX Tech
-  // (v2.10.2) Removed duplicate `US7731211089 → RKLB` — the canonical Rocket
-  // Lab ISIN is `US7731221062` (mapped above at line ~300). The previous
-  // entry at this slot historically pointed at RBRK (Rubrik) by mistake, then
-  // got swapped to RKLB which created a 2nd ISIN aliased to the same Yahoo
-  // ticker. Removing it eliminates the asset-collision risk.
+  // (v2.10.3) Restored `US7731211089 → RKLB`. v2.10.2 removed it thinking it
+  // was a duplicate, but the user's PDF legitimately holds shares against
+  // BOTH Rocket Lab ISINs — `US7731221062` (post-merger common stock) AND
+  // `US7731211089` (pre-merger / ADR / older). Both list as RKLB on NASDAQ.
+  // Aliasing both ISINs to the same Yahoo ticker is correct — the asset
+  // profile in Donkeyfolio dedups by `instrument_type:instrument_symbol`
+  // (CRYPTO:BTC, EQUITY:RKLB) so they collapse cleanly.
+  US7731211089: { symbol: "RKLB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rocket Lab (older ISIN)
   US5024311095: { symbol: "LHX", quoteCcy: "USD", instrumentType: "EQUITY" }, // L3Harris
   US5398301094: { symbol: "LMT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Lockheed
   US00760J1088: { symbol: "AEHR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Aehr Test
