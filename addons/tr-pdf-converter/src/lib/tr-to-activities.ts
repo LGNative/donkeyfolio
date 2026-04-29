@@ -17,6 +17,7 @@
  */
 import type { ActivityImport, ActivityType } from "@wealthfolio/addon-sdk";
 
+import { extractIsin } from "./tr-isin-utils";
 import type { CashTransaction, TradingTransaction } from "./tr-parser";
 
 // The SDK only re-exports data-types as types (not runtime consts), so we
@@ -255,9 +256,9 @@ interface BuildOpts {
   lastActivityDate?: string;
 }
 
-function extractIsin(text: string): string | undefined {
-  return text.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/)?.[1];
-}
+// (v2.10.1) ISIN validation moved to tr-isin-utils.ts — see that file for
+// the rationale. Previous inline `/\b[A-Z]{2}[A-Z0-9]{10}\b/` regex matched
+// the word "SUBSCRIPTION", creating a fake asset that Yahoo failed to price.
 
 export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   const { accountId, currency, cash, trading, skipCashKeys, pdfSummary, lastActivityDate } = opts;

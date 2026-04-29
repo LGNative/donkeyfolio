@@ -14,6 +14,8 @@
  * Vendored under @jcmpagel's open-source license (see README).
  */
 import * as pdfjsLib from "pdfjs-dist";
+
+import { extractIsin as extractValidIsin } from "./tr-isin-utils";
 // Inline the worker source as a raw string — we construct a Blob URL at
 // runtime so the worker loads inside the Donkeyfolio addon context (where
 // relative asset URLs don't resolve).
@@ -271,7 +273,8 @@ export function enrichTradingWithQuantity(
   const index = new Map<string, string>();
   for (const c of cash) {
     const desc = c.description || "";
-    const isin = desc.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/)?.[1];
+    // (v2.10.1) Use shared validator — bare regex matches "SUBSCRIPTION".
+    const isin = extractValidIsin(desc);
     if (!isin) continue;
     const out = parseEuroAmount(c.outgoing || "");
     const inc = parseEuroAmount(c.incoming || "");
