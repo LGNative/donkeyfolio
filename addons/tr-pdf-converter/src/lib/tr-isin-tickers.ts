@@ -323,11 +323,12 @@ const EQUITIES: Record<string, TickerMapping> = {
   US0080731088: { symbol: "AVAV", quoteCcy: "USD", instrumentType: "EQUITY" }, // AeroVironment (WKN A0MJX7)
   US25402D1028: { symbol: "DOCN", quoteCcy: "USD", instrumentType: "EQUITY" }, // DigitalOcean Holdings (WKN A2QRZ4)
   CA50077N1024: {
-    symbol: "PNG.TO",
-    exchangeMic: "XTSE",
+    symbol: "PNG.V",
+    exchangeMic: "XTSX",
     quoteCcy: "CAD",
     instrumentType: "EQUITY",
-  }, // Kraken Robotics (WKN A2DYP6, graduated from TSXV to TSX)
+  }, // Kraken Robotics on TSXV (Yahoo: PNG.V — confirmed by user). Despite the
+  // company graduating to TSX, Yahoo's data still flows through the .V ticker.
   CA26142Q3044: { symbol: "DPRO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Draganfly
   FI0009000681: { symbol: "NOK", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nokia ADR
   IT0003027817: {
@@ -368,7 +369,7 @@ const EQUITIES: Record<string, TickerMapping> = {
   US58733R1023: { symbol: "MELI", quoteCcy: "USD", instrumentType: "EQUITY" }, // MercadoLibre (description was truncated to just "INC." but user confirmed)
   US09175A2069: { symbol: "BMNR", quoteCcy: "USD", instrumentType: "EQUITY" }, // BitMine Immersion (description was clear)
   US5949724083: { symbol: "MSTR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Strategy (formerly MicroStrategy — Michael Saylor's bitcoin treasury company)
-  US83443Q1031: { symbol: "SOLST", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice Advanced Materials (Honeywell spinoff, NOT Amplify Solana ETF SOLM)
+  US83443Q1031: { symbol: "SOLS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice Advanced Materials (Honeywell spinoff). Yahoo ticker is SOLS, not SOLST. Confirmed via finance.yahoo.com/quote/SOLS/.
   IE00B4BNMY34: { symbol: "ACN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Accenture (Irish-domiciled, NYSE primary)
 };
 
