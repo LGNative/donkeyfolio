@@ -48,6 +48,11 @@ import {
 } from "../lib/tr-to-activities";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
 import { resolveCryptoDirectBuys } from "../lib/tr-crypto-resolver";
+import {
+  discoverTickers,
+  buildDiscoveryMap,
+  type DiscoveryResult,
+} from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 
 interface ParseState {
@@ -63,6 +68,11 @@ interface ParseState {
   fileName: string;
   /** Page-1 SUMMARY block — authoritative period totals from TR. */
   summary: StatementSummary | null;
+  /** (v2.10) Tickers auto-discovered via Yahoo search for unmapped ISINs.
+   *  Populated automatically after parse; surfaced in the unmapped panel. */
+  discoveredTickers: DiscoveryResult[];
+  /** (v2.10) Auto-detected stock splits that affect imported holdings. */
+  autoSplits: SplitEvent[];
 }
 
 type ImportState =
@@ -89,6 +99,8 @@ const initialState: ParseState = {
   recoveredRows: 0,
   fileName: "",
   summary: null,
+  discoveredTickers: [],
+  autoSplits: [],
 };
 
 // ─── Status translation (jcmpagel's parser emits German labels) ─────────
@@ -458,6 +470,58 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         );
       }
 
+      // (v2.10) Auto-discover Yahoo tickers for ISINs we don't have mapped.
+      // Each unmapped ISIN gets a Yahoo search with WKN > name > ISIN as
+      // the query, the result is cached in localStorage for future imports.
+      const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
+      const seenIsins = new Set<string>();
+      for (const t of cryptoTrading) {
+        if (!t.isin || seenIsins.has(t.isin)) continue;
+        seenIsins.add(t.isin);
+        // Skip mapped + crypto pseudo-ISINs (handled separately).
+        if (lookupTicker(t.isin) || t.isin.startsWith("XF000")) continue;
+        unmappedRequests.push({
+          isin: t.isin,
+          name: t.cleanStockName || t.stockName,
+          wkn: t.wkn,
+        });
+      }
+      let discoveredTickers: DiscoveryResult[] = [];
+      if (unmappedRequests.length > 0) {
+        try {
+          discoveredTickers = await discoverTickers(unmappedRequests);
+          const succeeded = discoveredTickers.filter((d) => d.symbol).length;
+          ctx.api.logger.info(
+            `[TR PDF] ticker discovery: ${succeeded}/${unmappedRequests.length} unmapped ISINs resolved via Yahoo`,
+          );
+        } catch (err) {
+          ctx.api.logger.warn(
+            `[TR PDF] ticker discovery failed (non-fatal): ${(err as Error).message}`,
+          );
+        }
+      }
+
+      // (v2.10) Auto-run split detector — surfaces stock splits that
+      // happened after each position's first trade so the user can apply
+      // them. We collect detected splits but don't auto-create SPLIT
+      // activities (that needs explicit user confirmation per split since
+      // TR app already shows post-split qty in some cases and the user
+      // shouldn't have it applied twice).
+      let autoSplits: SplitEvent[] = [];
+      try {
+        const splitResult = await detectSplitsForPositions(cryptoTrading);
+        autoSplits = splitResult.splits;
+        if (autoSplits.length > 0) {
+          ctx.api.logger.info(
+            `[TR PDF] auto-detected ${autoSplits.length} stock split(s) affecting your holdings`,
+          );
+        }
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] split detector failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
+
       // Use our own running-average-cost P&L (jcmpagel's calculatePnL returned
       // €0 for every partially-sold position, which made the Realized P&L
       // column useless for any active portfolio).
@@ -480,6 +544,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         recoveredRows: recoveredRows + chainCorrected + mergedRows,
         fileName: file.name,
         summary: result.summary ?? null,
+        discoveredTickers,
+        autoSplits,
       });
     } catch (err) {
       setState({
@@ -596,6 +662,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       for (const t of state.trading) {
         if (t.isin && t.wkn && !isinToWkn.has(t.isin)) isinToWkn.set(t.isin, t.wkn);
       }
+      // (v2.10) Build the discovered-ticker map so unmapped ISINs that we
+      // resolved via Yahoo search get used during import (instead of
+      // falling back to ISIN-as-symbol which Yahoo often can't price).
+      const discoveryMap = buildDiscoveryMap(state.discoveredTickers);
       // (v2.8) Pass the PDF SUMMARY so the builder can emit a closing
       // reconciliation activity if there's residual drift. Without this
       // the cash balance can land off-target when individual rows have
@@ -687,7 +757,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           // without explicit quoteCcy. CRYPTO bypasses that branch.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let symbolPayload: any;
-          const mapped = sym ? lookupTicker(sym) : null;
+          // Try our hardcoded map first, fall back to runtime-discovered
+          // mappings from Yahoo search (v2.10).
+          const mapped = sym ? lookupTicker(sym) || discoveryMap.get(sym) || null : null;
           if (mapped) {
             symbolPayload = {
               symbol: mapped.symbol,
@@ -1405,6 +1477,90 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                       </p>
                     )}
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ─── Validation summary (v2.10) ─────────────────────────── */}
+          {state.status === "done" && (
+            <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20">
+              <CardHeader>
+                <CardTitle className="text-base">Import readiness</CardTitle>
+                <CardDescription>
+                  Automatic checks run after parsing your PDF. Anything flagged below is
+                  pre-resolved or surfaced for you to verify — no manual work needed unless an item
+                  is marked ⚠.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                  <span>
+                    <strong>{state.cash.length}</strong> cash transactions parsed,{" "}
+                    <strong>{state.trading.length}</strong> trades detected.
+                  </span>
+                </div>
+                {state.summary && (
+                  <div className="flex items-center gap-2">
+                    <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                    <span>
+                      PDF SUMMARY block read (opening {state.summary.openingBalance} → ending{" "}
+                      {state.summary.endingBalance}).
+                    </span>
+                  </div>
+                )}
+                {state.recoveredRows > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                    <span>
+                      <strong>{state.recoveredRows}</strong> row(s) auto-corrected (column-swap +
+                      chain consistency + multi-line merge).
+                    </span>
+                  </div>
+                )}
+                {state.discoveredTickers.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    {state.discoveredTickers.filter((d) => d.symbol).length ===
+                    state.discoveredTickers.length ? (
+                      <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                    ) : (
+                      <Icons.AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    )}
+                    <span>
+                      <strong>
+                        {state.discoveredTickers.filter((d) => d.symbol).length}/
+                        {state.discoveredTickers.length}
+                      </strong>{" "}
+                      unmapped ISINs auto-resolved via Yahoo search.
+                    </span>
+                  </div>
+                )}
+                {state.autoSplits.length > 0 && (
+                  <div className="flex items-start gap-2">
+                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      ⚠ <strong>{state.autoSplits.length}</strong> stock split(s) detected after
+                      your first trade — review the Stock splits panel below and add SPLIT
+                      activities in Donkeyfolio if TR doesn't already reflect them.
+                    </span>
+                  </div>
+                )}
+                {state.failedChecks > 0 && (
+                  <div className="flex items-start gap-2">
+                    <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      ⚠ <strong>{state.failedChecks}</strong> sanity check(s) failed —
+                      reconciliation will close any residual gap automatically (v2.8 feature).
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Icons.CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                  <span>
+                    Cash will reconcile to PDF SUMMARY ending balance via auto-reconciliation
+                    activity (if drift exists).
+                  </span>
                 </div>
               </CardContent>
             </Card>
