@@ -711,10 +711,34 @@ export function enforceChainConsistency(
   let prevSaldo = anchor;
   let corrected = 0;
 
+  // (v2.7.5) Robust check for "no saldo on this row". The PDF parser may
+  // emit fragments-only rows (e.g. just "13" or "Card" or "Transaction" from
+  // a multi-line Card Transaction) which have an empty saldo column. The
+  // older check `!Number.isFinite(parseEuroAmount(row.saldo))` was wrong
+  // because parseEuroAmount("") returns 0 (not NaN), so empty saldos were
+  // treated as a real €0 balance. That created huge phantom in/out pairs:
+  // one row claimed the saldo dropped to 0 (huge OUT) and the next row
+  // claimed it shot back up to the real saldo (huge IN), totalling
+  // €10k-€20k of symmetric drift on a yearly statement.
+  const hasMeaningfulSaldo = (s: string | undefined): boolean => {
+    if (!s) return false;
+    const trimmed = String(s).trim();
+    if (!trimmed) return false;
+    // Must contain at least one digit AND either a € sign or a separator —
+    // anything else is likely descriptive text, not a balance value.
+    if (!/\d/.test(trimmed)) return false;
+    return true;
+  };
+
   const fixed = cash.map((row): CashTransaction => {
+    if (!hasMeaningfulSaldo(row.saldo)) {
+      // Saldo column is empty / non-numeric — this is a fragment row that
+      // shouldn't participate in the chain. Skip without advancing prevSaldo
+      // so the next valid row anchors against the LAST real saldo we saw.
+      return row;
+    }
     const currSaldo = parseEuroAmount(row.saldo);
     if (!Number.isFinite(currSaldo)) {
-      // Saldo unparseable — keep the row as-is, can't enforce.
       return row;
     }
 
