@@ -468,7 +468,14 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     // reconciliation is meaningful and auditable.
     if (Math.abs(gap) >= 0.5) {
       const isInflow = gap > 0;
-      const reconcileDate = lastActivityDate || new Date().toISOString();
+      // (v2.14.0) lastActivityDate comes from cash[].datum which is TR's
+      // raw format ("29 Apr 2026" / "29.04.2026") — Donkeyfolio rejects
+      // anything that isn't ISO 8601. Run it through toIsoDate() before
+      // assigning. Previous versions silently shipped the raw string and
+      // the activities import skipped one row with "Invalid date format".
+      const reconcileDate = lastActivityDate
+        ? toIsoDate(lastActivityDate)
+        : new Date().toISOString();
       activities.push({
         accountId,
         currency,

@@ -229,8 +229,17 @@ async function loadCachedCryptoPrices(
     return out;
   }
   try {
-    const assets: Array<{ id: string; symbol?: string; name?: string }> =
-      await ctxLike.api.assets.getAll();
+    // (v2.14.0) The SDK Asset type uses `displayCode` + `instrumentSymbol`,
+    // NOT `symbol` — v2.13.0 read `a.symbol` which is always undefined,
+    // so the cache lookup never matched and we always fell through to
+    // Yahoo (which then 429'd). Match on either field, case-insensitive.
+    // Quote uses `timestamp` (ISO8601), not `day`.
+    const assets: Array<{
+      id: string;
+      displayCode?: string | null;
+      instrumentSymbol?: string | null;
+      name?: string | null;
+    }> = await ctxLike.api.assets.getAll();
     // Donkeyfolio's crypto assets store the bare ticker ("BTC") not the
     // Yahoo-style "BTC-EUR". Strip "-EUR" / "-USD" before matching.
     const symbolToTicker = new Map<string, string>();
@@ -239,19 +248,31 @@ async function loadCachedCryptoPrices(
       symbolToTicker.set(stripped.toUpperCase(), ticker);
     }
     for (const a of assets) {
-      const sym = (a.symbol || "").toUpperCase();
-      const ticker = symbolToTicker.get(sym);
+      const candidates = [a.instrumentSymbol, a.displayCode]
+        .filter((s): s is string => typeof s === "string" && s.length > 0)
+        .map((s) => s.toUpperCase());
+      let ticker: string | undefined;
+      for (const c of candidates) {
+        // Try exact ("BTC") and the base before any dash ("BTC-EUR" → "BTC").
+        ticker = symbolToTicker.get(c) || symbolToTicker.get(c.split("-")[0]);
+        if (ticker) break;
+      }
       if (!ticker) continue;
       try {
-        const quotes: Array<{ day?: string; close?: number | string }> =
-          await ctxLike.api.quotes.getHistory(a.id);
+        const quotes: Array<{
+          timestamp?: string;
+          day?: string;
+          close?: number | string;
+        }> = await ctxLike.api.quotes.getHistory(a.id);
         if (!quotes?.length) continue;
         const map = new Map<string, number>();
         for (const q of quotes) {
-          if (!q.day) continue;
+          // Prefer `timestamp` (current SDK) but accept `day` as legacy.
+          const dateStr = q.timestamp || q.day;
+          if (!dateStr) continue;
           const c = typeof q.close === "string" ? parseFloat(q.close) : q.close;
           if (typeof c === "number" && Number.isFinite(c) && c > 0) {
-            map.set(String(q.day).slice(0, 10), c);
+            map.set(String(dateStr).slice(0, 10), c);
           }
         }
         if (map.size > 0) out.set(ticker, map);

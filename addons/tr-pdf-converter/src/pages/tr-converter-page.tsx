@@ -7,6 +7,9 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   Icons,
   Progress,
   Table,
@@ -312,6 +315,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     done: 0,
     total: 0,
   });
+
+  // (v2.13.1) Tabs row controlled state + scroll target. After import we
+  // auto-switch to the Diagnostics tab and scrollIntoView so the user
+  // immediately sees drift findings instead of having to scroll past the
+  // long Cash table to find the panel.
+  const [activeTab, setActiveTab] = React.useState<string>("cash");
+  const tabsAnchorRef = React.useRef<HTMLDivElement>(null);
+  // (v2.13.1) Reconciliation breakdown is collapsed by default — the table
+  // can be 10+ rows tall and pushed everything else off-screen.
+  const [reconcileBreakdownOpen, setReconcileBreakdownOpen] = React.useState(false);
 
   const loadAccounts = React.useCallback(async () => {
     try {
@@ -1064,6 +1077,20 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importState.status]);
 
+  // (v2.13.1) Auto-switch to Diagnostics tab + scroll into view when
+  // import finishes. Drift findings are the most actionable post-import
+  // signal so we surface them automatically.
+  React.useEffect(() => {
+    if (importState.status === "done" && state.trading.length > 0) {
+      setActiveTab("diagnostics");
+      // Defer scroll to next frame so the tab content has rendered.
+      requestAnimationFrame(() => {
+        tabsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importState.status]);
+
   const exportDiagnosticsFile = React.useCallback(
     async (filename: string, content: string, mime: string) => {
       await saveFile(ctx, filename, content, mime);
@@ -1197,10 +1224,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       ? (state.progress.page / state.progress.total) * 100
       : 0;
 
-  const tabsAvailable: Array<"cash" | "mmf" | "trading"> = [];
+  const tabsAvailable: Array<"cash" | "mmf" | "trading" | "diagnostics" | "splits" | "mapping"> =
+    [];
   if (state.cash.length > 0) tabsAvailable.push("cash");
   if (state.interest.length > 0) tabsAvailable.push("mmf");
   if (state.trading.length > 0) tabsAvailable.push("trading");
+  // (v2.13.1) Diagnostics / Stock splits / Securities mapping moved into
+  // the tabs row so high-value action panels surface above the parsed-
+  // data tables.
+  if (state.trading.length > 0) tabsAvailable.push("diagnostics");
+  if (state.trading.length > 0) tabsAvailable.push("splits");
 
   const visibleCash = showOnlyFailed
     ? state.cash.filter((r) => r._sanityCheckOk === false)
@@ -1236,6 +1269,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     if (state.status !== "done" || state.trading.length === 0) return [];
     return analyzeSecurities(state.trading);
   }, [state.status, state.trading]);
+
+  // (v2.13.1) Securities mapping tab — only show when we have securities to
+  // classify. Pushed here so it depends on the memoized analysis above.
+  if (securityAnalysis.length > 0) tabsAvailable.push("mapping");
+  const unmappedCount = securityAnalysis.filter((s) => s.status === "unmapped").length;
+  const diagnosticsDriftCount = diagnostics.filter((d) => d.severity !== "ok").length;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
@@ -1644,46 +1683,69 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                     </div>
                   )}
 
-                {/* Breakdown */}
+                {/* Breakdown — collapsed by default. Long & secondary
+                    info; the verdict row above is what most users need. */}
                 {reconcile.breakdown.length > 0 && (
-                  <div className="overflow-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Activity type</TableHead>
-                          <TableHead className="text-right">Count</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
-                          <TableHead className="text-right">Cash impact</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {reconcile.breakdown.map((r) => (
-                          <TableRow key={r.activityType}>
-                            <TableCell>
-                              <Badge variant="outline" className="font-mono text-xs">
-                                {r.activityType}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right font-mono">{r.count}</TableCell>
-                            <TableCell className="text-right font-mono">
-                              {formatEur(r.total)}
-                            </TableCell>
-                            <TableCell
-                              className={`text-right font-mono font-medium ${
-                                r.cashImpact > 0
-                                  ? "text-green-600 dark:text-green-400"
-                                  : r.cashImpact < 0
-                                    ? "text-red-600 dark:text-red-400"
-                                    : ""
-                              }`}
-                            >
-                              {(r.cashImpact > 0 ? "+" : "") + formatEur(r.cashImpact)}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <Collapsible
+                    open={reconcileBreakdownOpen}
+                    onOpenChange={setReconcileBreakdownOpen}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground hover:text-foreground -ml-2 h-7 gap-1 text-xs"
+                      >
+                        {reconcileBreakdownOpen ? (
+                          <Icons.ChevronDown className="h-3 w-3" />
+                        ) : (
+                          <Icons.ChevronRight className="h-3 w-3" />
+                        )}
+                        {reconcileBreakdownOpen ? "Hide" : "Show"} breakdown by activity type (
+                        {reconcile.breakdown.length})
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2">
+                      <div className="overflow-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Activity type</TableHead>
+                              <TableHead className="text-right">Count</TableHead>
+                              <TableHead className="text-right">Total</TableHead>
+                              <TableHead className="text-right">Cash impact</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {reconcile.breakdown.map((r) => (
+                              <TableRow key={r.activityType}>
+                                <TableCell>
+                                  <Badge variant="outline" className="font-mono text-xs">
+                                    {r.activityType}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right font-mono">{r.count}</TableCell>
+                                <TableCell className="text-right font-mono">
+                                  {formatEur(r.total)}
+                                </TableCell>
+                                <TableCell
+                                  className={`text-right font-mono font-medium ${
+                                    r.cashImpact > 0
+                                      ? "text-green-600 dark:text-green-400"
+                                      : r.cashImpact < 0
+                                        ? "text-red-600 dark:text-red-400"
+                                        : ""
+                                  }`}
+                                >
+                                  {(r.cashImpact > 0 ? "+" : "") + formatEur(r.cashImpact)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 )}
 
                 {/* Verdict */}
@@ -2101,141 +2163,150 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
           {/* Tabs with tables */}
           {tabsAvailable.length > 0 && (
-            <Tabs defaultValue={tabsAvailable[0]} className="space-y-4">
-              <TabsList>
-                {tabsAvailable.includes("cash") && (
-                  <TabsTrigger value="cash">
-                    Cash
-                    <Badge variant="secondary" className="ml-2">
-                      {state.cash.length}
-                    </Badge>
-                  </TabsTrigger>
-                )}
-                {tabsAvailable.includes("mmf") && (
-                  <TabsTrigger value="mmf">
-                    Money Market
-                    <Badge variant="secondary" className="ml-2">
-                      {state.interest.length}
-                    </Badge>
-                  </TabsTrigger>
-                )}
-                {tabsAvailable.includes("trading") && (
-                  <TabsTrigger value="trading">
-                    Trading P&L
-                    <Badge variant="secondary" className="ml-2">
-                      {state.trading.length}
-                    </Badge>
-                    <Badge variant="outline" className="ml-2 text-[10px] uppercase">
-                      Beta
-                    </Badge>
-                  </TabsTrigger>
-                )}
-                {state.trading.length > 0 && (
-                  <TabsTrigger value="diagnostics">
-                    Diagnostics
-                    {diagnostics.length > 0 && (
+            <div ref={tabsAnchorRef} className="scroll-mt-4">
+              <Tabs
+                value={
+                  (tabsAvailable as string[]).includes(activeTab) ? activeTab : tabsAvailable[0]
+                }
+                onValueChange={setActiveTab}
+                className="space-y-4"
+              >
+                <TabsList>
+                  {tabsAvailable.includes("cash") && (
+                    <TabsTrigger value="cash">
+                      Cash
                       <Badge variant="secondary" className="ml-2">
-                        {diagnostics.filter((d) => d.severity !== "ok").length}/{diagnostics.length}
+                        {state.cash.length}
                       </Badge>
-                    )}
-                    <Badge variant="outline" className="ml-2 text-[10px] uppercase">
-                      New
-                    </Badge>
-                  </TabsTrigger>
-                )}
-              </TabsList>
-
-              {tabsAvailable.includes("cash") && (
-                <TabsContent value="cash" className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={exportCsv}>
-                      <Icons.Download className="mr-2 h-4 w-4" />
-                      Export CSV
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={exportLexwareCsv}>
-                      Lexware CSV
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => exportJson("cash")}>
-                      JSON
-                    </Button>
-                    {state.failedChecks > 0 && (
-                      <Button
-                        size="sm"
-                        variant={showOnlyFailed ? "default" : "outline"}
-                        onClick={() => setShowOnlyFailed((v) => !v)}
-                      >
-                        {showOnlyFailed
-                          ? `Showing ${state.failedChecks} failed`
-                          : "Only failed sanity checks"}
-                      </Button>
-                    )}
-                  </div>
-                  <CashTable rows={visibleCash} />
-                </TabsContent>
-              )}
-
-              {tabsAvailable.includes("mmf") && (
-                <TabsContent value="mmf" className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => exportJson("mmf")}>
-                      <Icons.Download className="mr-2 h-4 w-4" />
-                      Export JSON
-                    </Button>
-                  </div>
-                  <InterestTable rows={state.interest} />
-                </TabsContent>
-              )}
-
-              {tabsAvailable.includes("trading") && state.pnl && (
-                <TabsContent value="trading" className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => exportJson("trading")}>
-                      <Icons.Download className="mr-2 h-4 w-4" />
-                      Export JSON
-                    </Button>
-                  </div>
-                  <p className="text-muted-foreground text-xs">
-                    Per-position approximation. The accurate P&L is computed by Donkeyfolio after
-                    import using live market prices and your full holdings history.
-                  </p>
-                  <TradingTable pnl={state.pnl} />
-                </TabsContent>
-              )}
-
-              {state.trading.length > 0 && (
-                <TabsContent value="diagnostics" className="space-y-3">
-                  {!selectedAccountId ? (
-                    <div className="text-muted-foreground rounded border p-4 text-xs">
-                      Select a target account above to enable diagnostics — we need to read DB
-                      activities to compare against the parsed import.
-                    </div>
-                  ) : diagnostics.length === 0 && !diagnosticsLoading ? (
-                    <div className="rounded border p-4 text-xs">
-                      <p className="text-muted-foreground mb-2">
-                        Diagnostics auto-runs after import. You can also run it manually now to see
-                        drift between this parse and what's currently in DB.
-                      </p>
-                      <Button size="sm" onClick={runDiagnostics}>
-                        <Icons.Search className="mr-2 h-4 w-4" />
-                        Run diagnostics now
-                      </Button>
-                    </div>
-                  ) : (
-                    <DiagnosticsPanel
-                      ctx={ctx}
-                      diagnostics={diagnostics}
-                      loading={diagnosticsLoading}
-                      progress={diagnosticsProgress}
-                      onRefresh={runDiagnostics}
-                      autoSplits={state.autoSplits}
-                      accountId={selectedAccountId}
-                      accountCurrency={selectedAccount?.currency || "EUR"}
-                      onExport={exportDiagnosticsFile}
-                    />
+                    </TabsTrigger>
                   )}
-                </TabsContent>
-              )}
-            </Tabs>
+                  {tabsAvailable.includes("mmf") && (
+                    <TabsTrigger value="mmf">
+                      Money Market
+                      <Badge variant="secondary" className="ml-2">
+                        {state.interest.length}
+                      </Badge>
+                    </TabsTrigger>
+                  )}
+                  {tabsAvailable.includes("trading") && (
+                    <TabsTrigger value="trading">
+                      Trading P&L
+                      <Badge variant="secondary" className="ml-2">
+                        {state.trading.length}
+                      </Badge>
+                      <Badge variant="outline" className="ml-2 text-[10px] uppercase">
+                        Beta
+                      </Badge>
+                    </TabsTrigger>
+                  )}
+                  {state.trading.length > 0 && (
+                    <TabsTrigger value="diagnostics">
+                      Diagnostics
+                      {diagnostics.length > 0 && (
+                        <Badge variant="secondary" className="ml-2">
+                          {diagnostics.filter((d) => d.severity !== "ok").length}/
+                          {diagnostics.length}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="ml-2 text-[10px] uppercase">
+                        New
+                      </Badge>
+                    </TabsTrigger>
+                  )}
+                </TabsList>
+
+                {tabsAvailable.includes("cash") && (
+                  <TabsContent value="cash" className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" onClick={exportCsv}>
+                        <Icons.Download className="mr-2 h-4 w-4" />
+                        Export CSV
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={exportLexwareCsv}>
+                        Lexware CSV
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => exportJson("cash")}>
+                        JSON
+                      </Button>
+                      {state.failedChecks > 0 && (
+                        <Button
+                          size="sm"
+                          variant={showOnlyFailed ? "default" : "outline"}
+                          onClick={() => setShowOnlyFailed((v) => !v)}
+                        >
+                          {showOnlyFailed
+                            ? `Showing ${state.failedChecks} failed`
+                            : "Only failed sanity checks"}
+                        </Button>
+                      )}
+                    </div>
+                    <CashTable rows={visibleCash} />
+                  </TabsContent>
+                )}
+
+                {tabsAvailable.includes("mmf") && (
+                  <TabsContent value="mmf" className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => exportJson("mmf")}>
+                        <Icons.Download className="mr-2 h-4 w-4" />
+                        Export JSON
+                      </Button>
+                    </div>
+                    <InterestTable rows={state.interest} />
+                  </TabsContent>
+                )}
+
+                {tabsAvailable.includes("trading") && state.pnl && (
+                  <TabsContent value="trading" className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => exportJson("trading")}>
+                        <Icons.Download className="mr-2 h-4 w-4" />
+                        Export JSON
+                      </Button>
+                    </div>
+                    <p className="text-muted-foreground text-xs">
+                      Per-position approximation. The accurate P&L is computed by Donkeyfolio after
+                      import using live market prices and your full holdings history.
+                    </p>
+                    <TradingTable pnl={state.pnl} />
+                  </TabsContent>
+                )}
+
+                {state.trading.length > 0 && (
+                  <TabsContent value="diagnostics" className="space-y-3">
+                    {!selectedAccountId ? (
+                      <div className="text-muted-foreground rounded border p-4 text-xs">
+                        Select a target account above to enable diagnostics — we need to read DB
+                        activities to compare against the parsed import.
+                      </div>
+                    ) : diagnostics.length === 0 && !diagnosticsLoading ? (
+                      <div className="rounded border p-4 text-xs">
+                        <p className="text-muted-foreground mb-2">
+                          Diagnostics auto-runs after import. You can also run it manually now to
+                          see drift between this parse and what's currently in DB.
+                        </p>
+                        <Button size="sm" onClick={runDiagnostics}>
+                          <Icons.Search className="mr-2 h-4 w-4" />
+                          Run diagnostics now
+                        </Button>
+                      </div>
+                    ) : (
+                      <DiagnosticsPanel
+                        ctx={ctx}
+                        diagnostics={diagnostics}
+                        loading={diagnosticsLoading}
+                        progress={diagnosticsProgress}
+                        onRefresh={runDiagnostics}
+                        autoSplits={state.autoSplits}
+                        accountId={selectedAccountId}
+                        accountCurrency={selectedAccount?.currency || "EUR"}
+                        onExport={exportDiagnosticsFile}
+                      />
+                    )}
+                  </TabsContent>
+                )}
+              </Tabs>
+            </div>
           )}
         </>
       )}

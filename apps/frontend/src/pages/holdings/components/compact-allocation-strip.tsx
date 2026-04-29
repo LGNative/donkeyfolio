@@ -87,6 +87,14 @@ export function CompactAllocationStrip({
         };
       });
 
+      // If the only non-empty slot is "unknown" (i.e. nothing has been
+      // classified yet), surface an empty-state instead of a misleading
+      // "100% Unknown" bar. Caller renders the "No data" placeholder.
+      const nonEmpty = ordered.filter((c) => !c.isEmpty);
+      const onlyUnknown =
+        nonEmpty.length === 1 && normalizeRiskName(nonEmpty[0].name) === "unknown";
+      if (onlyUnknown) return [];
+
       return ordered;
     }
 
@@ -146,12 +154,15 @@ export function CompactAllocationStrip({
   }
 
   if (processedCategories.length === 0) {
+    const isRisk = variant === "risk-composition";
     return (
       <Card className="p-3">
         <p className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
           {title}
         </p>
-        <p className="text-muted-foreground mt-2 text-xs">No data</p>
+        <p className="text-muted-foreground mt-2 text-xs">
+          {isRisk ? "Not yet classified — assign risk in asset profile" : "No data"}
+        </p>
       </Card>
     );
   }

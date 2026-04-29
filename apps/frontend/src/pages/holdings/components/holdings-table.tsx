@@ -64,7 +64,12 @@ export const HoldingsTable = ({
 }) => {
   const { isBalanceHidden } = useBalancePrivacy();
   const { settings } = useSettingsContext();
-  const [showConvertedValues, setShowConvertedValues] = useState(false);
+  // Default to base currency (EUR/USD/etc. — the user's account base) so the
+  // Total Value / Today's Price columns are immediately comparable across
+  // holdings instead of mixing USD-quoted equities with EUR-quoted ETFs in
+  // the same column. Users can still flip to local currency via the $/€
+  // toggle in the column header.
+  const [showConvertedValues, setShowConvertedValues] = useState(true);
 
   const baseCurrency = settings?.baseCurrency ?? holdings[0]?.baseCurrency;
   const hasMultipleCurrencies = holdings.some((holding) => {
