@@ -47,7 +47,10 @@ import {
   buildTradingCashKeys,
 } from "../lib/tr-to-activities";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
-import { resolveCryptoDirectBuys } from "../lib/tr-crypto-resolver";
+import {
+  extractCryptoDirectBuysFromCash,
+  resolveCryptoDirectBuys,
+} from "../lib/tr-crypto-resolver";
 import {
   discoverTickers,
   buildDiscoveryMap,
@@ -450,18 +453,24 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
 
-      // (v2.9) Resolve qty for crypto "Compra direta" trades by hitting
-      // Yahoo Finance for the historical price on the trade date and
-      // computing qty = amount / price. TR's PDF doesn't include the
-      // crypto qty for direct-buy executions, so without this we lose
-      // ~30-50% of crypto holdings on import.
-      let cryptoTrading = trading;
+      // (v2.9 + v2.10.1) Resolve qty for crypto "Compra direta" trades.
+      // v2.9 only looked at trading[] but TR's "Compra direta" rows live
+      // in cash[] — they never reach trading[] via the standard parser.
+      // v2.10.1 adds extractCryptoDirectBuysFromCash() to scan cash[] for
+      // XF000* pseudo-ISINs with cash outflow, builds synthetic
+      // TradingTransactions, then runs the existing Yahoo-price resolver.
+      // The synthetic trades flow into state.trading, so the existing
+      // buildTradingCashKeys() automatically generates the skip keys that
+      // prevent the cash legs from becoming WITHDRAWAL activities.
+      const { cryptoTrading: extraCryptoTrades } = extractCryptoDirectBuysFromCash(cash);
+      const tradingWithCryptoCash = trading.concat(extraCryptoTrades);
+      let cryptoTrading = tradingWithCryptoCash;
       try {
-        const cryptoResult = await resolveCryptoDirectBuys(trading);
+        const cryptoResult = await resolveCryptoDirectBuys(tradingWithCryptoCash);
         cryptoTrading = cryptoResult.trading;
         if (cryptoResult.resolved > 0 || cryptoResult.failed > 0) {
           ctx.api.logger.info(
-            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed`,
+            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed (${extraCryptoTrades.length} pulled from cash[])`,
           );
         }
       } catch (err) {

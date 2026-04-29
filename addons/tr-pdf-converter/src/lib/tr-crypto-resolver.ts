@@ -39,20 +39,45 @@
  *   - Best-effort: any network/parse failure leaves qty undefined and
  *     the trade still imports as a cash flow (no shares added).
  */
-import type { TradingTransaction } from "./tr-parser";
+import type { CashTransaction, TradingTransaction } from "./tr-parser";
+
+/** German "1.234,56 €" → 1234.56. Tolerant of EN format too. */
+function parseAmount(s: string | undefined): number {
+  if (!s) return 0;
+  const cleaned = String(s).replace(/[^\d,.\-]/g, "");
+  // If both . and , present, the LAST one is the decimal separator.
+  if (cleaned.includes(",") && cleaned.includes(".")) {
+    if (cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")) {
+      return parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
+    }
+    return parseFloat(cleaned.replace(/,/g, ""));
+  }
+  if (cleaned.includes(",")) return parseFloat(cleaned.replace(",", "."));
+  return parseFloat(cleaned);
+}
 
 /** TR pseudo-ISIN → Yahoo Finance ticker. Mirrors the entries in the
  *  CRYPTO map in tr-isin-tickers.ts but kept independent here so the
- *  resolver can run before the activity-builder phase. */
+ *  resolver can run before the activity-builder phase.
+ *
+ *  (v2.10.1) Verified against a real user's TR statement: SOL/ADA/XRP
+ *  pseudo-ISINs in v2.9 were INCORRECT — TR uses the codes below.
+ *  Wrong codes meant 18 SOL + 19 ADA + 14 XRP direct buys (~€4,469)
+ *  silently flowed through as WITHDRAWAL instead of BUY. */
 const CRYPTO_PSEUDO_TO_YAHOO: Record<string, string> = {
   XF000BTC0017: "BTC-EUR",
   XF000ETH0019: "ETH-EUR",
-  XF000SOL0027: "SOL-EUR",
-  XF000ADA0021: "ADA-EUR",
-  XF000XRP0028: "XRP-EUR",
+  XF000SOL0012: "SOL-EUR", // was 0027 in v2.9 (wrong)
+  XF000ADA0018: "ADA-EUR", // was 0021 in v2.9 (wrong)
+  XF000XRP0018: "XRP-EUR", // was 0028 in v2.9 (wrong)
   XF000DOT0024: "DOT-EUR",
   XF000DOG0026: "DOGE-EUR",
   XF000LTC0031: "LTC-EUR",
+  // Defensive: keep the old (wrong) codes as fallback in case some
+  // older TR statements use them. Yahoo will fail-noop if not real.
+  XF000SOL0027: "SOL-EUR",
+  XF000ADA0021: "ADA-EUR",
+  XF000XRP0028: "XRP-EUR",
 };
 
 interface YahooChartTimeseries {
@@ -265,4 +290,59 @@ export async function resolveCryptoDirectBuys(
   });
 
   return { trading: fixed, resolved, failed };
+}
+
+/**
+ * (v2.10.1) Scan cash[] for crypto direct-buy rows that were never picked
+ * up by the trading-section parser. Build synthetic TradingTransactions so
+ * the standard resolver can fill in qty + the activity-builder can emit
+ * BUYs (instead of leaving them as WITHDRAWAL cash legs).
+ *
+ * Detection rule: row description contains an XF000* pseudo-ISIN AND has
+ * a non-zero `zahlungsausgang` (cash out). We DON'T require "Compra
+ * direta" / "direct buy" / etc. text because TR localises differently per
+ * user — the pseudo-ISIN + outflow is sufficient signal.
+ *
+ * Returned `skipKeys` are the same `${date}|${isin}` keys that
+ * tr-to-activities.ts already uses to skip cash legs of trades. Adding
+ * these to the upstream skipCashKeys set prevents the cash-side
+ * WITHDRAWAL from being created in parallel with the new BUY.
+ */
+export function extractCryptoDirectBuysFromCash(cash: CashTransaction[]): {
+  cryptoTrading: TradingTransaction[];
+  skipKeys: Set<string>;
+} {
+  const cryptoTrading: TradingTransaction[] = [];
+  const skipKeys = new Set<string>();
+  for (const c of cash) {
+    if (!c.beschreibung) continue;
+    const m = c.beschreibung.match(/\b(XF000[A-Z0-9]{6,7})\b/);
+    if (!m) continue;
+    const isin = m[1];
+    if (!CRYPTO_PSEUDO_TO_YAHOO[isin]) continue;
+    const out = parseAmount(c.zahlungsausgang);
+    if (out <= 0) continue;
+    const tradeIdMatch = c.beschreibung.match(/\b(C\d{8,})\b/);
+    cryptoTrading.push({
+      date: c.datum,
+      isin,
+      stockName: c.beschreibung.slice(0, 200),
+      action: "Buy",
+      isBuy: true,
+      amount: out,
+      tradeId: tradeIdMatch ? tradeIdMatch[1] : "",
+      balance: c.saldo || "",
+      // qty undefined → resolver will fill via Yahoo price.
+      cleanStockName: c.beschreibung
+        .replace(/Execução\s+Compra\s+direta\s+/i, "")
+        .replace(/Direct\s+buy\s+/i, "")
+        .replace(/\bC\d{8,}\b/, "")
+        .replace(/\b(XF000[A-Z0-9]{6,7})\b/, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80),
+    });
+    skipKeys.add(`${c.datum}|${isin}`);
+  }
+  return { cryptoTrading, skipKeys };
 }

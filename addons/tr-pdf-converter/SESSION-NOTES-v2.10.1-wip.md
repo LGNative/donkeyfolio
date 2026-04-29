@@ -4,6 +4,21 @@ Last session: 2026-04-29. **Not pushed, not released.** Resume from here.
 
 ## What landed in this WIP
 
+- **Crypto direct-buy resolver, both bugs fixed:**
+  - 3 wrong pseudo-ISINs corrected (real TR codes verified against user's DB):
+    SOL `XF000SOL0027` → `XF000SOL0012`, ADA `XF000ADA0021` → `XF000ADA0018`,
+    XRP `XF000XRP0028` → `XF000XRP0018`. Old codes kept as fallback in case
+    other TR users are on different formats.
+  - New `extractCryptoDirectBuysFromCash(cash)` in `tr-crypto-resolver.ts` —
+    scans `cash[]` for any `XF000*` pseudo-ISIN with cash outflow, builds
+    synthetic `TradingTransaction[]`, lets the existing Yahoo resolver fill in
+    qty. Synthetic trades concat'd into `state.trading` so
+    `buildTradingCashKeys()` automatically dedupes.
+  - **User's specific impact on re-import** (verified against existing DB): 24
+    BTC + 23 ETH + 18 SOL + 19 ADA + 14 XRP direct buys (€8,795 total) currently
+    sit as WITHDRAWAL activities — re-import after v2.10.1 will create proper
+    BUY activities and recover all crypto holdings.
+
 - **Luhn/ISIN-format validation** in `tr-isin-utils.ts` (new shared helper).
   - Replaces 2 sites of bare `/\b[A-Z]{2}[A-Z0-9]{10}\b/` regex
     (`tr-to-activities.ts`, `tr-parser.ts`).
