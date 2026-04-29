@@ -113,8 +113,24 @@ const ETFS: Record<string, TickerMapping> = {
     quoteCcy: "EUR",
     instrumentType: "EQUITY",
   },
-  // Fidelity US Quality Income UCITS ETF (USD) — Xetra EUR
+  // Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Acc — Xetra EUR
+  // (Corrected from a previous mis-mapping that pointed this ISIN at Fidelity
+  //  US Quality Income — verified against TR statement description.)
   IE00BK5BR626: {
+    symbol: "VGWE.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Fidelity US Quality Income UCITS ETF (Distributing) — Xetra EUR
+  IE00BYXVGZ48: {
+    symbol: "FUSD.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Fidelity US Quality Income UCITS ETF EUR Hedged Acc — Xetra EUR
+  IE00BD52YH13: {
     symbol: "FUSU.DE",
     exchangeMic: "XETR",
     quoteCcy: "EUR",
