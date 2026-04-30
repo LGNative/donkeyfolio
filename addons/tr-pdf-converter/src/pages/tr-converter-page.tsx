@@ -69,6 +69,7 @@ import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 import { resolveFxRates, lookupFxRate } from "../lib/tr-fx-rates";
 import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../lib/tr-eur-holdings";
 import { mergeParsedPdfs, type ParsedPdf } from "../lib/tr-multi-pdf";
+import AiWizardPanel from "../components/ai-wizard-panel";
 import {
   parseTaxReport,
   stakingRewardsToActivities,
@@ -1878,6 +1879,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   )}
                 </CardContent>
               </Card>
+
+              {/* (v3.0.0) AI Validation Wizard — sits between import-success
+                  and the Holdings audit. After import, paste TR app data
+                  here, Claude diffs and proposes fixes you approve. */}
+              <AiWizardPanel
+                ctx={ctx}
+                accountId={selectedAccountId || null}
+                baseCurrency={accounts.find((a) => a.id === selectedAccountId)?.currency ?? "EUR"}
+                trades={state.trading}
+              />
 
               {/* Holdings audit / manual reconciliation */}
               <Card>

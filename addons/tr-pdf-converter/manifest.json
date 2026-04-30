@@ -1,7 +1,7 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "2.20.3",
+  "version": "3.0.0",
   "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Direct import to Donkeyfolio activities with quantity + unit price. Includes Holdings Diagnostics panel and self-healing portfolio watcher: auto-detects new stock splits, ticker migrations, and DRIP gaps that happen AFTER your last PDF import. Ported from @jcmpagel's open-source converter.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
@@ -47,6 +47,11 @@
       "category": "files",
       "functions": ["openSaveDialog"],
       "purpose": "Save the generated CSV / JSON exports to disk via the system save dialog (Tauri webview blocks the standard <a download> trick)"
+    },
+    {
+      "category": "secrets",
+      "functions": ["set", "get", "delete"],
+      "purpose": "(v3.0.0) Store the user's Anthropic API key encrypted at rest. Used by the AI Validation Wizard to send aggregated holdings to Claude for drift detection (~€0.08 per call). The key never leaves the user's machine except for the actual call to api.anthropic.com — bring-your-own-key model, no shared backend."
     }
   ],
   "keywords": ["donkeyfolio", "addon", "trade-republic", "pdf", "csv"],
