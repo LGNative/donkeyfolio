@@ -687,19 +687,24 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           const sym = a.symbol || "";
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let symbolPayload: any;
-          // (v2.19.5) Aligned with the Rust source-of-truth NewActivity
-          // struct (crates/core/src/activities/activities_model.rs:241).
-          // SDK's ActivityCreate TS interface is INCOMPLETE — Rust accepts
-          // more fields at top level (idempotencyKey, sourceSystem,
-          // sourceRecordId, sourceGroupId, status, needsReview).
+          // (v2.19.6) Aligned with Rust source-of-truth structs:
+          //   - NewActivity   (crates/core/src/activities/activities_model.rs:241)
+          //   - SymbolInput   (crates/core/src/activities/activities_model.rs:219)
           //
-          // Mapping fixes vs prior versions:
-          //   - SymbolInput.instrumentType → SymbolInput.kind  (rename)
-          //   - top-level assetName        → SymbolInput.name  (move)
-          //   - top-level instrumentType   → SymbolInput.kind  (move)
-          //   - top-level quoteCcy         → metadata JSON     (no other home)
-          //   - top-level idempotencyKey/sourceSystem/sourceRecordId  KEPT
-          //     at top level (valid per Rust struct).
+          // SDK's TS types are INCOMPLETE. Rust accepts at top level:
+          //   idempotencyKey, sourceSystem, sourceRecordId, sourceGroupId,
+          //   status, needsReview (kept at top — valid).
+          // Rust SymbolInput accepts INSIDE symbol:
+          //   id, symbol, exchangeMic, kind, name, quoteMode,
+          //   quoteCcy ✅, instrumentType ✅ (both DO exist in Rust, just
+          //   not in the TS type).
+          //
+          // Net: every meaningful TR hint has a proper home — nothing
+          // hidden in `metadata` anymore. Specifically:
+          //   - quoteCcy        → symbol.quoteCcy (was: metadata blob)
+          //   - instrumentType  → symbol.instrumentType (was: dropped)
+          //   - kind            → symbol.kind (preserved)
+          //   - name            → symbol.name (preserved)
           const mapped = sym ? lookupTicker(sym) || discoveryMap.get(sym) || null : null;
           if (mapped) {
             symbolPayload = {
@@ -707,13 +712,17 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               exchangeMic: mapped.exchangeMic,
               name: mapped.displayName || a.symbolName,
               kind: mapped.instrumentType,
+              instrumentType: mapped.instrumentType,
+              quoteCcy: mapped.quoteCcy ?? acct.currency,
             };
           } else if (sym && isISIN(sym) && isCryptoPseudo(sym)) {
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
               kind: "CRYPTO",
+              instrumentType: "CRYPTO",
               quoteMode: "MANUAL",
+              quoteCcy: acct.currency,
             };
           } else if (sym && isISIN(sym)) {
             symbolPayload = {
@@ -721,12 +730,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               exchangeMic: sym.startsWith("IE") ? TR_EQUITY_EU_EXCHANGE : undefined,
               name: a.symbolName,
               kind: "EQUITY",
+              instrumentType: "EQUITY",
+              quoteCcy: acct.currency,
             };
           } else if (sym && !isCashOnlySymbol(sym)) {
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
               kind: "EQUITY",
+              instrumentType: "EQUITY",
+              quoteCcy: acct.currency,
             };
           } else {
             symbolPayload = undefined;
@@ -744,13 +757,18 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 ? rawDate.toISOString().slice(0, 10)
                 : new Date().toISOString().slice(0, 10);
 
-          const idemKey = `tr-pdf-v2.19.5:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
+          const idemKey = `tr-pdf-v2.19.6:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
             a.symbol || "cash"
           }:${activityDate}`;
 
-          // The SDK TS type doesn't enumerate idempotencyKey/sourceSystem/
-          // etc. but the Rust deserializer accepts them. We use `as any` on
-          // the cast so TS doesn't complain — runtime contract is what counts.
+          // Every meaningful field now has its proper Rust home:
+          //   - asset hints (name, kind, instrumentType, quoteCcy) → symbol
+          //   - dedupe & audit (idem/source*) → top-level
+          //   - free-form audit trail (PDF filename, parsed line) → metadata
+          //
+          // The SDK TS type doesn't enumerate idempotencyKey/sourceSystem
+          // but the Rust deserializer accepts them — `as ActivityCreate`
+          // satisfies TS, runtime contract is what counts.
           const createPayload = {
             accountId: acct.id,
             activityType: a.activityType,
@@ -766,12 +784,15 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             fxRate: 1,
             fee: a.fee ?? 0,
             comment: a.comment ?? null,
-            // metadata is a JSON blob (Rust: Option<String>). Stringify it.
+            // metadata is a JSON blob (Rust: Option<String>). Audit trail
+            // only — the structured asset hints already travel via `symbol`.
             metadata: JSON.stringify({
-              quoteCcy: a.quoteCcy ?? acct.currency,
-              assetName: a.symbolName ?? symbolPayload?.name ?? null,
+              source: "TR_PDF",
+              file: state.fileName ?? null,
+              line: a.lineNumber ?? null,
+              isin: a.symbol ?? null,
             }),
-            // These ARE valid top-level fields per Rust NewActivity.
+            // Valid top-level per Rust NewActivity (TS SDK type is incomplete).
             idempotencyKey: idemKey,
             sourceSystem: "TR_PDF",
             sourceRecordId: idemKey,
