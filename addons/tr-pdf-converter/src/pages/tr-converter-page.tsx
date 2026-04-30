@@ -68,6 +68,13 @@ import {
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 import { resolveFxRates, lookupFxRate } from "../lib/tr-fx-rates";
 import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../lib/tr-eur-holdings";
+import { mergeParsedPdfs, type ParsedPdf } from "../lib/tr-multi-pdf";
+import {
+  parseTaxReport,
+  stakingRewardsToActivities,
+  type StakingRewardEntry,
+  type TaxReportData,
+} from "../lib/tr-tax-report";
 import {
   countPending,
   loadLastFullScan,
@@ -109,6 +116,12 @@ interface ParseState {
   cryptoResolved: number;
   /** (v2.17.0) per-crypto holdings to reconcile against TR app values. */
   cryptoReconcile: CryptoReconcileEntry[];
+  /** (v2.20.2) Staking reward rows extracted from a TR Tax Report PDF
+   *  (separate file from the account statement). When present, these are
+   *  emitted as INTEREST/STAKING_REWARD activities at import time. */
+  stakingRewards: StakingRewardEntry[];
+  /** (v2.20.2) Tax Report files seen during this parse (informational). */
+  taxReports: TaxReportData[];
 }
 
 type ImportState =
@@ -136,6 +149,8 @@ const initialState: ParseState = {
   autoSplits: [],
   cryptoResolved: 0,
   cryptoReconcile: [],
+  stakingRewards: [],
+  taxReports: [],
 };
 
 // Format-aware EUR string parser (mirrors the one in tr-parser/tr-to-activities).
@@ -281,6 +296,126 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
 
   // ─── PDF parsing ──────────────────────────────────────────────────────
+  /**
+   * Core parse for a single PDF. Used by both handleFile (backwards-compat
+   * single-file flow) and handleFiles (v2.20.2 multi-PDF). Returns a
+   * fully-resolved ParsedPdf that the merger can consume — no React state
+   * is touched here, only progress callbacks fire.
+   */
+  const parseOnePdf = React.useCallback(
+    async (
+      file: File,
+      onProgress?: (phase: string, message: string, page?: number, total?: number) => void,
+    ): Promise<ParsedPdf> => {
+      const buffer = await file.arrayBuffer();
+      const result = await parsePDF(buffer, (page, total) => {
+        onProgress?.("parsing", `Parsing ${file.name} page ${page} of ${total}…`, page, total);
+      });
+      const { cash: mergedCash, merged: mergedRows } = mergeContinuationRows(result.cash);
+      const { cash: recoveredCash, recovered: recoveredRows } = recoverCashAmounts(mergedCash);
+      const summaryOpening = result.summary
+        ? parseEurDisplay(result.summary.openingBalance)
+        : undefined;
+      const { cash: chainConsistentCash, corrected: chainCorrected } = enforceChainConsistency(
+        recoveredCash,
+        summaryOpening,
+      );
+      const { transactions: cashWithChainSanity } = computeCashSanityChecks(chainConsistentCash);
+      const cashWithSanity = cashWithChainSanity.map((r) => {
+        if (r._sanityCheckOk !== false) return r;
+        const desc = r.beschreibung || "";
+        const isBuyTrade =
+          /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) &&
+          /\btrade\b|\bHandel\b|\bSavings plan\b/i.test(desc);
+        const isSellTrade =
+          /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+        const num = (s: string) => {
+          const m = String(s || "")
+            .replace(/[€\s]/g, "")
+            .match(/-?\d+(?:[.,]\d+)?/);
+          if (!m) return 0;
+          const n = parseFloat(m[0].replace(",", "."));
+          return Number.isFinite(n) ? n : 0;
+        };
+        const inc = num(r.zahlungseingang);
+        const out = num(r.zahlungsausgang);
+        const onlyOut = inc < 0.01 && out > 0.01;
+        const onlyIn = inc > 0.01 && out < 0.01;
+        if ((isBuyTrade && onlyOut) || (isSellTrade && onlyIn)) {
+          return { ...r, _sanityCheckOk: true };
+        }
+        if (!isBuyTrade && !isSellTrade && (onlyOut || onlyIn)) {
+          return { ...r, _sanityCheckOk: true };
+        }
+        return r;
+      });
+      const failedChecks = cashWithSanity.filter((r) => r._sanityCheckOk === false).length;
+      const analyticsCash = cashWithSanity.map(toAnalyticsShape);
+      const analyticsCashForTrading = analyticsCash.map((c) => ({
+        ...c,
+        description: /^(\s*)Savings plan execution\b/i.test(c.description)
+          ? c.description.replace(/^(\s*)Savings plan execution\b/i, "$1Buy Savings plan execution")
+          : c.description,
+      }));
+      const rawTrading = analyticsCashForTrading.length
+        ? (parseTradingTransactions(analyticsCashForTrading) as TradingTransaction[])
+        : [];
+      const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
+      const cryptoTrading = trading;
+      const cryptoResolved = 0;
+
+      onProgress?.("discovering-tickers", `Discovering tickers for ${file.name}…`);
+      const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
+      const seenIsins = new Set<string>();
+      for (const t of cryptoTrading) {
+        if (!t.isin || seenIsins.has(t.isin)) continue;
+        seenIsins.add(t.isin);
+        if (lookupTicker(t.isin) || t.isin.startsWith("XF000")) continue;
+        unmappedRequests.push({
+          isin: t.isin,
+          name: t.cleanStockName || t.stockName,
+          wkn: t.wkn,
+        });
+      }
+      let discoveredTickers: DiscoveryResult[] = [];
+      if (unmappedRequests.length > 0) {
+        try {
+          discoveredTickers = await discoverTickers(unmappedRequests);
+        } catch (err) {
+          ctx.api.logger.warn(
+            `[TR PDF] ticker discovery failed (non-fatal): ${(err as Error).message}`,
+          );
+        }
+      }
+
+      onProgress?.("detecting-splits", `Detecting splits for ${file.name}…`);
+      let autoSplits: SplitEvent[] = [];
+      try {
+        const splitResult = await detectSplitsForPositions(cryptoTrading);
+        autoSplits = splitResult.splits;
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] split detector failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
+
+      return {
+        fileName: file.name,
+        cash: cashWithSanity,
+        interest: result.interest,
+        trading: cryptoTrading,
+        summary: result.summary ?? null,
+        discoveredTickers,
+        autoSplits,
+        failedChecks,
+        recoveredRows: recoveredRows + chainCorrected + mergedRows,
+        cryptoResolved,
+      };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const handleFile = React.useCallback(async (file: File) => {
     setImportState({ status: "idle" });
     setDbHoldings([]);
@@ -438,22 +573,148 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * (v2.20.2) Multi-PDF entry point. Parses each PDF in parallel (network
+   * I/O for ticker discovery dominates total time, and pdf.js can run
+   * page-extraction concurrently across PDFs without contention), then
+   * merges into one ParseState equivalent. Single-PDF flow falls through
+   * unchanged via `handleFile`.
+   */
+  const handleFiles = React.useCallback(
+    async (files: File[]) => {
+      const pdfs = files.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+      if (pdfs.length === 0) return;
+      setImportState({ status: "idle" });
+      setDbHoldings([]);
+      setTrQtyInputs({});
+      setReconcileMessages({});
+      setState({
+        ...initialState,
+        status: "parsing",
+        phase: "reading",
+        message: pdfs.length > 1 ? `Reading ${pdfs.length} PDFs…` : "Reading PDF…",
+        fileName: pdfs.map((p) => p.name).join(" + "),
+      });
+      try {
+        // (v2.20.2) Two-pass: first detect Tax Report PDFs (separate format
+        // with staking + withholding data), then parse the remaining ones
+        // as Account Statements. Either flavor can be dropped alone or
+        // mixed — addon routes each to the appropriate parser.
+        const accountStatements: ParsedPdf[] = [];
+        const taxReports: TaxReportData[] = [];
+        const allStaking: StakingRewardEntry[] = [];
+
+        for (let i = 0; i < pdfs.length; i++) {
+          const file = pdfs[i];
+          const prefix = pdfs.length > 1 ? `PDF ${i + 1}/${pdfs.length}: ` : "";
+          setState((s) => ({
+            ...s,
+            phase: "parsing",
+            message: `${prefix}Detecting type of ${file.name}…`,
+          }));
+          // Try Tax Report first — cheap text scan over the same buffer.
+          const buffer = await file.arrayBuffer();
+          let detected: TaxReportData;
+          try {
+            detected = await parseTaxReport(buffer.slice(0), file.name, (page, total) => {
+              setState((s) => ({
+                ...s,
+                message: `${prefix}Scanning ${file.name} page ${page}/${total} for Tax Report…`,
+                progress: { page, total },
+              }));
+            });
+          } catch (err) {
+            ctx.api.logger.warn(
+              `[TR PDF] tax-report sniff failed for ${file.name} (non-fatal): ${(err as Error).message}`,
+            );
+            detected = {
+              year: null,
+              fileName: file.name,
+              staking: [],
+              withholding: [],
+              isTaxReport: false,
+            };
+          }
+
+          if (detected.isTaxReport) {
+            taxReports.push(detected);
+            allStaking.push(...detected.staking);
+            ctx.api.logger.info(
+              `[TR PDF] Tax Report ${file.name}: ${detected.staking.length} staking rewards, ${detected.withholding.length} withholding entries`,
+            );
+            continue;
+          }
+
+          // Not a Tax Report → parse as Account Statement.
+          const parsed = await parseOnePdf(file, (_phase, msg, page, total) => {
+            setState((s) => ({
+              ...s,
+              message: `${prefix}${msg}`,
+              progress: page && total ? { page, total } : undefined,
+            }));
+          });
+          accountStatements.push(parsed);
+        }
+
+        setState((s) => ({ ...s, phase: "building", message: "Merging…" }));
+        const merged =
+          accountStatements.length > 0 ? mergeParsedPdfs(accountStatements) : mergeParsedPdfs([]);
+
+        ctx.api.logger.info(
+          `[TR PDF] processed ${pdfs.length} PDFs: ${accountStatements.length} statements + ${taxReports.length} tax reports. Cash=${merged.cash.length}, trades=${merged.trading.length}, MMF=${merged.interest.length}, staking=${allStaking.length}.`,
+        );
+
+        const pnl = merged.trading.length ? computeEnhancedPnL(merged.trading) : null;
+        setState({
+          status: "done",
+          phase: "done",
+          message: undefined,
+          progress: undefined,
+          cash: merged.cash,
+          interest: merged.interest,
+          trading: merged.trading,
+          pnl,
+          failedChecks: merged.failedChecks,
+          recoveredRows: merged.recoveredRows,
+          fileName: merged.fileName || taxReports.map((t) => t.fileName).join(" + "),
+          summary: merged.summary,
+          discoveredTickers: merged.discoveredTickers,
+          autoSplits: merged.autoSplits,
+          cryptoResolved: merged.cryptoResolved,
+          cryptoReconcile: buildCryptoReconcileEntries(merged.trading),
+          stakingRewards: allStaking,
+          taxReports,
+        });
+      } catch (err) {
+        setState({
+          ...initialState,
+          status: "error",
+          phase: "error",
+          message: err instanceof Error ? err.message : String(err),
+          fileName: pdfs.map((p) => p.name).join(" + "),
+        });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [parseOnePdf],
+  );
+
   const onDrop = React.useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file && file.type === "application/pdf") void handleFile(file);
+      const files = Array.from(e.dataTransfer.files ?? []);
+      if (files.length > 0) void handleFiles(files);
     },
-    [handleFile],
+    [handleFiles],
   );
   const onFileInput = React.useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) void handleFile(file);
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) void handleFiles(files);
       e.target.value = "";
     },
-    [handleFile],
+    [handleFiles],
   );
 
   // ─── Reconciliation pre-import ────────────────────────────────────────
@@ -590,6 +851,40 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // adds staking and spin-off rows by hand directly in Donkeyfolio
       // after the PDF import. The addon now focuses on what the PDF
       // actually contains.
+
+      // (v2.20.2) Append staking rewards extracted from a TR Tax Report
+      // PDF (when one was dropped together with the account statement).
+      // Each reward becomes an INTEREST activity with subtype STAKING_REWARD,
+      // routed to the crypto pseudo-ISIN so it lands on the correct asset.
+      if (state.stakingRewards.length > 0) {
+        const stakingActs = stakingRewardsToActivities(state.stakingRewards);
+        const startLine = activities.reduce((max, a) => Math.max(max, a.lineNumber ?? 0), 0) + 1;
+        for (let i = 0; i < stakingActs.length; i++) {
+          const s = stakingActs[i];
+          activities.push({
+            accountId: acct.id,
+            currency: acct.currency,
+            activityType: "INTEREST",
+            subtype: "STAKING_REWARD",
+            date: s.date,
+            symbol: s.symbol,
+            symbolName: s.symbolName,
+            quantity: s.quantity,
+            unitPrice: s.unitPrice,
+            amount: s.amount,
+            fee: 0,
+            quoteCcy: acct.currency,
+            instrumentType: "Crypto",
+            comment: s.comment,
+            lineNumber: startLine + i,
+            isValid: true,
+            isDraft: false,
+          });
+        }
+        ctx.api.logger.info(
+          `[TR PDF] appended ${stakingActs.length} staking-reward activities from Tax Report.`,
+        );
+      }
 
       if (activities.length === 0) {
         setImportState({ status: "error", message: "No importable activities found in this PDF." });
@@ -1184,6 +1479,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   ref={fileInputRef}
                   type="file"
                   accept="application/pdf"
+                  multiple
                   className="hidden"
                   onChange={onFileInput}
                 />

@@ -347,45 +347,102 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     dedupedTrading.push(tx);
   }
 
-  // (v2.19.11) Aggregate partial fills of the same logical TR order.
+  // (v2.19.11 / v2.20.2) Aggregate partial fills of the same logical TR order.
   // TR sometimes splits a single order into multiple PDF cash rows when
   // it executes the order in batches (e.g. user submits ONE buy of 2.036383
-  // ServiceNow shares, TR fills it as 2 + 0.036383 in two batches → two
-  // PDF rows with the SAME tradeId). The TR app aggregates these for
-  // display and only charges €1 fee on the order total — but our previous
-  // code created one BUY per fill and applied €1 to EACH, doubling the fee
-  // and producing wrong unitPrices.
+  // ServiceNow shares, TR fills it as 2 + 0.036383 in two rows). The TR
+  // app aggregates these for display and only charges €1 fee on the order
+  // total — but our previous code created one BUY per fill and applied €1
+  // to EACH, doubling the fee and producing wrong unitPrices.
   //
-  // Aggregation rule: same date + ISIN + isBuy + isSavingsPlan + non-empty
-  // tradeId → merge into one trade with summed qty + amount.
-  // Different tradeIds (or empty tradeId) → keep separate (legitimate
-  // distinct trades on the same day). Empty tradeId is a safety fallback —
-  // we don't aggregate it because we can't prove it's the same order.
+  // Aggregation strategy (v2.20.2 rewrite for robustness):
+  //   PRIMARY: same date + ISIN + isBuy + isSavingsPlan + tradeId
+  //            (when tradeId present, this is unambiguous)
+  //   FALLBACK: same date + ISIN + isBuy + isSavingsPlan + similar unit
+  //            price (≤2% drift). Catches partial fills where TR's PDF
+  //            description doesn't include the order ID — verified
+  //            against ServiceNow Apr 24 case (qty 2 @ €73.66 + qty
+  //            0.036383 @ implied €73.66, matching TR app's single
+  //            2.036383 × €73.66 + €1 fee transaction).
+  //
+  // Why limited to ≤2% unit-price drift: protects against accidentally
+  // collapsing a manual BUY at €73.66 with a separate savings-plan BUY at
+  // €73.71 on the same day (different orders, different fees). Real
+  // partial fills always execute at the same price (TR settles them at
+  // the order's average fill price by design).
   const aggregated: TradingTransaction[] = [];
   const aggIndex = new Map<string, number>();
   for (const tx of dedupedTrading) {
-    if (!tx.tradeId) {
+    const baseKey = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
+      tx.isSavingsPlan ? "SP" : "M"
+    }`;
+    const txQty = tx.quantity ?? 0;
+    const txAmount = Math.abs(tx.amount);
+    const txUnit = txQty > 0 ? txAmount / txQty : 0;
+
+    // Try tradeId-keyed match first.
+    if (tx.tradeId) {
+      const tradeKey = `${baseKey}|tid:${tx.tradeId}`;
+      const idx = aggIndex.get(tradeKey);
+      if (idx !== undefined) {
+        mergeInto(aggregated, idx, tx);
+        continue;
+      }
+      aggIndex.set(tradeKey, aggregated.length);
       aggregated.push(tx);
       continue;
     }
-    const key = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
-      tx.isSavingsPlan ? "SP" : "M"
-    }|${tx.tradeId}`;
-    const existingIdx = aggIndex.get(key);
-    if (existingIdx !== undefined) {
-      const existing = aggregated[existingIdx];
-      const sumQty = (existing.quantity ?? 0) + (tx.quantity ?? 0);
-      const sumAmount = Math.abs(existing.amount) + Math.abs(tx.amount);
-      aggregated[existingIdx] = {
-        ...existing,
-        quantity: sumQty > 0 ? sumQty : existing.quantity,
-        amount: tx.isBuy ? sumAmount : -sumAmount,
-        unitPrice: sumQty > 0 ? sumAmount / sumQty : existing.unitPrice,
-      };
-    } else {
-      aggIndex.set(key, aggregated.length);
-      aggregated.push(tx);
+
+    // Fallback: scan existing aggregated entries with the same base key
+    // and similar unit price. Same-day same-asset same-direction without
+    // tradeId is rare (manual: 1 trade/day typical; savings: 1/asset/day),
+    // so this loop almost always finds 0 or 1 match.
+    let matchedIdx = -1;
+    for (let i = aggregated.length - 1; i >= 0; i--) {
+      const existing = aggregated[i];
+      const existingKey = `${existing.date}|${existing.isin}|${
+        existing.isBuy ? "B" : "S"
+      }|${existing.isSavingsPlan ? "SP" : "M"}`;
+      if (existingKey !== baseKey) continue;
+      // Unit-price proximity check (skip when one side has no qty).
+      const existingQty = existing.quantity ?? 0;
+      const existingAmount = Math.abs(existing.amount);
+      const existingUnit = existingQty > 0 ? existingAmount / existingQty : 0;
+      if (existingUnit > 0 && txUnit > 0) {
+        const drift = Math.abs(existingUnit - txUnit) / existingUnit;
+        if (drift <= 0.02) {
+          matchedIdx = i;
+          break;
+        }
+      } else {
+        // One side has no qty (rare). Merge anyway since we have nothing
+        // better to discriminate by — same date+ISIN+direction is strong.
+        matchedIdx = i;
+        break;
+      }
     }
+    if (matchedIdx >= 0) {
+      mergeInto(aggregated, matchedIdx, tx);
+      continue;
+    }
+    aggregated.push(tx);
+  }
+
+  function mergeInto(arr: TradingTransaction[], idx: number, incoming: TradingTransaction) {
+    const existing = arr[idx];
+    const sumQty = (existing.quantity ?? 0) + (incoming.quantity ?? 0);
+    const sumAmount = Math.abs(existing.amount) + Math.abs(incoming.amount);
+    arr[idx] = {
+      ...existing,
+      quantity: sumQty > 0 ? sumQty : existing.quantity,
+      amount: existing.isBuy ? sumAmount : -sumAmount,
+      unitPrice: sumQty > 0 ? sumAmount / sumQty : existing.unitPrice,
+      // Preserve the first non-empty PDF fee found across the merged rows
+      // — TR usually prints Fremdkostenzuschlag once per ORDER, not per
+      // fill, so whichever fragment has it carries the canonical value.
+      pdfFee: existing.pdfFee ?? incoming.pdfFee,
+      pdfFeeCurrency: existing.pdfFeeCurrency ?? incoming.pdfFeeCurrency,
+    };
   }
 
   // 1) Trading → BUY / SELL
