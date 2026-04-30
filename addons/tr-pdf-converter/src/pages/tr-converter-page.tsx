@@ -51,10 +51,9 @@ import {
   type QtyAdjustmentEntry,
   type StakingReconcileEntry,
 } from "../lib/tr-to-activities";
-import CryptoReconcilePanel, {
+import {
   buildCryptoReconcileEntries,
   type CryptoReconcileEntry,
-  type ManualHoldingDraft,
 } from "../components/crypto-reconcile-panel";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
 import {
@@ -202,19 +201,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const [importState, setImportState] = React.useState<ImportState>({ status: "idle" });
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = React.useState(false);
-  // (v2.17.0) Crypto reconciliation: user-edited entries + applied flag.
-  // `reconcileEntries` mirrors `state.cryptoReconcile` but with the user's
-  // TR-app inputs filled in. `reconcileApplied` flips to true on Apply so
-  // the import button knows to inject staking + qty-adjustment activities.
-  const [reconcileEntries, setReconcileEntries] = React.useState<CryptoReconcileEntry[]>([]);
-  const [reconcileApplied, setReconcileApplied] = React.useState(false);
-  // (v2.19.0) Manual holdings the user adds via the panel (spin-offs, gifts).
-  const [manualHoldings, setManualHoldings] = React.useState<ManualHoldingDraft[]>([]);
-  React.useEffect(() => {
-    setReconcileEntries(state.cryptoReconcile);
-    setReconcileApplied(false);
-    setManualHoldings([]);
-  }, [state.cryptoReconcile]);
+  // (v2.19.7) Removed crypto-reconcile + manual-holdings state — those
+  // panels were retired. Staking and spin-offs are now added by hand
+  // directly in Donkeyfolio after import.
 
   // Account selection — load on mount, prefer existing TR account.
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -563,96 +552,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         autoSplits: state.autoSplits,
       });
 
-      // (v2.19.1) Crypto reconciliation: scale crypto BUYs to match TR
-      // target then emit staking entries. This replaces v2.17/v2.19.0's
-      // residual-qty approach which was unreliable for "Compra direta"
-      // rows whose qty came from imprecise Yahoo daily closes.
-      //
-      // Algorithm per crypto:
-      //   target_cash_qty = trQty − stakingQty (user-supplied)
-      //   scale all BUY/SELL rows for this crypto so total = target_cash_qty
-      //   emit INTEREST/Staking Reward with stakingQty + stakingValueEur
-      //
-      // After this, sum(BUY) − sum(SELL) + staking_qty = trQty exactly.
-      if (reconcileApplied && reconcileEntries.length > 0) {
-        const reconcileDate = lastActivityDate
-          ? toIsoDate(lastActivityDate).slice(0, 10)
-          : new Date().toISOString().slice(0, 10);
-        const stakingEntries: StakingReconcileEntry[] = [];
-        const isinTargets = new Map<string, number>();
-        for (const e of reconcileEntries) {
-          if (e.trQty === undefined) continue;
-          const stakingQty = e.hasStaking && e.stakingQty ? e.stakingQty : 0;
-          const stakingValueEur = e.hasStaking && e.stakingValueEur ? e.stakingValueEur : 0;
-          // Cash target = TR holding minus staking-acquired qty
-          const targetCash = Math.max(0, e.trQty - stakingQty);
-          isinTargets.set(e.isin, targetCash);
-          if (stakingQty > 0 && stakingValueEur > 0) {
-            stakingEntries.push({
-              isin: e.isin,
-              symbol: e.symbol,
-              symbolName: e.symbolName,
-              stakingQty,
-              stakingValueEur,
-              date: reconcileDate,
-            });
-          }
-        }
-        // Scale every BUY/SELL row for these cryptos in the activities array.
-        const scaleLog = scaleCryptoBuysToTarget(activities, isinTargets);
-        for (const l of scaleLog) {
-          ctx.api.logger.info(
-            `[TR PDF] crypto scale: ${l.isin} ${l.oldTotal.toFixed(6)} → ${l.newTotal.toFixed(6)} (×${l.scale.toFixed(4)})`,
-          );
-        }
-        const startLine = activities.reduce((max, a) => Math.max(max, a.lineNumber ?? 0), 0) + 1;
-        const stakingActs = buildStakingActivities(
-          stakingEntries,
-          acct.id,
-          acct.currency,
-          startLine,
-        );
-        activities.push(...stakingActs);
-        ctx.api.logger.info(
-          `[TR PDF] crypto reconcile: scaled ${scaleLog.length} cryptos, +${stakingActs.length} staking`,
-        );
-      }
-
-      // (v2.19.0) Manual holdings (spin-offs, gifts, etc.) → TRANSFER_IN
-      if (manualHoldings.length > 0) {
-        const manualEntries: ManualHoldingEntry[] = [];
-        for (const d of manualHoldings) {
-          const qty = parseFloat(d.quantity.replace(",", "."));
-          const cost = parseFloat(d.costBasisEur.replace(",", "."));
-          if (!Number.isFinite(qty) || qty <= 0) continue;
-          if (!Number.isFinite(cost) || cost < 0) continue;
-          manualEntries.push({
-            symbol: d.symbol,
-            isin: d.isin || undefined,
-            name: d.name || undefined,
-            quantity: qty,
-            costBasisEur: cost,
-            date:
-              d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)
-                ? d.date
-                : lastActivityDate
-                  ? toIsoDate(lastActivityDate).slice(0, 10)
-                  : new Date().toISOString().slice(0, 10),
-            source: d.source || undefined,
-          });
-        }
-        const startLine = activities.reduce((max, a) => Math.max(max, a.lineNumber ?? 0), 0) + 1;
-        const manualActs = buildManualHoldingActivities(
-          manualEntries,
-          acct.id,
-          acct.currency,
-          startLine,
-        );
-        activities.push(...manualActs);
-        ctx.api.logger.info(
-          `[TR PDF] manual holdings: +${manualActs.length} TRANSFER_IN activities`,
-        );
-      }
+      // (v2.19.7) Removed crypto reconciliation + manual holdings — user
+      // adds staking and spin-off rows by hand directly in Donkeyfolio
+      // after the PDF import. The addon now focuses on what the PDF
+      // actually contains.
 
       if (activities.length === 0) {
         setImportState({ status: "error", message: "No importable activities found in this PDF." });
@@ -1565,29 +1468,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   </p>
                 )}
 
-                {/* (v2.17–v2.19) Crypto Reconciliation + Manual Holdings panel.
-                    Always shown when parsing is done so the user can add
-                    spin-off / gift holdings even when no crypto is in the PDF. */}
-                {state.status === "done" && (
-                  <CryptoReconcilePanel
-                    entries={reconcileEntries}
-                    manualHoldings={manualHoldings}
-                    applied={reconcileApplied}
-                    defaultDate={
-                      state.cash.length > 0
-                        ? toIsoDate(state.cash[state.cash.length - 1].datum).slice(0, 10)
-                        : new Date().toISOString().slice(0, 10)
-                    }
-                    onApply={(updated, drafts) => {
-                      setReconcileEntries(updated);
-                      setManualHoldings(drafts);
-                      setReconcileApplied(true);
-                    }}
-                    onSkip={() => {
-                      setReconcileApplied(false);
-                    }}
-                  />
-                )}
+                {/* (v2.19.7) Removed Crypto Reconciliation + Manual Holdings
+                    panel — user reported the staking/spin-off rows are easier
+                    to add by hand directly in Donkeyfolio after import. The
+                    addon now goes straight from "ready" to "import". */}
 
                 {/* Big import button */}
                 <div className="pt-2">
