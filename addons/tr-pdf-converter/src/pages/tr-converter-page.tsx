@@ -690,11 +690,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               line: a.lineNumber ?? null,
               isin: a.symbol ?? null,
             }),
-            // Valid top-level per Rust NewActivity (TS SDK type is incomplete).
+            // SDK 3.1.0+ types these properly — no cast needed.
             idempotencyKey: idemKey,
             sourceSystem: "TR_PDF",
             sourceRecordId: idemKey,
-          } as ActivityCreate;
+          } satisfies ActivityCreate;
           await ctx.api.activities.create(createPayload);
           imported += 1;
         } catch (err) {

@@ -280,6 +280,10 @@ export interface SymbolInput {
   kind?: string;
   name?: string;
   quoteMode?: QuoteMode;
+  /** Quote currency from symbol search/provider (e.g., "USD", "GBp"). */
+  quoteCcy?: string;
+  /** Instrument type from symbol search/provider (e.g., "EQUITY", "CRYPTO"). */
+  instrumentType?: string;
 }
 
 export interface ActivityCreate {
@@ -295,9 +299,20 @@ export interface ActivityCreate {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  /** Free-text note. Backend deserializer also accepts `notes` as alias. */
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>;
+  /** Activity status (e.g., PENDING, EXECUTED). */
+  status?: string | null;
+  /** Flag activities that need user review post-import. */
+  needsReview?: boolean | null;
+  /** Provider system tag (e.g., "TR_PDF", "SNAPTRADE"). */
+  sourceSystem?: string | null;
+  /** Provider's record ID for traceability. */
+  sourceRecordId?: string | null;
+  /** Stable hash for de-duplication on re-import. */
+  idempotencyKey?: string | null;
 }
 
 export interface ActivityUpdate {
@@ -316,6 +331,11 @@ export interface ActivityUpdate {
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>;
+  status?: string | null;
+  needsReview?: boolean | null;
+  sourceSystem?: string | null;
+  sourceRecordId?: string | null;
+  idempotencyKey?: string | null;
 }
 
 export interface ActivityBulkMutationRequest {
