@@ -64,7 +64,7 @@ function parseAmount(s: string | undefined): number {
  *  pseudo-ISINs in v2.9 were INCORRECT — TR uses the codes below.
  *  Wrong codes meant 18 SOL + 19 ADA + 14 XRP direct buys (~€4,469)
  *  silently flowed through as WITHDRAWAL instead of BUY. */
-const CRYPTO_PSEUDO_TO_YAHOO: Record<string, string> = {
+export const CRYPTO_PSEUDO_TO_YAHOO: Record<string, string> = {
   XF000BTC0017: "BTC-EUR",
   XF000ETH0019: "ETH-EUR",
   XF000SOL0012: "SOL-EUR", // was 0027 in v2.9 (wrong)
@@ -388,20 +388,28 @@ export async function resolveCryptoDirectBuys(
 }
 
 /**
- * (v2.10.1) Scan cash[] for crypto direct-buy rows that were never picked
- * up by the trading-section parser. Build synthetic TradingTransactions so
- * the standard resolver can fill in qty + the activity-builder can emit
- * BUYs (instead of leaving them as WITHDRAWAL cash legs).
+ * (v2.10.1) Scan cash[] for crypto direct-trade rows (buys AND sells) that
+ * were never picked up by the trading-section parser. Build synthetic
+ * TradingTransactions so the standard resolver can fill in qty + the
+ * activity-builder can emit BUYs/SELLs (instead of leaving them as
+ * WITHDRAWAL/DEPOSIT cash legs).
  *
  * Detection rule: row description contains an XF000* pseudo-ISIN AND has
- * a non-zero `zahlungsausgang` (cash out). We DON'T require "Compra
- * direta" / "direct buy" / etc. text because TR localises differently per
- * user — the pseudo-ISIN + outflow is sufficient signal.
+ * either a non-zero `zahlungsausgang` (cash out → BUY) or `zahlungseingang`
+ * (cash in → SELL). We DON'T require "Compra direta" / "Venda direta" /
+ * "direct buy" text — TR localises differently per user, so the
+ * pseudo-ISIN + cash flow direction is sufficient signal.
+ *
+ * (v2.16.2) Added SELL handling. Previously only BUYs were extracted, so
+ * a "Execução Venda direta XF000XRP0018" row with €115 cash IN was lost:
+ * trading.js's regex didn't match "Venda" (only "Venta" Spanish), so the
+ * row fell through to cash classification → DEPOSIT. The cash leg appeared
+ * but the corresponding holdings reduction never happened.
  *
  * Returned `skipKeys` are the same `${date}|${isin}` keys that
  * tr-to-activities.ts already uses to skip cash legs of trades. Adding
  * these to the upstream skipCashKeys set prevents the cash-side
- * WITHDRAWAL from being created in parallel with the new BUY.
+ * WITHDRAWAL/DEPOSIT from being created in parallel with the new BUY/SELL.
  */
 export function extractCryptoDirectBuysFromCash(cash: CashTransaction[]): {
   cryptoTrading: TradingTransaction[];
@@ -416,21 +424,33 @@ export function extractCryptoDirectBuysFromCash(cash: CashTransaction[]): {
     const isin = m[1];
     if (!CRYPTO_PSEUDO_TO_YAHOO[isin]) continue;
     const out = parseAmount(c.zahlungsausgang);
-    if (out <= 0) continue;
+    const inc = parseAmount(c.zahlungseingang);
+    // Direction: cash out → BUY, cash in → SELL. Never both on the same row.
+    let isBuy: boolean;
+    let amount: number;
+    if (out > 0) {
+      isBuy = true;
+      amount = out;
+    } else if (inc > 0) {
+      isBuy = false;
+      amount = inc;
+    } else {
+      continue;
+    }
     const tradeIdMatch = c.beschreibung.match(/\b(C\d{8,})\b/);
     cryptoTrading.push({
       date: c.datum,
       isin,
       stockName: c.beschreibung.slice(0, 200),
-      action: "Buy",
-      isBuy: true,
-      amount: out,
+      action: isBuy ? "Buy" : "Sell",
+      isBuy,
+      amount,
       tradeId: tradeIdMatch ? tradeIdMatch[1] : "",
       balance: c.saldo || "",
       // qty undefined → resolver will fill via Yahoo price.
       cleanStockName: c.beschreibung
-        .replace(/Execução\s+Compra\s+direta\s+/i, "")
-        .replace(/Direct\s+buy\s+/i, "")
+        .replace(/Execução\s+(?:Compra|Venda)\s+direta\s+/i, "")
+        .replace(/Direct\s+(?:buy|sell)\s+/i, "")
         .replace(/\bC\d{8,}\b/, "")
         .replace(/\b(XF000[A-Z0-9]{6,7})\b/, "")
         .replace(/\s+/g, " ")

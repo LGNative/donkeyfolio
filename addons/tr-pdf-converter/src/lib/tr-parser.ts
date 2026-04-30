@@ -904,7 +904,7 @@ export function recoverCashAmounts(cash: CashTransaction[]): {
     const isSavingsPlan = /\bSavings plan execution\b/i.test(desc);
     const isBuy = isManualBuy || isSavingsPlan;
     const isSell =
-      /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
+      /\bSell\b|\bVerkauf\b|\bVenta\b|\bVenda\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
     if (!isBuy && !isSell) return row;
 
     const inc = parseEuroAmount(row.zahlungseingang);

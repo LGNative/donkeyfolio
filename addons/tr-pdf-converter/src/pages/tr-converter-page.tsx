@@ -39,7 +39,23 @@ import {
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
 import { analyzeSecurities, lookupTicker, type SecurityAnalysis } from "../lib/tr-isin-tickers";
-import { buildActivitiesFromParsed, buildTradingCashKeys } from "../lib/tr-to-activities";
+import {
+  buildActivitiesFromParsed,
+  buildManualHoldingActivities,
+  buildQtyAdjustments,
+  buildStakingActivities,
+  buildTradingCashKeys,
+  scaleCryptoBuysToTarget,
+  toIsoDate,
+  type ManualHoldingEntry,
+  type QtyAdjustmentEntry,
+  type StakingReconcileEntry,
+} from "../lib/tr-to-activities";
+import CryptoReconcilePanel, {
+  buildCryptoReconcileEntries,
+  type CryptoReconcileEntry,
+  type ManualHoldingDraft,
+} from "../components/crypto-reconcile-panel";
 import { detectSplitsForPositions, type SplitEvent } from "../lib/tr-splits";
 import {
   extractCryptoDirectBuysFromCash,
@@ -90,6 +106,8 @@ interface ParseState {
   discoveredTickers: DiscoveryResult[];
   autoSplits: SplitEvent[];
   cryptoResolved: number;
+  /** (v2.17.0) per-crypto holdings to reconcile against TR app values. */
+  cryptoReconcile: CryptoReconcileEntry[];
 }
 
 type ImportState =
@@ -116,6 +134,7 @@ const initialState: ParseState = {
   discoveredTickers: [],
   autoSplits: [],
   cryptoResolved: 0,
+  cryptoReconcile: [],
 };
 
 // Format-aware EUR string parser (mirrors the one in tr-parser/tr-to-activities).
@@ -183,6 +202,19 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
   const [importState, setImportState] = React.useState<ImportState>({ status: "idle" });
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = React.useState(false);
+  // (v2.17.0) Crypto reconciliation: user-edited entries + applied flag.
+  // `reconcileEntries` mirrors `state.cryptoReconcile` but with the user's
+  // TR-app inputs filled in. `reconcileApplied` flips to true on Apply so
+  // the import button knows to inject staking + qty-adjustment activities.
+  const [reconcileEntries, setReconcileEntries] = React.useState<CryptoReconcileEntry[]>([]);
+  const [reconcileApplied, setReconcileApplied] = React.useState(false);
+  // (v2.19.0) Manual holdings the user adds via the panel (spin-offs, gifts).
+  const [manualHoldings, setManualHoldings] = React.useState<ManualHoldingDraft[]>([]);
+  React.useEffect(() => {
+    setReconcileEntries(state.cryptoReconcile);
+    setReconcileApplied(false);
+    setManualHoldings([]);
+  }, [state.cryptoReconcile]);
 
   // Account selection — load on mount, prefer existing TR account.
   const [accounts, setAccounts] = React.useState<Account[]>([]);
@@ -406,6 +438,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         discoveredTickers,
         autoSplits,
         cryptoResolved,
+        cryptoReconcile: buildCryptoReconcileEntries(cryptoTrading),
       });
     } catch (err) {
       setState({
@@ -530,6 +563,97 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         autoSplits: state.autoSplits,
       });
 
+      // (v2.19.1) Crypto reconciliation: scale crypto BUYs to match TR
+      // target then emit staking entries. This replaces v2.17/v2.19.0's
+      // residual-qty approach which was unreliable for "Compra direta"
+      // rows whose qty came from imprecise Yahoo daily closes.
+      //
+      // Algorithm per crypto:
+      //   target_cash_qty = trQty − stakingQty (user-supplied)
+      //   scale all BUY/SELL rows for this crypto so total = target_cash_qty
+      //   emit INTEREST/Staking Reward with stakingQty + stakingValueEur
+      //
+      // After this, sum(BUY) − sum(SELL) + staking_qty = trQty exactly.
+      if (reconcileApplied && reconcileEntries.length > 0) {
+        const reconcileDate = lastActivityDate
+          ? toIsoDate(lastActivityDate).slice(0, 10)
+          : new Date().toISOString().slice(0, 10);
+        const stakingEntries: StakingReconcileEntry[] = [];
+        const isinTargets = new Map<string, number>();
+        for (const e of reconcileEntries) {
+          if (e.trQty === undefined) continue;
+          const stakingQty = e.hasStaking && e.stakingQty ? e.stakingQty : 0;
+          const stakingValueEur = e.hasStaking && e.stakingValueEur ? e.stakingValueEur : 0;
+          // Cash target = TR holding minus staking-acquired qty
+          const targetCash = Math.max(0, e.trQty - stakingQty);
+          isinTargets.set(e.isin, targetCash);
+          if (stakingQty > 0 && stakingValueEur > 0) {
+            stakingEntries.push({
+              isin: e.isin,
+              symbol: e.symbol,
+              symbolName: e.symbolName,
+              stakingQty,
+              stakingValueEur,
+              date: reconcileDate,
+            });
+          }
+        }
+        // Scale every BUY/SELL row for these cryptos in the activities array.
+        const scaleLog = scaleCryptoBuysToTarget(activities, isinTargets);
+        for (const l of scaleLog) {
+          ctx.api.logger.info(
+            `[TR PDF] crypto scale: ${l.isin} ${l.oldTotal.toFixed(6)} → ${l.newTotal.toFixed(6)} (×${l.scale.toFixed(4)})`,
+          );
+        }
+        const startLine = activities.reduce((max, a) => Math.max(max, a.lineNumber ?? 0), 0) + 1;
+        const stakingActs = buildStakingActivities(
+          stakingEntries,
+          acct.id,
+          acct.currency,
+          startLine,
+        );
+        activities.push(...stakingActs);
+        ctx.api.logger.info(
+          `[TR PDF] crypto reconcile: scaled ${scaleLog.length} cryptos, +${stakingActs.length} staking`,
+        );
+      }
+
+      // (v2.19.0) Manual holdings (spin-offs, gifts, etc.) → TRANSFER_IN
+      if (manualHoldings.length > 0) {
+        const manualEntries: ManualHoldingEntry[] = [];
+        for (const d of manualHoldings) {
+          const qty = parseFloat(d.quantity.replace(",", "."));
+          const cost = parseFloat(d.costBasisEur.replace(",", "."));
+          if (!Number.isFinite(qty) || qty <= 0) continue;
+          if (!Number.isFinite(cost) || cost < 0) continue;
+          manualEntries.push({
+            symbol: d.symbol,
+            isin: d.isin || undefined,
+            name: d.name || undefined,
+            quantity: qty,
+            costBasisEur: cost,
+            date:
+              d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date)
+                ? d.date
+                : lastActivityDate
+                  ? toIsoDate(lastActivityDate).slice(0, 10)
+                  : new Date().toISOString().slice(0, 10),
+            source: d.source || undefined,
+          });
+        }
+        const startLine = activities.reduce((max, a) => Math.max(max, a.lineNumber ?? 0), 0) + 1;
+        const manualActs = buildManualHoldingActivities(
+          manualEntries,
+          acct.id,
+          acct.currency,
+          startLine,
+        );
+        activities.push(...manualActs);
+        ctx.api.logger.info(
+          `[TR PDF] manual holdings: +${manualActs.length} TRANSFER_IN activities`,
+        );
+      }
+
       if (activities.length === 0) {
         setImportState({ status: "error", message: "No importable activities found in this PDF." });
         return;
@@ -598,9 +722,13 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           } else {
             symbolPayload = undefined;
           }
-          const idemKey = `tr-pdf-v2.16.0:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
+          const idemKey = `tr-pdf-v2.19.2:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
             a.symbol || "cash"
           }:${(a.date as string).slice(0, 10)}`;
+          // (v2.19.2) Pass every field explicitly so Donkeyfolio's
+          // activities table is filled completely (fxRate, exchangeMic,
+          // assetName, etc.) — fixes the user's complaint that addon
+          // imports leave columns empty vs CSV import which has them all.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const createPayload: any = {
             accountId: acct.id,
@@ -612,8 +740,16 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             unitPrice: a.unitPrice ?? 0,
             amount: a.amount ?? 0,
             currency: a.currency,
+            // EUR-account convention: every TR row is already in account
+            // currency so fxRate=1 (no FX conversion needed at activity
+            // level). USD assets are converted via asset.quote_ccy + market
+            // FX, not per-activity.
+            fxRate: 1,
             fee: a.fee ?? 0,
             comment: a.comment ?? null,
+            assetName: a.symbolName ?? symbolPayload?.name ?? null,
+            instrumentType: a.instrumentType ?? symbolPayload?.instrumentType ?? null,
+            quoteCcy: a.quoteCcy ?? acct.currency,
             idempotencyKey: idemKey,
             sourceSystem: "TR_PDF",
             sourceRecordId: idemKey,
@@ -750,7 +886,26 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         if (!entry.assetId && a.assetId) entry.assetId = a.assetId;
         bySymbol.set(sym, entry);
       }
-      // Merge a name from the parsed trading set if missing.
+      // (v2.16.1) Pull canonical asset names from Donkeyfolio's assets API.
+      // The agent's first version only had the PDF-parsed names indexed
+      // by ISIN, but most holdings show as `display_code` ("AAPL", "AMD")
+      // not by ISIN — so the lookup missed and we showed the ticker as
+      // the name. Use the assets API as the primary name source.
+      const assetNameById = new Map<string, string>();
+      const assetNameBySymbol = new Map<string, string>();
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const assets: Array<any> = await (ctx.api as any).assets.getAll();
+        for (const a of assets) {
+          if (a?.name) {
+            if (a.id) assetNameById.set(a.id, a.name);
+            const candidates = [a.displayCode, a.instrumentSymbol, a.symbol].filter(Boolean);
+            for (const c of candidates) assetNameBySymbol.set(String(c), a.name);
+          }
+        }
+      } catch {
+        // ignore — fall back to parsed PDF names
+      }
       const tradingNameByIsin = new Map<string, string>();
       for (const t of state.trading) {
         if (t.isin) tradingNameByIsin.set(t.isin, t.cleanStockName || t.stockName);
@@ -758,7 +913,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       const holdings: DbHolding[] = [];
       for (const [sym, v] of bySymbol.entries()) {
         if (Math.abs(v.qty) < 1e-6) continue; // skip closed positions
-        const name = v.name || tradingNameByIsin.get(sym) || sym;
+        const name =
+          (v.assetId && assetNameById.get(v.assetId)) ||
+          assetNameBySymbol.get(sym) ||
+          tradingNameByIsin.get(sym) ||
+          sym;
         holdings.push({ symbol: sym, name, qty: v.qty, assetId: v.assetId });
       }
       holdings.sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -1363,6 +1522,30 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                   </p>
                 )}
 
+                {/* (v2.17–v2.19) Crypto Reconciliation + Manual Holdings panel.
+                    Always shown when parsing is done so the user can add
+                    spin-off / gift holdings even when no crypto is in the PDF. */}
+                {state.status === "done" && (
+                  <CryptoReconcilePanel
+                    entries={reconcileEntries}
+                    manualHoldings={manualHoldings}
+                    applied={reconcileApplied}
+                    defaultDate={
+                      state.cash.length > 0
+                        ? toIsoDate(state.cash[state.cash.length - 1].datum).slice(0, 10)
+                        : new Date().toISOString().slice(0, 10)
+                    }
+                    onApply={(updated, drafts) => {
+                      setReconcileEntries(updated);
+                      setManualHoldings(drafts);
+                      setReconcileApplied(true);
+                    }}
+                    onSkip={() => {
+                      setReconcileApplied(false);
+                    }}
+                  />
+                )}
+
                 {/* Big import button */}
                 <div className="pt-2">
                   <Button
@@ -1783,49 +1966,195 @@ function WatcherSummaryCard({
 }
 
 function CashTable({ rows }: { rows: CashTransaction[] }) {
+  // (v2.19.4) Default view is a SUMMARY of cash totals per type — TR's full
+  // cash log (4000+ rows) is overwhelming and not useful per-row. The
+  // interesting numbers are the cumulative buckets: deposits, dividends,
+  // interest, etc. Toggle "Show all" still exposes the raw detail.
+  const [showAll, setShowAll] = React.useState(false);
+  const isTrade = (r: CashTransaction) =>
+    (r.typ || "").toLowerCase().trim() === "trade" ||
+    (r.typ || "").toLowerCase().trim() === "handel" ||
+    (r.typ || "").toLowerCase().trim() === "operar";
+  const filtered = showAll ? rows : rows.filter((r) => !isTrade(r));
+  const tradeCount = rows.length - rows.filter((r) => !isTrade(r)).length;
+
+  // Compute totals per cash type (excluding trades).
+  const summary = React.useMemo(() => {
+    const buckets = new Map<string, { count: number; in: number; out: number }>();
+    const parseEur = (s: string) => {
+      if (!s) return 0;
+      const cleaned = s.replace(/[€\s]/g, "").replace(/\./g, "").replace(",", ".");
+      const n = parseFloat(cleaned);
+      return Number.isFinite(n) ? n : 0;
+    };
+    for (const r of rows) {
+      if (isTrade(r)) continue;
+      const t = (r.typ || "Other").trim();
+      const b = buckets.get(t) ?? { count: 0, in: 0, out: 0 };
+      b.count += 1;
+      b.in += parseEur(r.zahlungseingang);
+      b.out += parseEur(r.zahlungsausgang);
+      buckets.set(t, b);
+    }
+    return buckets;
+  }, [rows]);
+  const totalIn = Array.from(summary.values()).reduce((s, b) => s + b.in, 0);
+  const totalOut = Array.from(summary.values()).reduce((s, b) => s + b.out, 0);
+
+  // Extract structured fields from the raw description for display columns.
+  // The PDF crams ISIN/qty/name/etc. into one beschreibung string — this
+  // pulls them apart so each datum gets its own column.
+  const parseRow = (r: CashTransaction) => {
+    const desc = r.beschreibung || "";
+    const isinMatch = desc.match(/\b([A-Z]{2}[A-Z0-9]{10}|XF000[A-Z0-9]{6,7})\b/);
+    const isin = isinMatch ? isinMatch[1] : "";
+    // Origin = ISO country code from the first 2 chars of a real ISIN.
+    // XF000 is TR's pseudo-ISIN for crypto — show as "Crypto".
+    let origin = "";
+    if (isin) {
+      origin = isin.startsWith("XF000") ? "Crypto" : isin.slice(0, 2);
+    }
+    const qtyMatch = desc.match(
+      /(?:quantity|quantidade|qtd|stück|stueck|stk|anzahl|cantidad|quantità|pezzi)\.?\s*:\s*([\d.,]+)/i,
+    );
+    const quantity = qtyMatch ? qtyMatch[1] : "";
+    return { isin, origin, quantity };
+  };
+
   return (
     <Card>
-      <div className="max-h-[480px] overflow-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="text-right">In</TableHead>
-              <TableHead className="text-right">Out</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r, i) => (
-              <TableRow
-                key={i}
-                className={
-                  r._sanityCheckOk === false
-                    ? "bg-amber-50 dark:bg-amber-950/30"
-                    : r._recovered
-                      ? "bg-blue-50/60 dark:bg-blue-950/20"
-                      : undefined
-                }
-              >
-                <TableCell className="font-mono text-xs">{r.datum}</TableCell>
-                <TableCell>{r.typ}</TableCell>
-                <TableCell className="max-w-md truncate" title={r.beschreibung}>
-                  {r.beschreibung}
-                </TableCell>
+      <div className="flex items-center justify-between border-b px-3 py-2 text-xs">
+        <span className="text-muted-foreground">
+          {showAll
+            ? `Showing all ${rows.length} raw cash rows (incl. trades)`
+            : `Cash flow summary by type · ${rows.length} total rows · ${tradeCount} trades`}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowAll((v) => !v)}
+          className="h-6 text-xs"
+        >
+          {showAll ? "Hide raw" : "Show raw"}
+        </Button>
+      </div>
+
+      {!showAll && (
+        <div className="overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Count</TableHead>
+                <TableHead className="text-right">Total In</TableHead>
+                <TableHead className="text-right">Total Out</TableHead>
+                <TableHead className="text-right">Net</TableHead>
+                <TableHead className="text-right">Currency</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {Array.from(summary.entries())
+                .sort((a, b) => Math.abs(b[1].in - b[1].out) - Math.abs(a[1].in - a[1].out))
+                .map(([typ, b]) => {
+                  const net = b.in - b.out;
+                  return (
+                    <TableRow key={typ}>
+                      <TableCell className="font-medium">{typ}</TableCell>
+                      <TableCell className="text-right font-mono">{b.count}</TableCell>
+                      <TableCell className="text-right font-mono text-green-600 dark:text-green-400">
+                        {b.in > 0 ? formatEur(b.in) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
+                        {b.out > 0 ? formatEur(b.out) : "—"}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-mono ${
+                          net >= 0
+                            ? "text-green-600 dark:text-green-400"
+                            : "text-red-600 dark:text-red-400"
+                        }`}
+                      >
+                        {net >= 0 ? "+" : ""}
+                        {formatEur(net)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">EUR</TableCell>
+                    </TableRow>
+                  );
+                })}
+              <TableRow className="bg-muted/30 font-bold">
+                <TableCell>TOTAL (non-trade)</TableCell>
+                <TableCell className="text-right font-mono">{filtered.length}</TableCell>
                 <TableCell className="text-right font-mono text-green-600 dark:text-green-400">
-                  {r.zahlungseingang || ""}
+                  {formatEur(totalIn)}
                 </TableCell>
                 <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
-                  {r.zahlungsausgang || ""}
+                  {formatEur(totalOut)}
                 </TableCell>
-                <TableCell className="text-right font-mono">{r.saldo}</TableCell>
+                <TableCell className="text-right font-mono">
+                  {totalIn - totalOut >= 0 ? "+" : ""}
+                  {formatEur(totalIn - totalOut)}
+                </TableCell>
+                <TableCell className="text-right font-mono text-xs">EUR</TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {showAll && (
+        <div className="max-h-[480px] overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Origin</TableHead>
+                <TableHead>ISIN</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+                <TableHead className="text-right">In</TableHead>
+                <TableHead className="text-right">Out</TableHead>
+                <TableHead className="text-right">Currency</TableHead>
+                <TableHead className="text-right">Balance</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((r, i) => {
+                const p = parseRow(r);
+                return (
+                  <TableRow
+                    key={i}
+                    className={
+                      r._sanityCheckOk === false
+                        ? "bg-amber-50 dark:bg-amber-950/30"
+                        : r._recovered
+                          ? "bg-blue-50/60 dark:bg-blue-950/20"
+                          : undefined
+                    }
+                  >
+                    <TableCell className="font-mono text-xs">{r.datum}</TableCell>
+                    <TableCell>{r.typ}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.origin || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.isin || "—"}</TableCell>
+                    <TableCell className="max-w-md truncate" title={r.beschreibung}>
+                      {r.beschreibung}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">{p.quantity || "—"}</TableCell>
+                    <TableCell className="text-right font-mono text-green-600 dark:text-green-400">
+                      {r.zahlungseingang || ""}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-red-600 dark:text-red-400">
+                      {r.zahlungsausgang || ""}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs">EUR</TableCell>
+                    <TableCell className="text-right font-mono">{r.saldo}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </Card>
   );
 }

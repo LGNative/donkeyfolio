@@ -100,7 +100,7 @@ const MONTHS_EN_PT: Record<string, string> = {
   dez: "12",
 };
 
-function toIsoDate(raw: string): string {
+export function toIsoDate(raw: string): string {
   const s = (raw || "").trim();
   // dd.MM.yyyy
   const dotMatch = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s);
@@ -553,6 +553,240 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     }
   }
 
+  return activities;
+}
+
+/**
+ * (v2.17.0) Build INTEREST/Staking Reward activities for crypto holdings
+ * that received staking rewards on TR — these don't appear in the Account
+ * Statement PDF (only cash flows are listed) so we add them post-hoc based
+ * on user input from the Crypto Reconciliation panel.
+ *
+ * Wealthfolio docs: "INTEREST with Staking Reward subtype: Crypto staking
+ * income received as additional tokens. Records the interest income and
+ * the resulting token acquisition." So a single activity with qty + amount
+ * does both: increase token holdings AND register cost basis.
+ *
+ * Each entry must have:
+ *   - isin       (e.g. XF000SOL0012)
+ *   - symbol     (e.g. SOL-EUR)
+ *   - stakingQty (e.g. 0.527)
+ *   - stakingValueEur (e.g. 45.55 — total fair-value at receipt, cumulative)
+ *   - date       (YYYY-MM-DD; usually the last activity date in the import)
+ */
+export interface StakingReconcileEntry {
+  isin: string;
+  symbol: string;
+  symbolName?: string;
+  stakingQty: number;
+  stakingValueEur: number;
+  date: string;
+}
+
+export function buildStakingActivities(
+  entries: StakingReconcileEntry[],
+  accountId: string,
+  currency: string,
+  startingLine: number,
+): ActivityImport[] {
+  const activities: ActivityImport[] = [];
+  let lineNumber = startingLine;
+  for (const e of entries) {
+    if (!e.stakingQty || e.stakingQty <= 0) continue;
+    if (!Number.isFinite(e.stakingValueEur) || e.stakingValueEur < 0) continue;
+    const unitPrice = e.stakingQty > 0 ? e.stakingValueEur / e.stakingQty : 0;
+    // (v2.19.1) Use ISIN (XF000xxx) as the activity symbol so the import
+    // routing in tr-converter-page.tsx (handleImport) classifies it as a
+    // CRYPTO pseudo-ISIN and creates the correct CRYPTO asset profile,
+    // not a generic EQUITY asset named "SOL-EUR".
+    const symbolForRouting = e.isin || e.symbol;
+    const tickerCode = e.symbol.split("-")[0]; // e.g. "SOL-EUR" → "SOL"
+    activities.push({
+      accountId,
+      currency,
+      activityType: ACT.INTEREST,
+      subtype: "Staking Reward",
+      date: `${e.date}T00:00:00.000Z`,
+      symbol: symbolForRouting,
+      symbolName: e.symbolName,
+      quantity: e.stakingQty,
+      unitPrice,
+      amount: e.stakingValueEur,
+      fee: 0,
+      quoteCcy: currency,
+      instrumentType: "Crypto",
+      comment: `TR cumulative staking reward: ${e.stakingQty.toFixed(6)} ${tickerCode} = €${e.stakingValueEur.toFixed(2)}`,
+      lineNumber: lineNumber++,
+      isValid: true,
+      isDraft: false,
+    });
+  }
+  return activities;
+}
+
+/**
+ * (v2.19.1) Scale crypto BUY/SELL activity quantities so the holding total
+ * for each crypto matches a user-supplied target. This is the proper fix
+ * for the "Compra direta" price-imprecision problem: instead of relying on
+ * Yahoo daily-close prices (which can be 0.5–50% off intraday execution),
+ * we accept the user's TR-app qty as ground truth and scale every
+ * Compra/Venda direta + Buy/Sell trade + Savings plan row proportionally.
+ *
+ * The activity `amount` (cash impact) stays constant — only `quantity`
+ * scales. `unitPrice` is recomputed as `amount / new_quantity` so the
+ * row-level invariant `quantity × unitPrice = amount` holds.
+ *
+ * After scaling: sum(BUY_qty) − sum(SELL_qty) = targetQty exactly.
+ *
+ * Returns the same activities array, mutated. Caller is expected to pass
+ * the same array reference used elsewhere; we don't deep-copy.
+ */
+export function scaleCryptoBuysToTarget(
+  activities: ActivityImport[],
+  isinTargets: Map<string, number>,
+): { isin: string; oldTotal: number; newTotal: number; scale: number }[] {
+  const log: { isin: string; oldTotal: number; newTotal: number; scale: number }[] = [];
+  for (const [isin, target] of isinTargets) {
+    if (target <= 0) continue;
+    const tradeIdxs: number[] = [];
+    let oldTotal = 0;
+    for (let i = 0; i < activities.length; i++) {
+      const a = activities[i];
+      if (a.symbol !== isin) continue;
+      if (a.activityType !== ACT.BUY && a.activityType !== ACT.SELL) continue;
+      const qty = typeof a.quantity === "number" ? a.quantity : 0;
+      if (!qty || qty <= 0) continue;
+      tradeIdxs.push(i);
+      oldTotal += a.activityType === ACT.BUY ? qty : -qty;
+    }
+    if (oldTotal <= 0 || tradeIdxs.length === 0) continue;
+    const scale = target / oldTotal;
+    if (Math.abs(scale - 1) < 1e-6) {
+      log.push({ isin, oldTotal, newTotal: oldTotal, scale: 1 });
+      continue;
+    }
+    for (const i of tradeIdxs) {
+      const a = activities[i];
+      const oldQty = typeof a.quantity === "number" ? a.quantity : 0;
+      const amt = typeof a.amount === "number" ? a.amount : 0;
+      const newQty = oldQty * scale;
+      a.quantity = newQty;
+      a.unitPrice = newQty > 0 ? amt / newQty : 0;
+    }
+    log.push({ isin, oldTotal, newTotal: target, scale });
+  }
+  return log;
+}
+
+/**
+ * (v2.17.0) Build TRANSFER_IN activities for crypto qty corrections that
+ * are NOT staking — i.e. price-imprecision in our "Compra direta" qty
+ * estimation. When the user reports TR qty > computed qty AND we've already
+ * accounted for staking, the residual goes here as a no-cash transfer-in
+ * to top up the holding to match TR exactly.
+ *
+ * cost basis for the topped-up qty defaults to the last cash-buy avg price
+ * (so it doesn't distort the realized gain on later sells). Caller can
+ * override via `costBasisEur`.
+ */
+export interface QtyAdjustmentEntry {
+  isin: string;
+  symbol: string;
+  symbolName?: string;
+  qtyDelta: number; // positive: add shares; negative: remove
+  costBasisEur: number; // typically qtyDelta × current cash avg
+  date: string;
+}
+
+export function buildQtyAdjustments(
+  entries: QtyAdjustmentEntry[],
+  accountId: string,
+  currency: string,
+  startingLine: number,
+): ActivityImport[] {
+  const activities: ActivityImport[] = [];
+  let lineNumber = startingLine;
+  for (const e of entries) {
+    if (!e.qtyDelta || Math.abs(e.qtyDelta) < 1e-9) continue;
+    const isPositive = e.qtyDelta > 0;
+    const unitPrice = e.qtyDelta !== 0 ? Math.abs(e.costBasisEur / e.qtyDelta) : 0;
+    activities.push({
+      accountId,
+      currency,
+      activityType: isPositive ? "TRANSFER_IN" : "TRANSFER_OUT",
+      subtype: "TR_QTY_RECONCILE",
+      date: `${e.date}T00:00:00.000Z`,
+      symbol: e.symbol,
+      symbolName: e.symbolName,
+      quantity: Math.abs(e.qtyDelta),
+      unitPrice,
+      amount: Math.abs(e.costBasisEur),
+      fee: 0,
+      quoteCcy: currency,
+      instrumentType: "Crypto",
+      comment: `TR qty reconcile (price imprecision on Compra direta): ${e.qtyDelta > 0 ? "+" : ""}${e.qtyDelta.toFixed(6)} ${e.symbol.split("-")[0]}`,
+      lineNumber: lineNumber++,
+      isValid: true,
+      isDraft: false,
+    });
+  }
+  return activities;
+}
+
+/**
+ * (v2.18.0) Build TRANSFER_IN activities for holdings that the user adds
+ * manually via the reconciliation panel — used for spin-offs, gifts,
+ * inheritances, or any position TR doesn't capture in cash transactions.
+ *
+ * Cost basis is preserved via TRANSFER_IN's `amount` field per Wealthfolio
+ * convention. The parent asset (for spin-offs) is NOT touched in v2.18 —
+ * user must manually adjust parent cost basis in Donkeyfolio UI if needed.
+ */
+export interface ManualHoldingEntry {
+  symbol: string;
+  isin?: string;
+  name?: string;
+  quantity: number;
+  costBasisEur: number;
+  date: string; // YYYY-MM-DD
+  source?: string; // "Spin-off from HON", "Gift", etc — goes into the comment
+  parentSymbol?: string; // optional, for tagging spin-off parent
+  instrumentType?: string; // "Equity" | "Crypto" | "Bond" — defaults to Equity
+}
+
+export function buildManualHoldingActivities(
+  entries: ManualHoldingEntry[],
+  accountId: string,
+  currency: string,
+  startingLine: number,
+): ActivityImport[] {
+  const activities: ActivityImport[] = [];
+  let lineNumber = startingLine;
+  for (const e of entries) {
+    if (!e.symbol || !e.quantity || e.quantity <= 0) continue;
+    if (!Number.isFinite(e.costBasisEur) || e.costBasisEur < 0) continue;
+    const unitPrice = e.quantity > 0 ? e.costBasisEur / e.quantity : 0;
+    const sourceTag = e.source ? ` (${e.source})` : "";
+    activities.push({
+      accountId,
+      currency,
+      activityType: "TRANSFER_IN",
+      subtype: "TR_MANUAL_ADD",
+      date: `${e.date}T00:00:00.000Z`,
+      symbol: e.symbol,
+      symbolName: e.name,
+      quantity: e.quantity,
+      unitPrice,
+      amount: e.costBasisEur,
+      fee: 0,
+      quoteCcy: currency,
+      instrumentType: e.instrumentType || "Equity",
+      comment: `Manual holding add${sourceTag}: ${e.quantity.toFixed(6)} @ €${unitPrice.toFixed(4)}`,
+      lineNumber: lineNumber++,
+      isValid: true,
+      isDraft: false,
+    });
+  }
   return activities;
 }
 

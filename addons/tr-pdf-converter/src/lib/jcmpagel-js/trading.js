@@ -257,7 +257,7 @@ function parseTradingTransactions(cashTransactions) {
     const isinMatch = desc.match(/\b([A-Z]{2}[A-Z0-9]{10})\b/);
     if (!isinMatch) return null;
 
-    const actionMatch = desc.match(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta)\b/i);
+    const actionMatch = desc.match(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta|Venda)\b/i);
     if (!actionMatch) return null;
 
     const rawAction = normalizeTradeText(actionMatch[1]);
@@ -270,7 +270,7 @@ function parseTradingTransactions(cashTransactions) {
       stockName = stockName.replace(new RegExp(`\\s+${tradeIdMatch[1]}\\s*$`), "");
     }
     stockName = stockName
-      .replace(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta)\b/gi, " ")
+      .replace(/\b(Kauf|Verkauf|Buy|Sell|Compra|Venta|Venda)\b/gi, " ")
       .replace(/\b(quantity|cantidad)\s*:\s*[\d.,]+\b.*$/i, "")
       .replace(/^[-–\s]+/, "")
       .replace(/\s+/g, " ")
