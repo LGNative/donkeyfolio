@@ -66,6 +66,7 @@ import {
   type DiscoveryResult,
 } from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
+import { resolveFxRates, lookupFxRate } from "../lib/tr-fx-rates";
 import {
   countPending,
   loadLastFullScan,
@@ -536,6 +537,42 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         : undefined;
       const lastActivityDate =
         state.cash.length > 0 ? state.cash[state.cash.length - 1].datum : undefined;
+
+      // (v2.20.0) Resolve EUR→quoteCcy FX rates for every trade whose asset
+      // quotes in a non-EUR currency (USD typically). Without this, USD
+      // holdings (NVDA, MSFT, etc.) end up with cost basis attributed at the
+      // wrong rate, making the Holdings → Avg cost column drift vs the TR
+      // app. Frankfurter (ECB rates) is free + no rate-limit; cache hits
+      // mean re-importing the same statement is instant.
+      const fxRequests: { ccy: string; date: string }[] = [];
+      const seenFxKeys = new Set<string>();
+      for (const t of state.trading) {
+        if (!t.isin || !t.date) continue;
+        const mapped = lookupTicker(t.isin);
+        const ccy = mapped?.quoteCcy ?? "EUR";
+        if (ccy === "EUR") continue;
+        const isoDateOnly = toIsoDate(t.date).slice(0, 10);
+        const key = `${ccy}|${isoDateOnly}`;
+        if (seenFxKeys.has(key)) continue;
+        seenFxKeys.add(key);
+        fxRequests.push({ ccy, date: isoDateOnly });
+      }
+      let fxRates: Map<string, number> = new Map();
+      if (fxRequests.length > 0) {
+        setImportState({
+          status: "running",
+          message: `Resolving FX rates for ${fxRequests.length} unique (ccy, date) pairs…`,
+        });
+        try {
+          fxRates = await resolveFxRates(fxRequests);
+          ctx.api.logger.info(
+            `[TR PDF] FX resolved: ${fxRates.size}/${fxRequests.length} rates from Frankfurter (ECB).`,
+          );
+        } catch (err) {
+          ctx.api.logger.warn(`[TR PDF] FX resolve failed (non-fatal): ${(err as Error).message}`);
+        }
+      }
+
       const activities = buildActivitiesFromParsed({
         accountId: acct.id,
         currency: acct.currency,
@@ -545,6 +582,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         pdfSummary: pdfSummaryNumeric,
         lastActivityDate,
         autoSplits: state.autoSplits,
+        fxRates,
       });
 
       // (v2.19.7) Removed crypto reconciliation + manual holdings — user
@@ -677,9 +715,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             unitPrice: a.unitPrice ?? 0,
             amount: a.amount ?? 0,
             currency: a.currency,
-            // EUR-account: every TR row is already in EUR so fxRate=1.
-            // USD assets are FX-converted at the asset/quote layer, not here.
-            fxRate: 1,
+            // (v2.20.0) Per-trade fxRate from Frankfurter (ECB rates) when
+            // the asset quotes in a non-account currency (USD typically).
+            // Defaults to 1 for EUR-quoted assets (ETFs in Xetra, crypto
+            // pairs already in EUR). When undefined, Donkeyfolio falls back
+            // to its own FX inference at recalc time.
+            fxRate: a.fxRate ?? 1,
             fee: a.fee ?? 0,
             comment: a.comment ?? null,
             // metadata is a JSON blob (Rust: Option<String>). Audit trail
@@ -2136,8 +2177,66 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
     [trades],
   );
 
+  // (v2.20.0) Quality-of-source summary across all trades. Surfaces:
+  //   - how many fees came from PDF (ground truth) vs heuristic (€1/€0)
+  //   - how many trades need an EUR→USD FX lookup (USD-quoted assets)
+  //   - how many will be dropped (qty missing, e.g. crypto Compra direta)
+  const qa = React.useMemo(() => {
+    let pdfFee = 0;
+    let heuristicFee = 0;
+    let needsFx = 0;
+    let dropped = 0;
+    for (const t of sorted) {
+      if (!t.quantity || t.quantity <= 0) {
+        dropped += 1;
+        continue;
+      }
+      if (typeof t.pdfFee === "number" && t.pdfFee > 0) pdfFee += 1;
+      else heuristicFee += 1;
+      const ccy = lookupTicker(t.isin)?.quoteCcy ?? "EUR";
+      if (ccy !== "EUR") needsFx += 1;
+    }
+    return { pdfFee, heuristicFee, needsFx, dropped, total: sorted.length };
+  }, [sorted]);
+
+  const feeFromPdfPct = qa.total > 0 ? Math.round((qa.pdfFee / qa.total) * 100) : 0;
+
   return (
     <Card>
+      <div className="border-b px-3 py-2 text-xs">
+        <div className="flex flex-wrap gap-x-6 gap-y-1">
+          <span>
+            <span className="text-muted-foreground">Total trades: </span>
+            <span className="font-mono font-semibold">{qa.total}</span>
+          </span>
+          <span>
+            <span className="text-muted-foreground">Fee from PDF: </span>
+            <span
+              className={
+                feeFromPdfPct >= 80
+                  ? "font-mono font-semibold text-green-600 dark:text-green-400"
+                  : feeFromPdfPct > 0
+                    ? "font-mono font-semibold text-amber-600 dark:text-amber-400"
+                    : "font-mono font-semibold"
+              }
+            >
+              {qa.pdfFee} ({feeFromPdfPct}%)
+            </span>
+          </span>
+          <span>
+            <span className="text-muted-foreground">Fee heuristic (€1/€0): </span>
+            <span className="font-mono">{qa.heuristicFee}</span>
+          </span>
+          <span>
+            <span className="text-muted-foreground">USD assets (need FX): </span>
+            <span className="font-mono">{qa.needsFx}</span>
+          </span>
+          <span>
+            <span className="text-muted-foreground">Skipped (qty missing): </span>
+            <span className="font-mono text-amber-600 dark:text-amber-400">{qa.dropped}</span>
+          </span>
+        </div>
+      </div>
       <div className="max-h-[600px] overflow-auto">
         <Table>
           <TableHeader>
@@ -2152,10 +2251,10 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
               <TableHead className="text-right">Unit price</TableHead>
               <TableHead className="text-right">Amount</TableHead>
               <TableHead className="text-right">Fee</TableHead>
-              <TableHead>Currency</TableHead>
+              <TableHead className="text-xs">Fee src</TableHead>
               <TableHead>Quote ccy</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Comment</TableHead>
+              <TableHead className="text-right text-xs">FX hint</TableHead>
+              <TableHead>Order</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -2167,16 +2266,22 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
               const assetName = mapped?.displayName || t.cleanStockName || t.stockName || "—";
               const qty = t.quantity ?? null;
               const totalCash = Math.abs(t.amount);
-              // Same fee policy as tr-to-activities.ts:359
-              //   - Manual buy/sell : €1
-              //   - Savings plan    : €0
-              const fee = t.isSavingsPlan ? 0 : 1;
-              const grossAmount = t.isBuy ? totalCash - fee : totalCash + fee;
+              // Mirror tr-to-activities.ts:407 — PDF fee wins over heuristic.
+              const heuristicFee = t.isSavingsPlan ? 0 : 1;
+              const resolvedFee = t.pdfFee ?? heuristicFee;
+              const grossAmount = t.isBuy ? totalCash - resolvedFee : totalCash + resolvedFee;
               const useFeeAdjustment = grossAmount > 0;
               const amount = useFeeAdjustment ? grossAmount : totalCash;
-              const effectiveFee = useFeeAdjustment ? fee : 0;
+              const effectiveFee = useFeeAdjustment ? resolvedFee : 0;
               const unitPrice = qty && qty > 0 ? amount / qty : null;
               const dropped = !qty || qty <= 0;
+              const assetCcy = mapped?.quoteCcy ?? "EUR";
+              const feeSource =
+                typeof t.pdfFee === "number" && t.pdfFee > 0
+                  ? { label: "PDF", color: "text-green-600 dark:text-green-400" }
+                  : t.isSavingsPlan
+                    ? { label: "savings €0", color: "text-muted-foreground" }
+                    : { label: "manual €1", color: "text-amber-600 dark:text-amber-400" };
               return (
                 <TableRow
                   key={`${t.date}-${t.isin}-${i}`}
@@ -2204,13 +2309,17 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
                   <TableCell className="text-right font-mono">
                     {effectiveFee > 0 ? formatEur(effectiveFee) : "—"}
                   </TableCell>
-                  <TableCell className="text-xs">EUR</TableCell>
-                  <TableCell className="text-xs">{mapped?.quoteCcy ?? "EUR"}</TableCell>
-                  <TableCell className="text-xs">
-                    {t.isSavingsPlan ? "Savings plan" : "Manual"}
+                  <TableCell className={`text-xs ${feeSource.color}`}>{feeSource.label}</TableCell>
+                  <TableCell className="text-xs">{assetCcy}</TableCell>
+                  <TableCell className="text-right text-xs">
+                    {assetCcy !== "EUR" ? (
+                      <span className="text-amber-600 dark:text-amber-400">EUR→{assetCcy}</span>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
-                  <TableCell className="max-w-[240px] truncate text-xs" title={t.cleanStockName}>
-                    {t.tradeId ? `Order ${t.tradeId}` : "—"}
+                  <TableCell className="max-w-[140px] truncate text-xs" title={t.tradeId}>
+                    {t.tradeId || "—"}
                   </TableCell>
                 </TableRow>
               );
@@ -2219,8 +2328,9 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
         </Table>
       </div>
       <div className="text-muted-foreground border-t px-3 py-2 text-xs">
-        14 columns shown · matches the exact ActivityCreate + SymbolInput payload that goes to
-        Donkeyfolio. Rows shaded amber are dropped at import (qty missing).
+        14 columns matching the exact ActivityCreate + SymbolInput payload sent to Donkeyfolio.
+        Amber rows are skipped at import (qty missing — e.g. crypto Compra direta). FX rates for USD
+        assets are resolved at import time from Frankfurter (ECB).
       </div>
     </Card>
   );

@@ -170,6 +170,17 @@ export interface TradingTransaction {
    * Useful for cross-referencing ticker mappings — a WKN unambiguously identifies
    * the security in DE/AT exchanges where multiple ISINs may share a name. */
   wkn?: string;
+  /** (v2.20.0) Raw cash description we matched this trade to. Preserved so
+   * downstream code can re-scan it for the fee-label pattern (PP-style),
+   * the WKN, or any other inline metadata without having to thread the
+   * cash array everywhere. */
+  originalDescription?: string;
+  /** (v2.20.0) Fee read directly from the PDF (Fremdkostenzuschlag etc.).
+   * When present, supersedes the heuristic in tr-to-activities.ts. */
+  pdfFee?: number;
+  /** (v2.20.0) Currency of the pdfFee — almost always EUR, but USD seen on
+   * non-Portuguese accounts for US-listed trades. */
+  pdfFeeCurrency?: string;
 }
 
 /**
@@ -254,6 +265,42 @@ const QTY_LABEL_RE =
   /(?:^|[^A-Za-zÀ-ÿ])(?:quantity|quantidade|qtd|stück|stueck|stk|anzahl|cantidad|quantità|pezzi)\.?\s*:\s*([\d.,]+)/i;
 
 /**
+ * (v2.20.0) TR's fee-line labels across the 6 languages it ships PDFs in.
+ * Sourced from Portfolio Performance's TradeRepublicPDFExtractor.java
+ * (~5244 lines, the open-source reference). When the PDF includes one of
+ * these inline (typical in detailed trade pages), we use the EXACT fee
+ * instead of the €1/€0 heuristic, eliminating the "olhómetro" drift.
+ *
+ * Format example:
+ *   "Fremdkostenzuschlag -1,00 EUR"
+ *   "External cost surcharge -1.00 EUR"
+ *
+ * The capture group puts the value in [1] and the currency in [2].
+ */
+const FEE_LABEL_RE =
+  /(?:Fremdkostenzuschlag|Fremde\s+Spesen|External\s+cost\s+surcharge|Frais\s+externes|Supplemento\s+spese\s+di\s+terzi|Tarifa\s+plana\s+por\s+costes\s+del\s+servicio\s+de\s+ejecuci[oó]n\s+de\s+terceros|Encargos\s+externos|Sobretaxa\s+de\s+execu[cç][aã]o|Comiss[aã]o\s+externa|Taxa\s+de\s+execu[cç][aã]o)\s*[-−]?\s*([\d.,]+)\s*([A-Z]{3})/i;
+
+/**
+ * Extract the explicit fee amount from a trade description if TR included it
+ * inline. Returns `null` when no fee-line pattern matches — caller falls back
+ * to the heuristic (€1 manual / €0 savings plan).
+ *
+ * Multi-currency: returns the fee in whatever currency TR printed it in
+ * (almost always EUR for our user, USD on US-listed trades for some
+ * non-Portuguese accounts).
+ */
+export function extractFeeFromDescription(
+  desc: string | undefined | null,
+): { fee: number; currency: string } | null {
+  if (!desc) return null;
+  const m = desc.match(FEE_LABEL_RE);
+  if (!m) return null;
+  const fee = parseEuroAmount(m[1]);
+  if (!Number.isFinite(fee) || fee <= 0) return null;
+  return { fee, currency: m[2] };
+}
+
+/**
  * Enrich trading transactions with quantity extracted from the ORIGINAL cash
  * description. jcmpagel's parseTradingTransactions strips the "quantity: X"
  * fragment from stockName, so we have to re-extract from the raw cash data
@@ -330,7 +377,18 @@ export function enrichTradingWithQuantity(
       .replace(/\s+/g, " ")
       .trim();
     const isSavingsPlan = /\bSavings plan execution\b/i.test(originalDesc);
-    return { ...tx, quantity, unitPrice, cleanStockName, isSavingsPlan, wkn };
+    const feeFromPdf = extractFeeFromDescription(originalDesc);
+    return {
+      ...tx,
+      quantity,
+      unitPrice,
+      cleanStockName,
+      isSavingsPlan,
+      wkn,
+      originalDescription: originalDesc || undefined,
+      pdfFee: feeFromPdf?.fee,
+      pdfFeeCurrency: feeFromPdf?.currency,
+    };
   });
 }
 

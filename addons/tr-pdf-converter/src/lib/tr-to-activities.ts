@@ -18,6 +18,7 @@
 import type { ActivityImport, ActivityType } from "@wealthfolio/addon-sdk";
 
 import { extractIsin } from "./tr-isin-utils";
+import { lookupTicker } from "./tr-isin-tickers";
 import type { CashTransaction, TradingTransaction } from "./tr-parser";
 import type { SplitEvent } from "./tr-splits";
 
@@ -298,6 +299,13 @@ interface BuildOpts {
    *  Without these, ServiceNow-style 2:1 splits leave imported holdings at
    *  ~half the real share count (DB 10.55 vs TR 21.10). */
   autoSplits?: SplitEvent[];
+  /** (v2.20.0) EUR→quoteCcy FX rates by `${ccy}|${YYYY-MM-DD}` key.
+   *  Resolved upstream via Frankfurter (ECB official daily rates). When a
+   *  trade's asset quotes in a non-EUR currency (USD typically), the
+   *  matching rate is attached as `activity.fxRate` so Donkeyfolio's
+   *  holdings calculator can attribute cost basis in the asset's quote
+   *  currency, matching what the TR app shows for Avg cost. */
+  fxRates?: Map<string, number>;
 }
 
 // (v2.10.1) ISIN validation moved to tr-isin-utils.ts — see that file for
@@ -314,6 +322,7 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     pdfSummary,
     lastActivityDate,
     autoSplits,
+    fxRates,
   } = opts;
   const activities: ActivityImport[] = [];
   let lineNumber = 1;
@@ -387,6 +396,14 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   // (including the fee). For Donkeyfolio's import the convention is:
   //   amount = qty × unitPrice  (gross trade value, NO fee)
   //   fee   = the €1 (or €0)    (separate field)
+  // (v2.20.0) Fee resolution priority:
+  //   1. Read explicit fee from PDF (Fremdkostenzuschlag / External cost
+  //      surcharge / Encargos externos / Sobretaxa de execução / etc.) when
+  //      TR included it inline. Source-of-truth, currency-aware.
+  //   2. Fallback heuristic: €1 manual / €0 savings plan. Used when the PDF
+  //      doesn't print the fee line (typical for the Portugal account
+  //      statement layout, which only shows totals in cash log).
+  //
   // So we have to back the fee out of the cash amount before storing it.
   for (const tx of aggregated) {
     if (!tx.isin || !tx.date) continue;
@@ -397,22 +414,36 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     }
 
     const totalCash = Math.abs(tx.amount);
-    const expectedFee = tx.isSavingsPlan ? 0 : 1;
+    // Fee resolution: PDF line wins over heuristic when present.
+    const heuristicFee = tx.isSavingsPlan ? 0 : 1;
+    const resolvedFee = tx.pdfFee ?? heuristicFee;
     // For BUY: cash_out = gross + fee → gross = cash_out - fee
     // For SELL: cash_in = gross - fee → gross = cash_in + fee
-    const grossAmount = tx.isBuy ? totalCash - expectedFee : totalCash + expectedFee;
+    const grossAmount = tx.isBuy ? totalCash - resolvedFee : totalCash + resolvedFee;
 
     // Safety: if the trade is smaller than the fee (very rare, but defends
     // against bad data), keep the cash amount as-is and skip the fee.
     const useFeeAdjustment = grossAmount > 0;
     const amount = useFeeAdjustment ? grossAmount : totalCash;
-    const fee = useFeeAdjustment ? expectedFee : 0;
+    const fee = useFeeAdjustment ? resolvedFee : 0;
     const unitPrice = amount / qty;
     if (unitPrice <= 0) continue;
 
     // Crypto pseudo-ISINs start with "XF000" (BTC/ETH/XRP/SOL etc.) — flag
     // those so the import resolves them differently than equities.
     const isCrypto = /^XF000/.test(tx.isin);
+    // (v2.20.0) Look up the asset's quote currency. USD-quoted equities
+    // (MSFT, NVDA, etc.) need an fxRate per trade so cost basis attribution
+    // matches the TR app's Avg cost (which is computed against TR's
+    // execution-day FX, not today's spot).
+    const mapped = lookupTicker(tx.isin);
+    const assetQuoteCcy = mapped?.quoteCcy ?? currency;
+    const tradeIsoDate = toIsoDate(tx.date).slice(0, 10);
+    let fxRate: number | undefined;
+    if (assetQuoteCcy !== currency && fxRates) {
+      const rate = fxRates.get(`${assetQuoteCcy}|${tradeIsoDate}`);
+      if (typeof rate === "number" && rate > 0) fxRate = rate;
+    }
     activities.push({
       accountId,
       currency,
@@ -424,10 +455,11 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
       unitPrice,
       amount,
       fee,
+      fxRate,
       // Hints the Donkeyfolio backend uses for symbol resolution & validation.
       // Without these, most rows were getting silently rejected during import
       // ("Imported 0 / N skipped").
-      quoteCcy: currency,
+      quoteCcy: assetQuoteCcy,
       instrumentType: isCrypto ? "Crypto" : "Equity",
       comment: tx.isSavingsPlan ? "TR Savings plan" : undefined,
       lineNumber: lineNumber++,
