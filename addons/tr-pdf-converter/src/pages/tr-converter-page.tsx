@@ -353,25 +353,20 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
 
-      setState((s) => ({ ...s, phase: "resolving-crypto", message: "Resolving crypto…" }));
-      const { cryptoTrading: extraCryptoTrades } = extractCryptoDirectBuysFromCash(cashWithSanity);
-      const tradingWithCryptoCash = trading.concat(extraCryptoTrades);
-      let cryptoTrading = tradingWithCryptoCash;
-      let cryptoResolved = 0;
-      try {
-        const cryptoResult = await resolveCryptoDirectBuys(tradingWithCryptoCash, undefined, ctx);
-        cryptoTrading = cryptoResult.trading;
-        cryptoResolved = cryptoResult.resolved;
-        if (cryptoResult.resolved > 0 || cryptoResult.failed > 0) {
-          ctx.api.logger.info(
-            `[TR PDF] crypto resolver: ${cryptoResult.resolved} resolved, ${cryptoResult.failed} failed`,
-          );
-        }
-      } catch (err) {
-        ctx.api.logger.warn(
-          `[TR PDF] crypto resolver failed (non-fatal): ${(err as Error).message}`,
-        );
-      }
+      // (v2.19.7) Skip "Compra direta" crypto extraction + Yahoo resolver.
+      // TR's PDF doesn't include qty for these rows, and Yahoo's daily close
+      // is NOT TR's actual execution price — using it produced inflated qty
+      // and unitPrice that didn't match the TR app. Worse, fees got folded
+      // into the trade value because we had no separate fee column for them.
+      //
+      // What this means in practice:
+      //   - Savings plan crypto BUYs (qty IS in PDF) → still imported ✅
+      //   - "Compra direta" / "Direct buy" crypto rows → flow through as
+      //     plain WITHDRAWAL cash legs (matches TR app's cash view).
+      //   - User adds the corresponding crypto BUY activities by hand in
+      //     Donkeyfolio with the exact qty + avg price the TR app shows.
+      const cryptoTrading = trading;
+      const cryptoResolved = 0;
 
       setState((s) => ({ ...s, phase: "discovering-tickers", message: "Discovering tickers…" }));
       const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
