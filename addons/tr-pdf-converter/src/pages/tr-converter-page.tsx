@@ -67,6 +67,7 @@ import {
 } from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 import { resolveFxRates, lookupFxRate } from "../lib/tr-fx-rates";
+import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../lib/tr-eur-holdings";
 import {
   countPending,
   loadLastFullScan,
@@ -214,11 +215,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   // Issues panel — collapsible.
   const [issuesOpen, setIssuesOpen] = React.useState(true);
-  // Parsed-details disclosure (cash / mmf / trading tables).
+  // Parsed-details disclosure (cash / mmf / trading / eur-holdings tables).
   const [detailsOpen, setDetailsOpen] = React.useState(false);
-  const [activeDetailsTab, setActiveDetailsTab] = React.useState<"cash" | "mmf" | "trading">(
-    "cash",
-  );
+  const [activeDetailsTab, setActiveDetailsTab] = React.useState<
+    "cash" | "mmf" | "trading" | "eur"
+  >("cash");
 
   // Manual reconciliation panel state — keyed by ticker.
   const [dbHoldings, setDbHoldings] = React.useState<DbHolding[]>([]);
@@ -1778,9 +1779,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-3 space-y-3">
               <div className="flex flex-wrap gap-1 border-b">
-                {(["cash", "trading", "mmf"] as const).map((t) =>
+                {(["cash", "trading", "eur", "mmf"] as const).map((t) =>
                   (t === "cash" && cashCount === 0) ||
                   (t === "trading" && tradingCount === 0) ||
+                  (t === "eur" && tradingCount === 0) ||
                   (t === "mmf" && state.interest.length === 0) ? null : (
                     <button
                       key={t}
@@ -1795,7 +1797,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                         ? `Cash (${cashCount})`
                         : t === "trading"
                           ? `Trading (${tradingCount})`
-                          : `MMF (${state.interest.length})`}
+                          : t === "eur"
+                            ? `Holdings EUR`
+                            : `MMF (${state.interest.length})`}
                     </button>
                   ),
                 )}
@@ -1803,6 +1807,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               {activeDetailsTab === "cash" && cashCount > 0 && <CashTable rows={state.cash} />}
               {activeDetailsTab === "trading" && state.trading.length > 0 && (
                 <TradesPreviewTable trades={state.trading} />
+              )}
+              {activeDetailsTab === "eur" && state.trading.length > 0 && (
+                <EurHoldingsTable trades={state.trading} />
               )}
               {activeDetailsTab === "mmf" && state.interest.length > 0 && (
                 <InterestTable rows={state.interest} />
@@ -2331,6 +2338,149 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
         14 columns matching the exact ActivityCreate + SymbolInput payload sent to Donkeyfolio.
         Amber rows are skipped at import (qty missing — e.g. crypto Compra direta). FX rates for USD
         assets are resolved at import time from Frankfurter (ECB).
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * EUR Holdings — true cost basis in account currency, FIFO-aggregated from
+ * the trading transactions. (v2.20.1)
+ *
+ * Why this exists:
+ *   Wealthfolio core (issues #474, #181, #537, #590) displays asset detail
+ *   cost basis in the asset's quote currency (USD for NASDAQ stocks),
+ *   forcing TR users to mentally convert to compare with the TR app's
+ *   "Investido" / "Custo médio" view. The DATA is correct in the activity
+ *   rows (currency=EUR, amount=€X) — it's only the asset detail UI that
+ *   surfaces the USD-converted aggregate.
+ *
+ *   Rather than patch the upstream UI (which would conflict on every merge
+ *   from afadil/wealthfolio), we compute the EUR ground-truth here and
+ *   display it isolated in the addon. Zero core changes = zero merge risk.
+ *
+ *   What you see is exactly what the TR app shows — and exactly what the
+ *   DB has — without any FX conversion happening at display time.
+ */
+function EurHoldingsTable({ trades }: { trades: TradingTransaction[] }) {
+  const rows = React.useMemo(() => buildEurHoldings(trades), [trades]);
+  const summary = React.useMemo(() => summarizeEurHoldings(rows), [rows]);
+  const [showClosed, setShowClosed] = React.useState(false);
+  const visibleRows = showClosed ? rows : rows.filter((r) => r.qty > 1e-9);
+
+  return (
+    <Card>
+      <div className="border-b px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+          <div className="flex flex-wrap gap-x-6 gap-y-1">
+            <span>
+              <span className="text-muted-foreground">Open positions: </span>
+              <span className="font-mono font-semibold">{summary.openPositions}</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Total invested (EUR): </span>
+              <span className="font-mono font-semibold">
+                {formatEur(summary.totalCostBasisEur)}
+              </span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Realized P&L (EUR): </span>
+              <span
+                className={`font-mono font-semibold ${
+                  summary.totalRealizedPnlEur >= 0
+                    ? "text-green-600 dark:text-green-400"
+                    : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {summary.totalRealizedPnlEur >= 0 ? "+" : ""}
+                {formatEur(summary.totalRealizedPnlEur)}
+              </span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Closed: </span>
+              <span className="font-mono">{summary.closedPositions}</span>
+            </span>
+          </div>
+          {summary.closedPositions > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowClosed((v) => !v)}
+              className="h-6 text-xs"
+            >
+              {showClosed ? "Hide closed" : "Show closed"}
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="max-h-[600px] overflow-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="font-mono text-xs">Symbol</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead className="font-mono text-xs">ISIN</TableHead>
+              <TableHead className="text-right">Qty held</TableHead>
+              <TableHead className="text-right">Avg cost (€)</TableHead>
+              <TableHead className="text-right">Cost basis (€)</TableHead>
+              <TableHead className="text-right">Bought (€)</TableHead>
+              <TableHead className="text-right">Sold (€)</TableHead>
+              <TableHead className="text-right">Realized P&L (€)</TableHead>
+              <TableHead className="text-right text-xs">Buys / Sells</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleRows.map((r) => {
+              const closed = r.qty <= 1e-9;
+              return (
+                <TableRow key={r.isin} className={closed ? "text-muted-foreground" : undefined}>
+                  <TableCell className="font-mono text-xs">{r.symbol}</TableCell>
+                  <TableCell className="max-w-[220px] truncate" title={r.name}>
+                    {r.name}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{r.isin}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {closed ? "—" : formatQty(r.qty)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    {closed ? "—" : formatEur(r.avgCostEur)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-semibold">
+                    {closed ? "—" : formatEur(r.costBasisEur)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    {formatEur(r.totalBoughtEur)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    {r.totalSoldEur > 0 ? formatEur(r.totalSoldEur) : "—"}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right font-mono ${
+                      r.realizedPnlEur > 0
+                        ? "text-green-600 dark:text-green-400"
+                        : r.realizedPnlEur < 0
+                          ? "text-red-600 dark:text-red-400"
+                          : ""
+                    }`}
+                  >
+                    {Math.abs(r.realizedPnlEur) > 0.01
+                      ? `${r.realizedPnlEur >= 0 ? "+" : ""}${formatEur(r.realizedPnlEur)}`
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-right font-mono text-xs">
+                    {r.buyCount}/{r.sellCount}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="text-muted-foreground border-t px-3 py-2 text-xs">
+        FIFO cost basis in EUR, computed from the imported trading activities. Avg cost (€) ={" "}
+        {`Σ(EUR paid for current shares) / qty held`}. Compare 1:1 with TR app's "Custo médio" /
+        "Investido total". This view is computed locally — no Donkeyfolio core changes, so future
+        Wealthfolio updates won't affect it.
       </div>
     </Card>
   );
