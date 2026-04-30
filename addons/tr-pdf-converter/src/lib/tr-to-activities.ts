@@ -338,6 +338,47 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     dedupedTrading.push(tx);
   }
 
+  // (v2.19.11) Aggregate partial fills of the same logical TR order.
+  // TR sometimes splits a single order into multiple PDF cash rows when
+  // it executes the order in batches (e.g. user submits ONE buy of 2.036383
+  // ServiceNow shares, TR fills it as 2 + 0.036383 in two batches → two
+  // PDF rows with the SAME tradeId). The TR app aggregates these for
+  // display and only charges €1 fee on the order total — but our previous
+  // code created one BUY per fill and applied €1 to EACH, doubling the fee
+  // and producing wrong unitPrices.
+  //
+  // Aggregation rule: same date + ISIN + isBuy + isSavingsPlan + non-empty
+  // tradeId → merge into one trade with summed qty + amount.
+  // Different tradeIds (or empty tradeId) → keep separate (legitimate
+  // distinct trades on the same day). Empty tradeId is a safety fallback —
+  // we don't aggregate it because we can't prove it's the same order.
+  const aggregated: TradingTransaction[] = [];
+  const aggIndex = new Map<string, number>();
+  for (const tx of dedupedTrading) {
+    if (!tx.tradeId) {
+      aggregated.push(tx);
+      continue;
+    }
+    const key = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
+      tx.isSavingsPlan ? "SP" : "M"
+    }|${tx.tradeId}`;
+    const existingIdx = aggIndex.get(key);
+    if (existingIdx !== undefined) {
+      const existing = aggregated[existingIdx];
+      const sumQty = (existing.quantity ?? 0) + (tx.quantity ?? 0);
+      const sumAmount = Math.abs(existing.amount) + Math.abs(tx.amount);
+      aggregated[existingIdx] = {
+        ...existing,
+        quantity: sumQty > 0 ? sumQty : existing.quantity,
+        amount: tx.isBuy ? sumAmount : -sumAmount,
+        unitPrice: sumQty > 0 ? sumAmount / sumQty : existing.unitPrice,
+      };
+    } else {
+      aggIndex.set(key, aggregated.length);
+      aggregated.push(tx);
+    }
+  }
+
   // 1) Trading → BUY / SELL
   // Trade Republic fee model:
   //   - Manual Buy / Sell of stocks/ETFs: €1 flat external fee
@@ -347,7 +388,7 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   //   amount = qty × unitPrice  (gross trade value, NO fee)
   //   fee   = the €1 (or €0)    (separate field)
   // So we have to back the fee out of the cash amount before storing it.
-  for (const tx of dedupedTrading) {
+  for (const tx of aggregated) {
     if (!tx.isin || !tx.date) continue;
     const qty = tx.quantity;
     if (!qty || qty <= 0) {
