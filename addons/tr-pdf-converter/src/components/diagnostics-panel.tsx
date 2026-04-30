@@ -553,7 +553,7 @@ function ActionButton({
     );
   }
   if (d.action === "RE_RESOLVE_CRYPTO") {
-    return <span className="text-muted-foreground text-[10px]">Re-import after v2.10.1</span>;
+    return <span className="text-muted-foreground text-[10px]">Re-import to refresh</span>;
   }
   if (d.action === "INFO_ONLY") {
     return (

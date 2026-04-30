@@ -140,9 +140,6 @@ export default function WatcherPanel({
                   {total} pending
                 </Badge>
               )}
-              <Badge variant="outline" className="text-[10px] uppercase">
-                New v2.12
-              </Badge>
             </CardTitle>
             <CardDescription>
               Background watcher detects new splits, ticker migrations, and DRIP gaps that happen

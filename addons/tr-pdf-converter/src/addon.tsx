@@ -32,7 +32,7 @@ const enable: AddonEnableFunction = (context: AddonContext) => {
       ),
     });
 
-    context.api.logger.info("📄 TR PDF Converter enabled (v2.2 native)");
+    context.api.logger.info("[TR PDF] addon enabled");
   } catch (error) {
     context.api.logger.error(`Failed to enable TR PDF Converter: ${(error as Error).message}`);
     added.forEach((item) => item.remove());
