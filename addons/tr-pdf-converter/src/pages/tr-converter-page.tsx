@@ -1760,7 +1760,9 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 )}
               </div>
               {activeDetailsTab === "cash" && cashCount > 0 && <CashTable rows={state.cash} />}
-              {activeDetailsTab === "trading" && state.pnl && <TradingTable pnl={state.pnl} />}
+              {activeDetailsTab === "trading" && state.trading.length > 0 && (
+                <TradesPreviewTable trades={state.trading} />
+              )}
               {activeDetailsTab === "mmf" && state.interest.length > 0 && (
                 <InterestTable rows={state.interest} />
               )}
@@ -2117,47 +2119,108 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
   );
 }
 
-function TradingTable({ pnl }: { pnl: EnhancedPnLResult }) {
+/**
+ * Per-trade preview of the EXACT 14 fields the addon will send to
+ * Donkeyfolio for each BUY/SELL row. Replaces the old aggregated P&L view
+ * so the user can verify column-by-column what gets imported BEFORE
+ * clicking Import.
+ *
+ * The 14 columns map 1:1 to the ActivityCreate / SymbolInput payload built
+ * in handleImport — if a cell here is empty, that field will also be
+ * empty in the imported activity.
+ */
+function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
+  // Sort chronologically so FIFO cost-basis math is intuitive when scanning.
+  const sorted = React.useMemo(
+    () => [...trades].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
+    [trades],
+  );
+
   return (
     <Card>
-      <div className="max-h-[480px] overflow-auto">
+      <div className="max-h-[600px] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Stock</TableHead>
-              <TableHead>ISIN</TableHead>
-              <TableHead className="text-right">Held</TableHead>
-              <TableHead className="text-right">Avg cost</TableHead>
-              <TableHead className="text-right">Bought</TableHead>
-              <TableHead className="text-right">Sold</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Asset</TableHead>
+              <TableHead className="font-mono text-xs">ISIN</TableHead>
+              <TableHead className="font-mono text-xs">Symbol</TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Unit price</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead className="text-right">Fee</TableHead>
+              <TableHead>Currency</TableHead>
+              <TableHead>Quote ccy</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead>Comment</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pnl.positions.map((p) => (
-              <TableRow key={p.isin}>
-                <TableCell className="max-w-xs truncate" title={p.stockName}>
-                  {p.stockName}
-                </TableCell>
-                <TableCell className="font-mono text-xs">{p.isin}</TableCell>
-                <TableCell className="text-right font-mono">{formatQty(p.qtyHeld)}</TableCell>
-                <TableCell className="text-right font-mono">
-                  {p.avgCostBasis > 0 ? formatEur(p.avgCostBasis) : "—"}
-                </TableCell>
-                <TableCell className="text-right font-mono">{formatEur(p.totalBought)}</TableCell>
-                <TableCell className="text-right font-mono">{formatEur(p.totalSold)}</TableCell>
-                <TableCell>
-                  <Badge
-                    variant={p.status === "Open" ? "outline" : "secondary"}
-                    className="text-xs"
-                  >
-                    {p.status}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
+            {sorted.map((t, i) => {
+              const mapped = t.isin ? lookupTicker(t.isin) : null;
+              const isCrypto = /^XF000/.test(t.isin);
+              const kind = isCrypto ? "CRYPTO" : (mapped?.instrumentType ?? "EQUITY");
+              const symbol = mapped?.symbol ?? t.isin;
+              const assetName = mapped?.displayName || t.cleanStockName || t.stockName || "—";
+              const qty = t.quantity ?? null;
+              const totalCash = Math.abs(t.amount);
+              // Same fee policy as tr-to-activities.ts:359
+              //   - Manual buy/sell : €1
+              //   - Savings plan    : €0
+              const fee = t.isSavingsPlan ? 0 : 1;
+              const grossAmount = t.isBuy ? totalCash - fee : totalCash + fee;
+              const useFeeAdjustment = grossAmount > 0;
+              const amount = useFeeAdjustment ? grossAmount : totalCash;
+              const effectiveFee = useFeeAdjustment ? fee : 0;
+              const unitPrice = qty && qty > 0 ? amount / qty : null;
+              const dropped = !qty || qty <= 0;
+              return (
+                <TableRow
+                  key={`${t.date}-${t.isin}-${i}`}
+                  className={dropped ? "bg-amber-50 dark:bg-amber-950/30" : undefined}
+                >
+                  <TableCell className="font-mono text-xs">{t.date.slice(0, 10)}</TableCell>
+                  <TableCell>
+                    <Badge variant={t.isBuy ? "outline" : "secondary"} className="text-xs">
+                      {t.isBuy ? "BUY" : "SELL"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="max-w-[200px] truncate" title={assetName}>
+                    {assetName}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.isin || "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{symbol}</TableCell>
+                  <TableCell className="text-xs">{kind}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {qty ? formatQty(qty) : <span className="text-amber-600">missing</span>}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    {unitPrice ? formatEur(unitPrice) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right font-mono">{formatEur(amount)}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {effectiveFee > 0 ? formatEur(effectiveFee) : "—"}
+                  </TableCell>
+                  <TableCell className="text-xs">EUR</TableCell>
+                  <TableCell className="text-xs">{mapped?.quoteCcy ?? "EUR"}</TableCell>
+                  <TableCell className="text-xs">
+                    {t.isSavingsPlan ? "Savings plan" : "Manual"}
+                  </TableCell>
+                  <TableCell className="max-w-[240px] truncate text-xs" title={t.cleanStockName}>
+                    {t.tradeId ? `Order ${t.tradeId}` : "—"}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
+      </div>
+      <div className="text-muted-foreground border-t px-3 py-2 text-xs">
+        14 columns shown · matches the exact ActivityCreate + SymbolInput payload that goes to
+        Donkeyfolio. Rows shaded amber are dropped at import (qty missing).
       </div>
     </Card>
   );
