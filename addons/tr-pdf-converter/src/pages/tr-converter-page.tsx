@@ -1,4 +1,4 @@
-import type { Account, AddonContext } from "@wealthfolio/addon-sdk";
+import type { Account, ActivityCreate, AddonContext } from "@wealthfolio/addon-sdk";
 import {
   Badge,
   Button,
@@ -687,73 +687,95 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           const sym = a.symbol || "";
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let symbolPayload: any;
+          // (v2.19.5) Aligned with the Rust source-of-truth NewActivity
+          // struct (crates/core/src/activities/activities_model.rs:241).
+          // SDK's ActivityCreate TS interface is INCOMPLETE — Rust accepts
+          // more fields at top level (idempotencyKey, sourceSystem,
+          // sourceRecordId, sourceGroupId, status, needsReview).
+          //
+          // Mapping fixes vs prior versions:
+          //   - SymbolInput.instrumentType → SymbolInput.kind  (rename)
+          //   - top-level assetName        → SymbolInput.name  (move)
+          //   - top-level instrumentType   → SymbolInput.kind  (move)
+          //   - top-level quoteCcy         → metadata JSON     (no other home)
+          //   - top-level idempotencyKey/sourceSystem/sourceRecordId  KEPT
+          //     at top level (valid per Rust struct).
           const mapped = sym ? lookupTicker(sym) || discoveryMap.get(sym) || null : null;
           if (mapped) {
             symbolPayload = {
               symbol: mapped.symbol,
               exchangeMic: mapped.exchangeMic,
               name: mapped.displayName || a.symbolName,
-              instrumentType: mapped.instrumentType,
-              quoteCcy: mapped.quoteCcy ?? acct.currency,
+              kind: mapped.instrumentType,
             };
           } else if (sym && isISIN(sym) && isCryptoPseudo(sym)) {
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
-              instrumentType: "CRYPTO",
+              kind: "CRYPTO",
               quoteMode: "MANUAL",
-              quoteCcy: acct.currency,
             };
           } else if (sym && isISIN(sym)) {
             symbolPayload = {
               symbol: sym,
               exchangeMic: sym.startsWith("IE") ? TR_EQUITY_EU_EXCHANGE : undefined,
               name: a.symbolName,
-              instrumentType: "EQUITY",
-              quoteCcy: acct.currency,
+              kind: "EQUITY",
             };
           } else if (sym && !isCashOnlySymbol(sym)) {
             symbolPayload = {
               symbol: sym,
               name: a.symbolName,
-              instrumentType: "EQUITY",
-              quoteCcy: acct.currency,
+              kind: "EQUITY",
             };
           } else {
             symbolPayload = undefined;
           }
-          const idemKey = `tr-pdf-v2.19.2:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
+
+          // Defensive: ensure activityDate is a YYYY-MM-DD string. Rust
+          // NewActivity.activity_date validates as RFC3339 or YYYY-MM-DD;
+          // a Date object stringified by JSON is fine, but a missing/empty
+          // date silently leaves the column blank in the activities UI.
+          const rawDate = a.date;
+          const activityDate =
+            typeof rawDate === "string"
+              ? rawDate.slice(0, 10)
+              : rawDate instanceof Date
+                ? rawDate.toISOString().slice(0, 10)
+                : new Date().toISOString().slice(0, 10);
+
+          const idemKey = `tr-pdf-v2.19.5:${state.fileName || "unknown"}:${a.lineNumber ?? "?"}:${
             a.symbol || "cash"
-          }:${(a.date as string).slice(0, 10)}`;
-          // (v2.19.2) Pass every field explicitly so Donkeyfolio's
-          // activities table is filled completely (fxRate, exchangeMic,
-          // assetName, etc.) — fixes the user's complaint that addon
-          // imports leave columns empty vs CSV import which has them all.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const createPayload: any = {
+          }:${activityDate}`;
+
+          // The SDK TS type doesn't enumerate idempotencyKey/sourceSystem/
+          // etc. but the Rust deserializer accepts them. We use `as any` on
+          // the cast so TS doesn't complain — runtime contract is what counts.
+          const createPayload = {
             accountId: acct.id,
             activityType: a.activityType,
-            activityDate: a.date as string,
+            activityDate,
             subtype: a.subtype ?? null,
             symbol: symbolPayload,
             quantity: a.quantity ?? 0,
             unitPrice: a.unitPrice ?? 0,
             amount: a.amount ?? 0,
             currency: a.currency,
-            // EUR-account convention: every TR row is already in account
-            // currency so fxRate=1 (no FX conversion needed at activity
-            // level). USD assets are converted via asset.quote_ccy + market
-            // FX, not per-activity.
+            // EUR-account: every TR row is already in EUR so fxRate=1.
+            // USD assets are FX-converted at the asset/quote layer, not here.
             fxRate: 1,
             fee: a.fee ?? 0,
             comment: a.comment ?? null,
-            assetName: a.symbolName ?? symbolPayload?.name ?? null,
-            instrumentType: a.instrumentType ?? symbolPayload?.instrumentType ?? null,
-            quoteCcy: a.quoteCcy ?? acct.currency,
+            // metadata is a JSON blob (Rust: Option<String>). Stringify it.
+            metadata: JSON.stringify({
+              quoteCcy: a.quoteCcy ?? acct.currency,
+              assetName: a.symbolName ?? symbolPayload?.name ?? null,
+            }),
+            // These ARE valid top-level fields per Rust NewActivity.
             idempotencyKey: idemKey,
             sourceSystem: "TR_PDF",
             sourceRecordId: idemKey,
-          };
+          } as ActivityCreate;
           await ctx.api.activities.create(createPayload);
           imported += 1;
         } catch (err) {
