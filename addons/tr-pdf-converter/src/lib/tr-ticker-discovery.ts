@@ -63,6 +63,158 @@ interface YahooSearchResponse {
   };
 }
 
+/**
+ * (v2.20.3) Live metadata fetch from Yahoo's quote endpoint.
+ * Returns the EXACT currency, exchange MIC, and instrument type that
+ * Yahoo sees for this ticker — no hardcoded suffix→currency tables.
+ *
+ * Why not hardcode:
+ *   The user pointed out (correctly) that hardcoded suffix→currency maps
+ *   inevitably get stale. Listings move exchanges, ETFs get re-issued,
+ *   ADRs vs ordinaries differ. Asking Yahoo directly is the source of
+ *   truth that updates automatically as exchanges/listings evolve.
+ *
+ * Endpoint: GET https://query2.finance.yahoo.com/v7/finance/quote?symbols=X
+ *   Returns: { quoteResponse: { result: [{ currency, fullExchangeName,
+ *             exchange, quoteType, ... }] } }
+ *
+ * Errors (rate limit, network, parse) all return null → caller falls back
+ * to a conservative EUR default (matches TR account currency for the user).
+ */
+interface YahooQuoteMetadata {
+  currency: string;
+  /** Yahoo's exchange code, mapped to ISO 10383 MIC where known. */
+  exchangeMic?: string;
+  /** Mapped to our InstrumentType taxonomy. */
+  instrumentType: string;
+}
+
+interface YahooQuoteResponse {
+  quoteResponse?: {
+    result?: Array<{
+      symbol?: string;
+      currency?: string;
+      exchange?: string;
+      fullExchangeName?: string;
+      quoteType?: string;
+    }>;
+  };
+}
+
+/**
+ * Map Yahoo's `quoteType` (closed enum from their API) to our taxonomy.
+ * Defensive default = EQUITY. Not hardcoded data — translation layer.
+ */
+function quoteTypeToInstrument(quoteType?: string): string {
+  switch ((quoteType ?? "").toUpperCase()) {
+    case "ETF":
+      return "ETF";
+    case "MUTUALFUND":
+    case "MUTUAL_FUND":
+      return "MUTUAL_FUND";
+    case "CRYPTOCURRENCY":
+      return "CRYPTO";
+    case "BOND":
+      return "BOND";
+    case "INDEX":
+      return "INDEX";
+    default:
+      return "EQUITY";
+  }
+}
+
+/**
+ * Yahoo's `exchange` is a short code (NMS/NYQ/GER/etc.). The few we care
+ * about for MIC enrichment are listed here — but if the code is unknown
+ * we just leave exchangeMic undefined (the asset still works without it).
+ *
+ * This is a TRANSLATION (Yahoo internal code → ISO MIC standard), not a
+ * data hardcode. Yahoo doesn't expose MIC directly, so this thin map is
+ * required to interop with the standards-compliant Wealthfolio backend.
+ */
+function exchangeToMic(exchange?: string): string | undefined {
+  if (!exchange) return undefined;
+  const code = exchange.toUpperCase();
+  // NMS=NASDAQ Mid/Small, NGM=NASDAQ Global Mkt, NYQ=NYSE
+  if (code === "NMS" || code === "NGM" || code === "NCM") return "XNAS";
+  if (code === "NYQ" || code === "NYS") return "XNYS";
+  if (code === "ASE") return "XASE"; // NYSE American
+  if (code === "PCX") return "ARCX"; // NYSE Arca
+  if (code === "BTS") return "BATS";
+  // Yahoo also returns short codes like "GER" (Xetra) for non-US — but
+  // those are inconsistent across regions. Leaving undefined here lets
+  // the asset profile use its own auto-inference based on instrumentSymbol.
+  return undefined;
+}
+
+const QUOTE_META_CACHE_KEY = "tr-pdf-converter:yahoo-quote-meta:v1";
+
+function loadQuoteMetaCache(): Record<string, YahooQuoteMetadata | null> {
+  try {
+    const raw =
+      typeof localStorage !== "undefined" ? localStorage.getItem(QUOTE_META_CACHE_KEY) : null;
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function saveQuoteMetaCache(cache: Record<string, YahooQuoteMetadata | null>) {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(QUOTE_META_CACHE_KEY, JSON.stringify(cache));
+    }
+  } catch {
+    // localStorage full or disabled — silently skip caching.
+  }
+}
+
+/**
+ * Fetch real currency + exchange + instrumentType from Yahoo for one
+ * ticker symbol. Cached forever in localStorage (the answer doesn't
+ * change except when an asset gets re-listed, and TR users hold for
+ * months/years so even occasional staleness is irrelevant).
+ *
+ * Returns null on any failure — caller falls through to a conservative
+ * default (EUR / EQUITY) so the import doesn't fail outright.
+ */
+async function fetchYahooQuoteMetadata(symbol: string): Promise<YahooQuoteMetadata | null> {
+  if (!symbol) return null;
+  const cache = loadQuoteMetaCache();
+  if (Object.prototype.hasOwnProperty.call(cache, symbol)) {
+    return cache[symbol];
+  }
+  const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
+  try {
+    const res = await fetch(url, { method: "GET", headers: { Accept: "application/json" } });
+    if (!res.ok) {
+      cache[symbol] = null;
+      saveQuoteMetaCache(cache);
+      return null;
+    }
+    const json = (await res.json()) as YahooQuoteResponse;
+    const result = json.quoteResponse?.result?.[0];
+    if (!result || !result.currency) {
+      cache[symbol] = null;
+      saveQuoteMetaCache(cache);
+      return null;
+    }
+    const meta: YahooQuoteMetadata = {
+      currency: result.currency,
+      exchangeMic: exchangeToMic(result.exchange),
+      instrumentType: quoteTypeToInstrument(result.quoteType),
+    };
+    cache[symbol] = meta;
+    saveQuoteMetaCache(cache);
+    return meta;
+  } catch {
+    cache[symbol] = null;
+    saveQuoteMetaCache(cache);
+    return null;
+  }
+}
+
 const CACHE_KEY = "tr-pdf-converter:discovered-tickers:v1";
 
 function loadCache(): Record<string, TickerMapping | null> {
@@ -178,9 +330,24 @@ export async function discoverTickers(
       }
       if (!result) result = await searchYahoo(req.isin);
 
-      const mapping: TickerMapping | null = result
-        ? { symbol: result.symbol, instrumentType: "EQUITY", quoteCcy: "USD" }
-        : null;
+      // (v2.20.3) Live metadata fetch — no hardcoded suffix→currency table.
+      // We ask Yahoo's quote endpoint directly for the ticker we just
+      // discovered, getting the EXACT currency, exchangeMic and
+      // instrumentType that Yahoo serves. Cached forever in localStorage
+      // so re-imports are instant. Falls back to EUR/EQUITY when Yahoo
+      // doesn't answer (e.g. obscure ISIN, rate limit) — better to default
+      // to TR account currency than guess wrong with hardcoded heuristics.
+      let mapping: TickerMapping | null = null;
+      if (result) {
+        const meta = await fetchYahooQuoteMetadata(result.symbol);
+        mapping = {
+          symbol: result.symbol,
+          instrumentType: meta?.instrumentType ?? "EQUITY",
+          quoteCcy: meta?.currency ?? "EUR",
+          exchangeMic: meta?.exchangeMic,
+          displayName: result.name,
+        };
+      }
       cache[req.isin] = mapping;
       out.push({
         isin: req.isin,
@@ -200,18 +367,28 @@ export async function discoverTickers(
   return out;
 }
 
-/** Build a lookup map from discovery results. */
+/**
+ * Build a lookup map from discovery results, enriched with the live
+ * metadata cached during discovery. (v2.20.3)
+ *
+ * The metadata cache is populated by `fetchYahooQuoteMetadata` during
+ * `discoverTickers`, so by the time we build this map every symbol
+ * already has its real currency + instrumentType + exchangeMic ready.
+ * No round-trips here, just a localStorage read per result.
+ */
 export function buildDiscoveryMap(results: DiscoveryResult[]): Map<string, TickerMapping> {
   const map = new Map<string, TickerMapping>();
+  const metaCache = loadQuoteMetaCache();
   for (const r of results) {
-    if (r.symbol) {
-      map.set(r.isin, {
-        symbol: r.symbol,
-        instrumentType: "EQUITY",
-        quoteCcy: "USD",
-        displayName: r.matchedName,
-      });
-    }
+    if (!r.symbol) continue;
+    const meta = metaCache[r.symbol] ?? null;
+    map.set(r.isin, {
+      symbol: r.symbol,
+      instrumentType: meta?.instrumentType ?? "EQUITY",
+      quoteCcy: meta?.currency ?? "EUR",
+      exchangeMic: meta?.exchangeMic,
+      displayName: r.matchedName,
+    });
   }
   return map;
 }
