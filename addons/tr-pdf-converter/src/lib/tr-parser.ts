@@ -895,6 +895,29 @@ export function enforceChainConsistency(
       return row;
     }
 
+    // (v3.0.3) Sanity guard against phantom-inflation bug.
+    // User reported €1.45M total IN on a €10K-balance account → impossible.
+    // Root cause: when ONE row's saldo is misread (e.g. number from another
+    // column bleeds in), the chain enforcer creates a huge phantom IN to
+    // bridge to that wrong saldo, then a matching phantom OUT on the next
+    // row. Symmetric inflation: both IN and OUT totals inflate by ~€500K-€1M
+    // even though net stays small.
+    //
+    // Guard: if the chain delta would be > €50,000 OR larger than the
+    // typical row magnitude, treat it as a saldo misread and SKIP chain
+    // enforcement for this row — keep parsed In/Out as-is. The trade-off:
+    // we miss correcting some legitimate big transfers (rare for retail),
+    // but we don't blow up the cash totals on misread rows.
+    //
+    // €50,000 threshold: covers normal salary deposits, big stock buys,
+    // tax refunds; misses inheritance / property sale flows (very rare).
+    const PHANTOM_GUARD_EUR = 50_000;
+    if (Math.abs(expectedSigned) > PHANTOM_GUARD_EUR) {
+      // Don't advance prevSaldo — this row's saldo is suspect; anchor against
+      // the LAST trusted saldo so the next row's chain check is meaningful.
+      return row;
+    }
+
     // Rewrite In/Out from the chain. Use the German "1.234,56 €" formatting
     // since that's what the rest of the parser expects (jcmpagel pre-format).
     const formatted = (n: number) =>

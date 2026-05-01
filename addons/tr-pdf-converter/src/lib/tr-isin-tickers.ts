@@ -366,7 +366,16 @@ const EQUITIES: Record<string, TickerMapping> = {
   }, // Kraken Robotics on TSXV (Yahoo: PNG.V — confirmed by user). Despite the
   // company graduating to TSX, Yahoo's data still flows through the .V ticker.
   CA26142Q3044: { symbol: "DPRO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Draganfly
-  FI0009000681: { symbol: "NOK", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nokia ADR
+  // (v3.0.3) Nokia: TR PT routes through Helsinki (NOKIA.HE) in EUR, not the
+  // NYSE ADR (NOK/USD). The ADR has different price ratios. Confirmed Helsinki
+  // is the primary listing for Finnish ISIN FI0009000681.
+  FI0009000681: {
+    symbol: "NOKIA.HE",
+    quoteCcy: "EUR",
+    exchangeMic: "XHEL",
+    instrumentType: "EQUITY",
+    displayName: "Nokia",
+  },
   IT0003027817: {
     symbol: "IRE.MI",
     exchangeMic: "XMIL",
@@ -394,7 +403,16 @@ const EQUITIES: Record<string, TickerMapping> = {
     instrumentType: "EQUITY",
   }, // Siemens Energy
   GB00BMHVL512: { symbol: "KLAR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Klarna
-  NL0010273215: { symbol: "ASML", quoteCcy: "USD", instrumentType: "EQUITY" }, // ASML ADR
+  // (v3.0.3) ASML: TR PT routes through Amsterdam (ASML.AS) in EUR, not the
+  // NYSE ADR (ASML/USD). Both share the same Dutch ISIN NL0010273215 but
+  // ASML.AS is primary, EUR-quoted, and has more liquidity for EU investors.
+  NL0010273215: {
+    symbol: "ASML.AS",
+    quoteCcy: "EUR",
+    exchangeMic: "XAMS",
+    instrumentType: "EQUITY",
+    displayName: "ASML Holding",
+  },
   DK0015998017: {
     symbol: "BAVA.CO",
     exchangeMic: "XCSE",

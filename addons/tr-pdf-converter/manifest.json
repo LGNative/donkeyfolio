@@ -1,7 +1,7 @@
 {
   "id": "tr-pdf-converter-addon",
   "name": "TR PDF Converter",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Native Trade Republic PDF parser — extracts cash transactions, money market funds, and trading P&L. Direct import to Donkeyfolio activities with quantity + unit price. Includes Holdings Diagnostics panel and self-healing portfolio watcher: auto-detects new stock splits, ticker migrations, and DRIP gaps that happen AFTER your last PDF import. Ported from @jcmpagel's open-source converter.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",

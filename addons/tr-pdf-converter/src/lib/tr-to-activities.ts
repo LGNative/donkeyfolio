@@ -264,6 +264,36 @@ function classifyCashType(
     return { type: ACT.CREDIT, subtype: "BONUS" };
   }
 
+  // (v3.0.3) Typ-based fallbacks for TR PT specifically.
+  // The user reported 167 rows with typ="Earnings" and 15 rows with
+  // typ="Reward" falling through to generic DEPOSIT, when they're really
+  // dividend/interest income or saveback bonuses. Without seeing every
+  // possible description we can't match by keyword, so we infer from typ.
+  //
+  // Best-guess defaults that minimize harm:
+  //   - typ Earnings/Ganhos/Rendimentos → INTEREST (covers MMF interest,
+  //     savings interest, even crypto staking when keyword missed). For
+  //     ASSET-backed earnings (with ISIN in description) we'd want
+  //     DIVIDEND, but the activity builder downstream creates a BUY
+  //     activity for any cash row with a known ISIN, so this only fires
+  //     for cash-only earnings rows.
+  //   - typ Reward/Recompensa → CREDIT/Bonus (Saveback for TR cardholders,
+  //     promotional referrals, etc.). Always incoming.
+  const typLower = (typ || "").toLowerCase();
+  if (
+    typLower.includes("earning") ||
+    typLower.includes("ganho") ||
+    typLower.includes("rendiment")
+  ) {
+    return { type: ACT.INTEREST };
+  }
+  if (
+    incoming > 0 &&
+    (typLower.includes("reward") || typLower.includes("recompens") || typLower === "prêmio")
+  ) {
+    return { type: ACT.CREDIT, subtype: "BONUS" };
+  }
+
   // Generic in/out → deposit/withdrawal (covers "Transfer", "Depósito aceite",
   // "Auszahlung", "Withdrawal", "Lastschrift", anything else with cash flow).
   if (incoming > 0) return { type: ACT.DEPOSIT };
