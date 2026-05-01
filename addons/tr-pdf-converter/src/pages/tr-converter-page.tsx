@@ -1431,7 +1431,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   // ─── RENDER ───────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
+    <div className="mx-auto max-w-7xl space-y-6 p-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -1851,6 +1851,20 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {/* (v3.0.2) AI Wizard ALSO available pre-import. After parsing
+              completes (state.status === "done"), the wizard lets the user
+              configure the API key and run a sanity check on the parsed
+              data BEFORE committing it to Donkeyfolio. Catches inflated
+              values, parser bugs, etc. before they become DB writes. */}
+          {!isImported && state.status === "done" && state.trading.length > 0 && (
+            <AiWizardPanel
+              ctx={ctx}
+              accountId={selectedAccountId || null}
+              baseCurrency={accounts.find((a) => a.id === selectedAccountId)?.currency ?? "EUR"}
+              trades={state.trading}
+            />
           )}
 
           {/* ─── STATE 5: Imported (success) ─── */}
