@@ -401,7 +401,16 @@ const EQUITIES: Record<string, TickerMapping> = {
     quoteCcy: "DKK",
     instrumentType: "EQUITY",
   }, // Bavarian Nordic
-  DK0062498333: { symbol: "NVO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Novo Nordisk ADR
+  // Novo Nordisk B-shares (Danish ISIN). User correction: TR PT routes
+  // through Xetra in EUR — NOT the NYSE ADR (NVO/USD). The ADR has different
+  // dividends and price (it's 0.5× the B-share). Xetra match is NOVO-B.DE.
+  DK0062498333: {
+    symbol: "NOVO-B.DE",
+    quoteCcy: "EUR",
+    exchangeMic: "XETR",
+    instrumentType: "EQUITY",
+    displayName: "Novo Nordisk",
+  },
   US58733R1023: { symbol: "MELI", quoteCcy: "USD", instrumentType: "EQUITY" }, // MercadoLibre (description was truncated to just "INC." but user confirmed)
   US09175A2069: { symbol: "BMNR", quoteCcy: "USD", instrumentType: "EQUITY" }, // BitMine Immersion (description was clear)
   US5949724083: { symbol: "MSTR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Strategy (formerly MicroStrategy — Michael Saylor's bitcoin treasury company)

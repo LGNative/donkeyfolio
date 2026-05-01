@@ -1880,15 +1880,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 </CardContent>
               </Card>
 
-              {/* (v3.0.0) AI Validation Wizard — sits between import-success
-                  and the Holdings audit. After import, paste TR app data
-                  here, Claude diffs and proposes fixes you approve. */}
-              <AiWizardPanel
-                ctx={ctx}
-                accountId={selectedAccountId || null}
-                baseCurrency={accounts.find((a) => a.id === selectedAccountId)?.currency ?? "EUR"}
-                trades={state.trading}
-              />
+              {/* (v3.0.0) AI Validation Wizard — also rendered at the top of
+                  the page (pre-import) so the user can configure their key
+                  and run a sanity check on the parsed data BEFORE committing
+                  it to Donkeyfolio. Below import-success it stays as the
+                  post-import diff view. Both call the same component. */}
 
               {/* Holdings audit / manual reconciliation */}
               <Card>
