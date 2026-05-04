@@ -37,6 +37,67 @@
 export type AmountLocale = "dot-decimal" | "comma-decimal";
 
 /**
+ * Parse-quality telemetry. Counts how many values went through the strict
+ * (regex-only, no guessing) path vs the lenient heuristic fallback.
+ * High strict-hit ratio = trustworthy numbers. High heuristic ratio
+ * = some PDF rows have unusual formatting and need attention.
+ */
+const _parseStats = { strictHits: 0, heuristicHits: 0 };
+export function getParseStats(): { strictHits: number; heuristicHits: number } {
+  return { ..._parseStats };
+}
+export function resetParseStats(): void {
+  _parseStats.strictHits = 0;
+  _parseStats.heuristicHits = 0;
+}
+
+/**
+ * Strict-format regexes per locale. Match the EXACT shape TR emits.
+ * Anything that doesn't match is rejected (returns null) rather than
+ * being subjected to lossy heuristics. This is the v3.1.2 "no guessing"
+ * approach inspired by TrackRepublic (DE-only `\d{1,3}(?:\.\d{3})*,\d{2}`).
+ *
+ * Patterns accept:
+ *   - optional minus
+ *   - optional thousands separators in groups of 3
+ *   - REQUIRED 2-decimal tail (TR currency precision)
+ *   - 3-decimal tail allowed for the rare 3dp case (interest accruals)
+ */
+const RE_STRICT_PT_2DP = /^-?\d{1,3}(?:,\d{3})*\.\d{2}$/;
+const RE_STRICT_PT_3DP = /^-?\d{1,3}(?:,\d{3})*\.\d{3}$/;
+const RE_STRICT_DE_2DP = /^-?\d{1,3}(?:\.\d{3})*,\d{2}$/;
+const RE_STRICT_DE_3DP = /^-?\d{1,3}(?:\.\d{3})*,\d{3}$/;
+
+/**
+ * Strict parser. Returns the parsed number when the cleaned string EXACTLY
+ * matches the expected locale pattern, or null when it doesn't (caller
+ * decides: skip, log, or fall back to lenient parse).
+ *
+ * Eliminates the X.YYY inflation bug by design — there's no heuristic to
+ * misfire. Either the format is exactly right, or we refuse to guess.
+ */
+export function parseEuroAmountStrict(
+  raw: string | null | undefined,
+  locale: AmountLocale,
+): number | null {
+  if (!raw) return null;
+  const cleaned = String(raw).replace(/[€\s]/g, "").replace(/^\+/, "");
+  if (!cleaned) return null;
+  if (locale === "comma-decimal") {
+    if (RE_STRICT_DE_2DP.test(cleaned) || RE_STRICT_DE_3DP.test(cleaned)) {
+      const n = parseFloat(cleaned.replace(/\./g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    }
+  } else {
+    if (RE_STRICT_PT_2DP.test(cleaned) || RE_STRICT_PT_3DP.test(cleaned)) {
+      const n = parseFloat(cleaned.replace(/,/g, ""));
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+  return null;
+}
+
+/**
  * Infer the dominant locale from a corpus of value strings. Counts
  * unambiguous 2-digit-after-separator patterns and returns whichever wins.
  * Tie or empty corpus → "dot-decimal" (TR PT/EN default).
@@ -78,6 +139,17 @@ export function parseEuroAmount(
   locale: AmountLocale = "dot-decimal",
 ): number {
   if (!raw) return 0;
+  // (v3.1.2) Try STRICT parse first — covers 99% of TR values cleanly
+  // and is immune to the X.YYY heuristic bug by design. Only fall through
+  // to lenient heuristics for edge cases (rare formats, sub-cent values,
+  // etc.). Counts strict-hit vs heuristic-hit for the UI's parse-quality
+  // indicator.
+  const strict = parseEuroAmountStrict(raw, locale);
+  if (strict !== null) {
+    _parseStats.strictHits += 1;
+    return strict;
+  }
+  _parseStats.heuristicHits += 1;
   const s = String(raw).replace(/[€\s]/g, "");
   if (!s) return 0;
   const hasComma = s.includes(",");

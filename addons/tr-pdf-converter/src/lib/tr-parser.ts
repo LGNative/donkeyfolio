@@ -18,6 +18,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import {
   detectAmountLocale,
   parseEuroAmount as parseEuroAmountShared,
+  resetParseStats,
   type AmountLocale,
 } from "./tr-amount";
 import { extractIsin as extractValidIsin } from "./tr-isin-utils";
@@ -652,6 +653,9 @@ export async function parsePDF(
   onProgress?: (page: number, total: number) => void,
 ): Promise<ParseResult> {
   ensureLoaded();
+  // (v3.1.2) Reset parse-quality telemetry per call so the strict/heuristic
+  // hit counts reflect THIS PDF only.
+  resetParseStats();
   // utils.js's own pdf worker IIFE may have overwritten workerSrc with a
   // broken relative path. Force-reset to our blob URL before parsing.
   pdfjsLib.GlobalWorkerOptions.workerSrc = getWorkerUrl();

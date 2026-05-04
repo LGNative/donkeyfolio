@@ -28,7 +28,7 @@
  *   renamed so cached responses from older versions get invalidated.
  */
 
-import { parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
+import { getParseStats, parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
 import {
   getDetectedLocale,
   type CashTransaction,
@@ -174,6 +174,8 @@ export interface ValidationSnapshot {
     tradeCount: number;
     interestRowCount: number;
     cashRowCount: number;
+    parseStrictHits: number;
+    parseHeuristicHits: number;
   };
   perIsin: PerIsinFigure[];
   perCurrency: PerCurrencyFigure[];
@@ -538,6 +540,12 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
       tradeCount: input.trades.length,
       interestRowCount: input.interest.length,
       cashRowCount: input.cash.length,
+      // (v3.1.2) Parse quality telemetry — strict-hit ratio shows how many
+      // values went through the regex-only path vs the lenient heuristic
+      // fallback. 100% strict = trustworthy numbers; lower = some rows have
+      // unusual formatting and may need attention.
+      parseStrictHits: getParseStats().strictHits,
+      parseHeuristicHits: getParseStats().heuristicHits,
     },
     perIsin,
     perCurrency,

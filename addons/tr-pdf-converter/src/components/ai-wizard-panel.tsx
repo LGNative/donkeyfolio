@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.1.1";
+const ADDON_VERSION = "3.1.2";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -259,12 +259,31 @@ export default function AiWizardPanel({
 
       {/* Snapshot preview tile — what Claude is going to see */}
       <div className="bg-muted/30 border-b px-3 py-2 text-xs">
-        <div className="mb-1 font-medium">
-          Snapshot {snapshot.meta.schemaVersion} · {snapshot.totals.tradeCount} trades ·{" "}
-          {snapshot.totals.holdingsCount} ISINs ·{" "}
-          {snapshot.meta.period.from && snapshot.meta.period.to
-            ? `${snapshot.meta.period.from} → ${snapshot.meta.period.to}`
-            : "sem período"}
+        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 font-medium">
+          <span>
+            Snapshot {snapshot.meta.schemaVersion} · {snapshot.totals.tradeCount} trades ·{" "}
+            {snapshot.totals.holdingsCount} ISINs ·{" "}
+            {snapshot.meta.period.from && snapshot.meta.period.to
+              ? `${snapshot.meta.period.from} → ${snapshot.meta.period.to}`
+              : "sem período"}
+          </span>
+          {/* Parse quality: % of values parsed via the strict regex path */}
+          {(() => {
+            const total = snapshot.totals.parseStrictHits + snapshot.totals.parseHeuristicHits;
+            if (total === 0) return null;
+            const pct = Math.round((snapshot.totals.parseStrictHits / total) * 100);
+            const cls =
+              pct === 100
+                ? "text-green-600 dark:text-green-400"
+                : pct >= 95
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-red-600 dark:text-red-400";
+            return (
+              <span className={`font-mono text-[10px] ${cls}`}>
+                Parse strict {pct}% ({snapshot.totals.parseStrictHits}/{total})
+              </span>
+            );
+          })()}
         </div>
         <div className="text-muted-foreground grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-4">
           <span>Investido: {fmtEur(snapshot.cashflow.invested)}</span>
