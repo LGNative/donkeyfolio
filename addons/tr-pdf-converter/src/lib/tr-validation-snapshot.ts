@@ -28,16 +28,20 @@
  *   renamed so cached responses from older versions get invalidated.
  */
 
-import type {
-  CashTransaction,
-  InterestTransaction,
-  StatementSummary,
-  TradingTransaction,
+import { parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
+import {
+  getDetectedLocale,
+  type CashTransaction,
+  type InterestTransaction,
+  type StatementSummary,
+  type TradingTransaction,
 } from "./tr-parser";
 import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "./tr-eur-holdings";
 
-/** Bump when the snapshot schema changes shape. Cache keys include this. */
-export const SNAPSHOT_VERSION = "v1";
+/** Bump when the snapshot schema changes shape. Cache keys include this.
+ *  v2 (3.1.1): added cashflow.internalTransfers / earnings / rewards;
+ *  switched dateRange to ISO-compare. */
+export const SNAPSHOT_VERSION = "v2";
 
 /**
  * Round to 2 / 6 / 8 decimals. We use fixed precision throughout so
@@ -71,12 +75,23 @@ export interface SnapshotMeta {
 }
 
 export interface CashflowBucket {
-  /** Total deposits (TRANSFER_IN, salary deposits, etc.) — excludes interest/dividends. */
+  /** External deposits (TRANSFER_IN from another bank, salary, etc.). EXCLUDES
+   *  internal transfers between TR sub-accounts (Save & Invest etc.). */
   deposits: number;
   /** Total withdrawals to external accounts (always positive). */
   withdrawals: number;
-  /** Money market & savings interest credited. */
+  /** Internal transfers between TR sub-accounts (Save & Invest, SECURITIES).
+   *  Tracked separately so the cashflow row doesn't double-count moves
+   *  between accounts the user already owns. */
+  internalTransfers: number;
+  /** Money-market / savings-account interest credited. NOTE: TR labels
+   *  staking/dividend rewards as "Earnings" or "Rewards" — those go into
+   *  `earnings` and `rewards`, not here. */
   interestIn: number;
+  /** Earnings (staking rewards, dividend-like distributions). */
+  earnings: number;
+  /** Rewards (referral bonuses, "Premio", "Bonus"). */
+  rewards: number;
   /** Card refunds, cashback, savebacks (always positive). */
   refunds: number;
   /** Trading fees (€1/manual, savings plan = €0). Always positive. */
@@ -180,29 +195,144 @@ export interface SnapshotInputs {
   pdfCount: number;
 }
 
-/** Parse a TR PDF balance string ("€1.234,56" / "€1,234.56" / "1234.56"). */
+/** (v3.1.1) Use the shared locale-aware parser so the snapshot tile and the
+ *  cash-flow summary table can never disagree again. */
 function parseAmount(raw: string | null | undefined): number {
-  if (!raw) return 0;
-  const s = String(raw).replace(/[€\s]/g, "");
-  if (!s) return 0;
-  const hasComma = s.includes(",");
-  const hasDot = s.includes(".");
-  let normalized = s;
-  if (hasComma && hasDot) {
-    normalized =
-      s.lastIndexOf(",") > s.lastIndexOf(".")
-        ? s.replace(/\./g, "").replace(",", ".")
-        : s.replace(/,/g, "");
-  } else if (hasComma) {
-    normalized = s.replace(",", ".");
-  }
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : 0;
+  return parseEuroAmountShared(raw, getDetectedLocale());
 }
 
-/** Classify a cash row into a cashflow bucket using its `typ` (multilingual). */
-function classifyCash(typ: string): keyof CashflowBucket | null {
+/**
+ * Convert a date string to ISO YYYY-MM-DD for stable string-comparison.
+ * Handles formats TR emits: "2024-06-20" (already ISO), "20.06.2024" (DE),
+ * "20/06/2024" (PT/EN), "20 Jun 2024" (display). Falls back to original
+ * string when format unrecognised — caller's comparison still won't crash,
+ * just may produce stale boundary values.
+ */
+function toIsoCompare(raw: string): string {
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw;
+  let m = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  m = raw.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]{3,})\.?\s+(\d{4})/);
+  if (m) {
+    const months: Record<string, string> = {
+      jan: "01",
+      fev: "02",
+      feb: "02",
+      mar: "03",
+      mär: "03",
+      abr: "04",
+      apr: "04",
+      mai: "05",
+      may: "05",
+      jun: "06",
+      giu: "06",
+      jul: "07",
+      lug: "07",
+      ago: "08",
+      aug: "08",
+      set: "09",
+      sep: "09",
+      out: "10",
+      okt: "10",
+      oct: "10",
+      nov: "11",
+      dez: "12",
+      dec: "12",
+      dic: "12",
+    };
+    const mm = months[m[2].toLowerCase().slice(0, 3)];
+    if (mm) return `${m[3]}-${mm}-${m[1].padStart(2, "0")}`;
+  }
+  return raw;
+}
+
+/**
+ * Classify a cash row into a cashflow bucket using its `typ` (multilingual)
+ * and optional description for sub-type hints. Order matters: more specific
+ * rules first (e.g. "internal transfer" must beat plain "transfer").
+ *
+ * v3.1.1 separates Earnings and Rewards from Interest (was lumped together
+ * pre-v3.1.1 and produced a misleading "Juros IN" total in the snapshot
+ * tile that disagreed with the per-type breakdown table).
+ */
+function classifyCash(typ: string, desc: string = ""): keyof CashflowBucket | null {
   const t = typ.toLowerCase();
+  const d = desc.toLowerCase();
+
+  // Internal transfer: TR moves between Cash / Save & Invest / SECURITIES.
+  // Match BEFORE plain transfer/deposit since description is the giveaway.
+  if (
+    t.includes("internal") ||
+    d.includes("save & invest") ||
+    d.includes("save and invest") ||
+    d.includes("rebalance") ||
+    d.includes("transferência interna") ||
+    d.includes("transferencia interna")
+  )
+    return "internalTransfers";
+
+  // Earnings: staking rewards, dividend-like distributions. Match before
+  // generic "deposit"/"transfer" because TR sometimes nests these under a
+  // generic typ but with a clear description.
+  if (
+    t.includes("earning") ||
+    t.includes("rendiment") ||
+    t.includes("ertrag") ||
+    t.includes("staking")
+  )
+    return "earnings";
+
+  // Rewards / bonus / referral / cashback — distinct from refund of money paid.
+  if (
+    t.includes("reward") ||
+    t.includes("bonus") ||
+    t.includes("recompens") ||
+    t.includes("premio") ||
+    t.includes("empfehlung") ||
+    t.includes("referral")
+  )
+    return "rewards";
+
+  if (
+    t.includes("interest") ||
+    t.includes("zins") ||
+    t.includes("juros") ||
+    t.includes("intereses") ||
+    t.includes("interessi") ||
+    t.includes("intéret") ||
+    t.includes("intéres")
+  )
+    return "interestIn";
+
+  if (
+    t.includes("refund") ||
+    t.includes("cashback") ||
+    t.includes("saveback") ||
+    t.includes("reembols") ||
+    t.includes("erstattung")
+  )
+    return "refunds";
+
+  if (
+    t.includes("tax") ||
+    t.includes("steuer") ||
+    t.includes("imposto") ||
+    t.includes("impuesto") ||
+    t.includes("imposta")
+  )
+    return "taxes";
+
+  if (
+    t.includes("withdraw") ||
+    t.includes("auszahlung") ||
+    t.includes("retirada") ||
+    t.includes("retrait") ||
+    t.includes("prelievo") ||
+    t.includes("levantament")
+  )
+    return "withdrawals";
+
   if (
     t.includes("deposit") ||
     t.includes("transfer") ||
@@ -214,42 +344,7 @@ function classifyCash(typ: string): keyof CashflowBucket | null {
     t.includes("entrada")
   )
     return "deposits";
-  if (
-    t.includes("withdraw") ||
-    t.includes("auszahlung") ||
-    t.includes("retirada") ||
-    t.includes("retrait") ||
-    t.includes("prelievo") ||
-    t.includes("levantament")
-  )
-    return "withdrawals";
-  if (
-    t.includes("interest") ||
-    t.includes("zins") ||
-    t.includes("intéret") ||
-    t.includes("intéres") ||
-    t.includes("juros") ||
-    t.includes("rendiment") ||
-    t.includes("earning") ||
-    t.includes("intereses")
-  )
-    return "interestIn";
-  if (
-    t.includes("refund") ||
-    t.includes("cashback") ||
-    t.includes("saveback") ||
-    t.includes("reembols") ||
-    t.includes("erstattung")
-  )
-    return "refunds";
-  if (
-    t.includes("tax") ||
-    t.includes("steuer") ||
-    t.includes("imposto") ||
-    t.includes("impuesto") ||
-    t.includes("imposta")
-  )
-    return "taxes";
+
   return null;
 }
 
@@ -263,7 +358,10 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   const cashflow: CashflowBucket = {
     deposits: 0,
     withdrawals: 0,
+    internalTransfers: 0,
     interestIn: 0,
+    earnings: 0,
+    rewards: 0,
     refunds: 0,
     tradingFees: 0,
     taxes: 0,
@@ -273,10 +371,16 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   for (const c of input.cash) {
     const inAmt = parseAmount(c.zahlungseingang);
     const outAmt = parseAmount(c.zahlungsausgang);
-    const bucket = classifyCash(c.typ);
+    const bucket = classifyCash(c.typ, c.beschreibung);
     if (bucket === "deposits") cashflow.deposits += inAmt;
     else if (bucket === "withdrawals") cashflow.withdrawals += outAmt;
-    else if (bucket === "interestIn") cashflow.interestIn += inAmt;
+    else if (bucket === "internalTransfers") {
+      // Either side counts the same magnitude — we only record absolute volume
+      // (it's a wash for the user's net cashflow).
+      cashflow.internalTransfers += inAmt || outAmt;
+    } else if (bucket === "interestIn") cashflow.interestIn += inAmt;
+    else if (bucket === "earnings") cashflow.earnings += inAmt;
+    else if (bucket === "rewards") cashflow.rewards += inAmt;
     else if (bucket === "refunds") cashflow.refunds += inAmt;
     else if (bucket === "taxes") cashflow.taxes += outAmt || inAmt;
   }
@@ -311,11 +415,16 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     perCurMap.set(ccy, cur);
 
     if (t.date) {
-      if (!dateRange.min || t.date < dateRange.min) dateRange.min = t.date;
-      if (!dateRange.max || t.date > dateRange.max) dateRange.max = t.date;
-      const fl = perIsinFirstLastDate.get(t.isin) ?? { first: t.date, last: t.date };
-      if (t.date < fl.first) fl.first = t.date;
-      if (t.date > fl.last) fl.last = t.date;
+      // (v3.1.1) Convert to ISO before comparing — TR `t.date` may be in
+      // "DD.MM.YYYY" or "DD MMM YYYY" format which sorts wrong as raw string
+      // (e.g. "31.10.2024" > "01.04.2025" lexicographically reversed the
+      // period to "01 Apr 2025 → 31 Oct 2024" in the snapshot tile).
+      const iso = toIsoCompare(t.date);
+      if (!dateRange.min || iso < dateRange.min) dateRange.min = iso;
+      if (!dateRange.max || iso > dateRange.max) dateRange.max = iso;
+      const fl = perIsinFirstLastDate.get(t.isin) ?? { first: iso, last: iso };
+      if (iso < fl.first) fl.first = iso;
+      if (iso > fl.last) fl.last = iso;
       perIsinFirstLastDate.set(t.isin, fl);
     }
   }
@@ -403,7 +512,10 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     cashflow: {
       deposits: r2(cashflow.deposits),
       withdrawals: r2(cashflow.withdrawals),
+      internalTransfers: r2(cashflow.internalTransfers),
       interestIn: r2(cashflow.interestIn),
+      earnings: r2(cashflow.earnings),
+      rewards: r2(cashflow.rewards),
       refunds: r2(cashflow.refunds),
       tradingFees: r2(cashflow.tradingFees),
       taxes: r2(cashflow.taxes),

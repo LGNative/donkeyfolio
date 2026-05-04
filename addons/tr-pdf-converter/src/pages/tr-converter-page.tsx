@@ -27,6 +27,7 @@ import {
   computeEnhancedPnL,
   enforceChainConsistency,
   enrichTradingWithQuantity,
+  getDetectedLocale as getDetectedLocaleFromParser,
   mergeContinuationRows,
   parsePDF,
   parseTradingTransactions,
@@ -38,6 +39,7 @@ import {
   type TradingTransaction,
 } from "../lib/tr-parser";
 import { ensureTRAccount } from "../lib/tr-account";
+import { parseEuroAmount as parseEuroAmountShared } from "../lib/tr-amount";
 import { analyzeSecurities, lookupTicker, type SecurityAnalysis } from "../lib/tr-isin-tickers";
 import {
   buildActivitiesFromParsed,
@@ -159,27 +161,11 @@ const initialState: ParseState = {
   taxReports: [],
 };
 
-// Format-aware EUR string parser (mirrors the one in tr-parser/tr-to-activities).
+// (v3.1.1) Locale-aware via shared module — was a 6th private copy whose
+// "X,YYY/X.YYY → thousands" heuristic disagreed with the snapshot tile,
+// producing different numbers for the same data across panels.
 function parseEurDisplay(raw: string): number {
-  if (!raw) return 0;
-  const s = String(raw).replace(/[€\s]/g, "");
-  if (!s) return 0;
-  const hasComma = s.includes(",");
-  const hasDot = s.includes(".");
-  let n = s;
-  if (hasComma && hasDot) {
-    n =
-      s.lastIndexOf(",") > s.lastIndexOf(".")
-        ? s.replace(/\./g, "").replace(",", ".")
-        : s.replace(/,/g, "");
-  } else if (hasComma) {
-    const parts = s.split(",");
-    n = parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
-  } else if (hasDot) {
-    const parts = s.split(".");
-    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) n = s.replace(/\./g, "");
-  }
-  const v = parseFloat(n);
+  const v = parseEuroAmountShared(raw, getDetectedLocaleFromParser());
   return Number.isFinite(v) ? v : 0;
 }
 

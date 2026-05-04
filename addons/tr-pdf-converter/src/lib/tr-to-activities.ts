@@ -37,39 +37,14 @@ const ACT = {
   TAX: "TAX",
 } satisfies Record<string, ActivityType>;
 
-// Format-aware number parser (handles both US "€13,862.66" and EU "€13.862,66").
-// Rule: the separator that appears LAST is the decimal. Single-separator
-// strings use a 3-digit heuristic (exactly 3 trailing digits → thousands).
+// (v3.1.1) Locale-aware via the shared tr-amount module. Was a private copy
+// that drifted from tr-parser.ts (still had "X,YYY → thousands" pre-v3.0.4
+// fix), causing the cash-flow summary table to report €89,777 phantom
+// interest while the snapshot tile (a different code path) showed €1,430.
+import { parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
+import { getDetectedLocale } from "./tr-parser";
 function parseEuroAmount(raw: string): number {
-  if (!raw) return 0;
-  const s = String(raw).replace(/[€\s]/g, "");
-  if (!s) return 0;
-  const hasComma = s.includes(",");
-  const hasDot = s.includes(".");
-  let normalized: string = s;
-  if (hasComma && hasDot) {
-    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
-      normalized = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      normalized = s.replace(/,/g, "");
-    }
-  } else if (hasComma) {
-    const parts = s.split(",");
-    normalized =
-      parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
-  } else if (hasDot) {
-    const parts = s.split(".");
-    // Multiple dots → EU thousands. Single dot with 3 digits after → EU
-    // thousands ONLY when integer part is non-zero. "0.384" stays as US
-    // decimal (it's a fractional share quantity, not 384).
-    if (parts.length > 2) {
-      normalized = s.replace(/\./g, "");
-    } else if (parts.length === 2 && parts[1].length === 3 && !/^0+$/.test(parts[0])) {
-      normalized = s.replace(/\./g, "");
-    }
-  }
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : 0;
+  return parseEuroAmountShared(raw, getDetectedLocale());
 }
 
 // Convert TR statement dates to ISO 8601 (midnight UTC).

@@ -290,28 +290,11 @@ function isoizeTrDate(s: string): string {
   return s;
 }
 
-/**
- * Local copy of parseEurDisplay — kept here so this module has no
- * dependency on the page file. Accepts EU/US formats with €/spaces.
- */
+// (v3.1.1) Single source of truth — shared parser with locale dispatch.
+import { parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
+import { getDetectedLocale as getDetectedLocaleFromParser } from "./tr-parser";
 function parseEurDisplayLocal(s: string | undefined | null): number {
-  if (!s) return 0;
-  const cleaned = String(s).replace(/[€\s]/g, "");
-  if (!cleaned) return 0;
-  const hasComma = cleaned.includes(",");
-  const hasDot = cleaned.includes(".");
-  let normalized = cleaned;
-  if (hasComma && hasDot) {
-    if (cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")) {
-      normalized = cleaned.replace(/\./g, "").replace(",", ".");
-    } else {
-      normalized = cleaned.replace(/,/g, "");
-    }
-  } else if (hasComma) {
-    normalized = cleaned.replace(",", ".");
-  }
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : 0;
+  return parseEuroAmountShared(s, getDetectedLocaleFromParser());
 }
 
 /** Format a number back to EU style for `moneyIn`/`moneyOut` summary fields. */

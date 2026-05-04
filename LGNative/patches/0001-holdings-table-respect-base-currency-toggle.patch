@@ -1,0 +1,62 @@
+diff --git a/apps/frontend/src/pages/holdings/components/holdings-table.tsx b/apps/frontend/src/pages/holdings/components/holdings-table.tsx
+index 658e9d5c..cb6f28d9 100644
+--- a/apps/frontend/src/pages/holdings/components/holdings-table.tsx
++++ b/apps/frontend/src/pages/holdings/components/holdings-table.tsx
+@@ -318,8 +318,13 @@ const getColumns = (
+     },
+     cell: ({ row }) => {
+       const holding = row.original;
+-      const price = holding.price ?? 0;
+-      const currency = holding.localCurrency;
++      // Respect the local-vs-base currency toggle for Today's Price.
++      // Without this, BTC/ETH show in EUR while AAPL/MSFT show in USD —
++      // mixed currencies in the same column makes the table illegible.
++      const fxRate = holding.fxRate ?? 1;
++      const localPrice = holding.price ?? 0;
++      const price = showConvertedValues ? localPrice * fxRate : localPrice;
++      const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
+       return (
+         <div className="flex min-h-[40px] flex-col items-end justify-center px-4">
+           <AmountDisplay value={price} currency={currency} />
+@@ -340,8 +345,12 @@ const getColumns = (
+     },
+     cell: ({ row }) => {
+       const holding = row.original;
+-      const value = holding.costBasis?.local ?? 0;
+-      const currency = holding.localCurrency;
++      // Respect the toggle here too — costBasis has both `.local` and
++      // `.base` so we can flip without re-converting.
++      const localValue = holding.costBasis?.local ?? 0;
++      const baseValue = holding.costBasis?.base ?? localValue;
++      const value = showConvertedValues ? baseValue : localValue;
++      const currency = showConvertedValues ? holding.baseCurrency : holding.localCurrency;
+ 
+       return (
+         <div className="flex min-h-[40px] flex-col items-end justify-center px-4">
+@@ -351,8 +360,9 @@ const getColumns = (
+       );
+     },
+     sortingFn: (rowA, rowB) => {
+-      const valueA = rowA.original.costBasis?.local ?? 0;
+-      const valueB = rowB.original.costBasis?.local ?? 0;
++      // Always sort by base currency so the order is consistent.
++      const valueA = rowA.original.costBasis?.base ?? rowA.original.costBasis?.local ?? 0;
++      const valueB = rowB.original.costBasis?.base ?? rowB.original.costBasis?.local ?? 0;
+       return valueA - valueB;
+     },
+   },
+@@ -451,7 +461,13 @@ const getColumns = (
+     meta: {
+       label: "Currency",
+     },
+-    cell: ({ row }) => <div className="text-muted-foreground">{row.original.localCurrency}</div>,
++    cell: ({ row }) => {
++      // When Total/Daily/Price columns are showing converted values
++      // (base currency), the Currency column should match — otherwise
++      // a row reading "EUR €1,234 / Currency: USD" is contradictory.
++      const currency = showConvertedValues ? row.original.baseCurrency : row.original.localCurrency;
++      return <div className="text-muted-foreground">{currency}</div>;
++    },
+     filterFn: (row, id, value) => {
+       return value.includes(row.getValue(id));
+     },

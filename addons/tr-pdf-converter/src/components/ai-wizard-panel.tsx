@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.1.0";
+const ADDON_VERSION = "3.1.1";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -270,9 +270,13 @@ export default function AiWizardPanel({
           <span>Investido: {fmtEur(snapshot.cashflow.invested)}</span>
           <span>Vendido: {fmtEur(snapshot.cashflow.divested)}</span>
           <span>Fees: {fmtEur(snapshot.cashflow.tradingFees)}</span>
-          <span>Juros IN: {fmtEur(snapshot.cashflow.interestIn)}</span>
+          <span>Juros: {fmtEur(snapshot.cashflow.interestIn)}</span>
           <span>Depósitos: {fmtEur(snapshot.cashflow.deposits)}</span>
           <span>Levant.: {fmtEur(snapshot.cashflow.withdrawals)}</span>
+          <span>Earnings: {fmtEur(snapshot.cashflow.earnings)}</span>
+          <span>Rewards: {fmtEur(snapshot.cashflow.rewards)}</span>
+          <span>Internal: {fmtEur(snapshot.cashflow.internalTransfers)}</span>
+          <span>Refunds: {fmtEur(snapshot.cashflow.refunds)}</span>
           <span>Cost basis: {fmtEur(snapshot.totals.totalCostBasisEur)}</span>
           <span>Realizado: {fmtEur(snapshot.totals.totalRealizedPnlEur)}</span>
         </div>

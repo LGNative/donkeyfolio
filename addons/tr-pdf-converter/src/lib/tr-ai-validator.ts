@@ -514,7 +514,10 @@ export async function runAiValidation(
     cashflow: {
       deposits: 0,
       withdrawals: 0,
+      internalTransfers: 0,
       interestIn: 0,
+      earnings: 0,
+      rewards: 0,
       refunds: 0,
       tradingFees: 0,
       taxes: 0,

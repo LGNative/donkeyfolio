@@ -120,3 +120,8 @@ apps/db/
 apps/tauri/db/
 tasks
 **/*.local.md
+
+# Personal documents (do NOT commit)
+Documents/
+scripts/__pycache__/
+.claude/scheduled_tasks.lock

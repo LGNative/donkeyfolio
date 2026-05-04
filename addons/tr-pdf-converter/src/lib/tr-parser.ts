@@ -15,6 +15,11 @@
  */
 import * as pdfjsLib from "pdfjs-dist";
 
+import {
+  detectAmountLocale,
+  parseEuroAmount as parseEuroAmountShared,
+  type AmountLocale,
+} from "./tr-amount";
 import { extractIsin as extractValidIsin } from "./tr-isin-utils";
 // Inline the worker source as a raw string — we construct a Blob URL at
 // runtime so the worker loads inside the Donkeyfolio addon context (where
@@ -184,63 +189,23 @@ export interface TradingTransaction {
 }
 
 /**
- * Format-aware number parser. TR emits statements in multiple locales:
- *   - Portuguese/English layout uses US format: "€13,862.66", "quantity: 0.129117"
- *   - German layout uses EU format:             "€13.862,66", "quantity: 0,129117"
+ * Module-level locale (set once per parsePDF call after detection). Default
+ * "dot-decimal" matches TR PT/EN format. parsePDF sets this from the cash
+ * array's amount columns; all internal callers below reference it.
  *
- * Rule: the separator that appears LAST is the decimal point. If only one
- * separator is present, use digit-count heuristics:
- *   - "1.234" / "1,234" with exactly 3 digits after → thousands separator
- *   - any other length → decimal separator
+ * v3.1.1: replaces the per-file `parseEuroAmount` heuristic with a
+ * locale-aware impl in `tr-amount.ts`, eliminating the X.YYY → 1000×
+ * inflation that produced €89,777 phantom interest on PT statements.
  */
+let _detectedLocale: AmountLocale = "dot-decimal";
+export function getDetectedLocale(): AmountLocale {
+  return _detectedLocale;
+}
+export function setDetectedLocale(locale: AmountLocale): void {
+  _detectedLocale = locale;
+}
 function parseEuroAmount(raw: string): number {
-  if (!raw) return 0;
-  const s = String(raw).replace(/[€\s]/g, "");
-  if (!s) return 0;
-  const hasComma = s.includes(",");
-  const hasDot = s.includes(".");
-  let normalized: string = s;
-
-  if (hasComma && hasDot) {
-    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
-      // EU: 1.234,56 → 1234.56
-      normalized = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      // US: 1,234.56 → 1234.56
-      normalized = s.replace(/,/g, "");
-    }
-  } else if (hasComma) {
-    // (v3.0.4) TR PT/DE/IT/FR/ES uses comma as DECIMAL separator. The
-    // previous heuristic treated "X,XXX" (3 digits after comma) as US
-    // thousands separator — but this fired wrongly on legit PT 3-decimal
-    // amounts like "16,664 €" (=€16.664), inflating them 1000× to €16,664.
-    // User reported Interest total €89,777 vs real €914 — ~100× inflation
-    // matched 1-2 rows of "X,XXX" being misclassified as thousands.
-    //
-    // Fix: when only comma is present (no dot), comma is ALWAYS decimal in
-    // TR PDFs — replace and call it done. The "1,234" → 1234 case (US
-    // thousands) is only valid when there's also a dot somewhere, and that
-    // path is handled by the comma+dot branch above.
-    normalized = s.replace(",", ".");
-  } else if (hasDot) {
-    const parts = s.split(".");
-    if (parts.length > 2) {
-      // "1.234.567" → EU thousands (multiple dots can only be thousands)
-      normalized = s.replace(/\./g, "");
-    } else if (parts.length === 2 && parts[1].length === 3 && !/^0+$/.test(parts[0])) {
-      // "1.234" → EU thousands (only when integer part is non-zero).
-      // Critically: "0.384" / "0.117" / "00.384" must STAY as decimals — TR
-      // emits fractional share quantities with exactly 3 digits all the time
-      // (Sell 0.384 ASML), and the previous heuristic was inflating them
-      // 1000× (0.384 → 384).
-      normalized = s.replace(/\./g, "");
-    } else {
-      // "0.129117", "13.1", "€13.12", "0.384" → US decimal
-      normalized = s;
-    }
-  }
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : 0;
+  return parseEuroAmountShared(raw, _detectedLocale);
 }
 
 /**
@@ -699,9 +664,22 @@ export async function parsePDF(
       updateProgress?: (v: number, t: number) => void;
     },
   ) => Promise<ParseResult>;
-  return fn(doc, {
+  const result = await fn(doc, {
     updateProgress: (v, t) => onProgress?.(v, t),
   });
+  // (v3.1.1) Detect locale from the parsed cash array. The vendored jcmpagel
+  // parser preserves raw value strings — we sample the In/Out/Saldo columns
+  // and decide once whether dots or commas are decimals. All downstream
+  // parseEuroAmount calls then dispatch to the right interpretation,
+  // eliminating the X.YYY 1000× inflation bug on PT/EN PDFs.
+  const samples: string[] = [];
+  for (const c of result.cash) {
+    if (c.zahlungseingang) samples.push(c.zahlungseingang);
+    if (c.zahlungsausgang) samples.push(c.zahlungsausgang);
+    if (c.saldo) samples.push(c.saldo);
+  }
+  setDetectedLocale(detectAmountLocale(samples));
+  return result;
 }
 
 /** Extract trading (buy/sell) transactions from cash transactions. */

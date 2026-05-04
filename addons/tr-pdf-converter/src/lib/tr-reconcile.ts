@@ -23,36 +23,15 @@
  */
 import type { ActivityImport, ActivityType } from "@wealthfolio/addon-sdk";
 
-import type { CashTransaction, StatementSummary } from "./tr-parser";
+import { parseEuroAmount as parseEuroAmountShared } from "./tr-amount";
+import { getDetectedLocale, type CashTransaction, type StatementSummary } from "./tr-parser";
 
-// Format-aware EUR parser (mirrors the one in tr-parser/tr-to-activities).
+// (v3.1.1) Locale-aware. Auto-dispatches to detected locale set by parsePDF.
+// Eliminates the divergence with tr-parser.ts that produced €89,777 phantom
+// interest for PT users (this file's pre-v3.1.1 copy still treated "X,YYY"
+// as thousands long after tr-parser.ts had been corrected).
 function parseEuroAmount(raw: string): number {
-  if (!raw) return 0;
-  const s = String(raw).replace(/[€\s]/g, "");
-  if (!s) return 0;
-  const hasComma = s.includes(",");
-  const hasDot = s.includes(".");
-  let normalized: string = s;
-  if (hasComma && hasDot) {
-    normalized =
-      s.lastIndexOf(",") > s.lastIndexOf(".")
-        ? s.replace(/\./g, "").replace(",", ".")
-        : s.replace(/,/g, "");
-  } else if (hasComma) {
-    const parts = s.split(",");
-    normalized =
-      parts.length === 2 && parts[1].length === 3 ? s.replace(/,/g, "") : s.replace(",", ".");
-  } else if (hasDot) {
-    const parts = s.split(".");
-    if (
-      parts.length > 2 ||
-      (parts.length === 2 && parts[1].length === 3 && !/^0+$/.test(parts[0]))
-    ) {
-      normalized = s.replace(/\./g, "");
-    }
-  }
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : 0;
+  return parseEuroAmountShared(raw, getDetectedLocale());
 }
 
 /** Numeric totals derived from the parsed cash rows (row-by-row sum).
