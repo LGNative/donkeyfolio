@@ -1953,6 +1953,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               accountId={selectedAccountId || null}
               baseCurrency={accounts.find((a) => a.id === selectedAccountId)?.currency ?? "EUR"}
               trades={state.trading}
+              cash={state.cash}
+              interest={state.interest}
+              summary={state.summary}
+              pdfCount={1}
             />
           )}
 

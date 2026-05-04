@@ -1,24 +1,20 @@
 /**
- * AI Validation Wizard panel. (v3.0.0)
+ * AI Validation Wizard panel. (v3.1.0)
  *
- * The wizard sits below the parsed-details disclosure and runs after a
- * successful import. It asks Claude to compare three sources of truth
- * (addon's PDF parse, Donkeyfolio's current holdings, user-pasted TR app
- * ground truth) and produces a list of actionable fixes the user can
- * approve and apply via the Wealthfolio SDK.
+ * v3.1.0 — Snapshot-driven wizard.
+ *   The panel builds a deterministic ValidationSnapshot from the parsed
+ *   data and ships it (plus the user's TR-app paste) to Claude. Claude
+ *   only compares — it doesn't recompute. Same parsed PDFs + same paste
+ *   = cached response (localStorage), zero API spend on re-runs.
  *
- * Flow:
- *   1. User configures API key once (stored via ctx.api.secrets).
- *   2. User pastes their TR app holdings (free-form — Claude parses).
- *   3. Click "Validate" → 1 Claude API call (~€0.08 with prompt caching).
- *   4. Render issues sorted by severity. Each issue has a checkbox.
- *   5. User checks the ones to apply → "Apply Selected" button.
- *   6. Addon emits the SDK calls (SPLIT, BUY, asset-edit, etc.).
+ *   The header tile renders the snapshot's totals so the user can SEE
+ *   what's being validated before clicking "Validate". This eliminates
+ *   the "wizard sees one thing, preview shows another" class of bug.
  *
  * Privacy:
  *   The API key never leaves the user's machine except for the call to
- *   api.anthropic.com. We never log it. We send only AGGREGATED holdings
- *   to Claude (not per-trade detail).
+ *   api.anthropic.com. We send the snapshot + paste — aggregated data
+ *   only, no per-trade detail beyond what's already in the snapshot.
  */
 import * as React from "react";
 import type { AddonContext, Holding } from "@wealthfolio/addon-sdk";
@@ -27,31 +23,38 @@ import { Button } from "@wealthfolio/ui";
 import { Badge } from "@wealthfolio/ui";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@wealthfolio/ui";
 import {
-  aggregateImportedForValidation,
-  projectDonkeyfolioHoldings,
-  runAiValidation,
-  type ValidationIssue,
+  runAiValidationFromSnapshot,
+  type Finding,
   type ValidationReport,
 } from "../lib/tr-ai-validator";
-import type { TradingTransaction } from "../lib/tr-parser";
+import { buildValidationSnapshot, type ValidationSnapshot } from "../lib/tr-validation-snapshot";
+import type {
+  CashTransaction,
+  InterestTransaction,
+  StatementSummary,
+  TradingTransaction,
+} from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
+const ADDON_VERSION = "3.1.0";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
   accountId: string | null;
   baseCurrency: string;
   trades: TradingTransaction[];
-  /** When provided, pre-populates the "known issues" hint to Claude. */
+  cash?: CashTransaction[];
+  interest?: InterestTransaction[];
+  /** Page-1 summary from the merged parse. Wrapped into a single-element
+   *  array internally — for multi-PDF the merged summary already aggregates
+   *  opening/closing across files. */
+  summary?: StatementSummary | null;
+  /** Number of PDFs that fed the parser. Surfaced in the snapshot meta. */
+  pdfCount?: number;
+  /** Pre-populates Claude's "known issues" hint. */
   knownIssues?: string[];
 }
 
-/**
- * Why this is a ref-load, not state-stored:
- *   The API key is sensitive. We read it from SecretsAPI on demand
- *   (right before the call) instead of holding it in component state
- *   where a React DevTools snapshot would expose it.
- */
 async function loadApiKey(ctx: AddonContext): Promise<string | null> {
   try {
     return (await ctx.api.secrets.get(SECRET_KEY_API)) ?? null;
@@ -73,7 +76,7 @@ async function clearApiKey(ctx: AddonContext): Promise<void> {
 }
 
 const SEVERITY_BADGE: Record<
-  ValidationIssue["severity"],
+  Finding["severity"],
   { variant: "default" | "secondary" | "destructive" | "outline"; label: string }
 > = {
   critical: { variant: "destructive", label: "CRITICAL" },
@@ -82,12 +85,28 @@ const SEVERITY_BADGE: Record<
   info: { variant: "outline", label: "INFO" },
 };
 
+function fmtEur(n: number | undefined | null): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("pt-PT", { style: "currency", currency: "EUR" });
+}
+
+function fmtNum(n: number | undefined | null, decimals = 6): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("pt-PT", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
 export default function AiWizardPanel({
   ctx,
   accountId,
   baseCurrency,
   trades,
-  knownIssues,
+  cash,
+  interest,
+  summary,
+  pdfCount,
 }: AiWizardPanelProps) {
   const [hasKey, setHasKey] = React.useState<boolean | null>(null);
   const [keyInput, setKeyInput] = React.useState("");
@@ -98,6 +117,23 @@ export default function AiWizardPanel({
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [applying, setApplying] = React.useState(false);
   const [applyMsg, setApplyMsg] = React.useState<string | null>(null);
+  const [forceRefresh, setForceRefresh] = React.useState(false);
+
+  // Build the snapshot up-front so the user can see it before clicking
+  // Validate. Memoised on parser outputs — recomputes when a new PDF lands.
+  const snapshot: ValidationSnapshot = React.useMemo(
+    () =>
+      buildValidationSnapshot({
+        cash: cash ?? [],
+        interest: interest ?? [],
+        trades,
+        summaries: summary ? [summary] : [],
+        baseCurrency,
+        addonVersion: ADDON_VERSION,
+        pdfCount: pdfCount ?? 0,
+      }),
+    [cash, interest, trades, summary, baseCurrency, pdfCount],
+  );
 
   React.useEffect(() => {
     void loadApiKey(ctx).then((k) => setHasKey(!!k));
@@ -142,7 +178,6 @@ export default function AiWizardPanel({
 
     setRunning(true);
     try {
-      // Fetch current Donkeyfolio holdings for diffing.
       let dfHoldings: Holding[] = [];
       try {
         dfHoldings = await ctx.api.portfolio.getHoldings(accountId);
@@ -152,19 +187,16 @@ export default function AiWizardPanel({
         );
       }
 
-      const result = await runAiValidation(apiKey, {
-        baseCurrency,
-        importedHoldings: aggregateImportedForValidation(trades),
-        donkeyfolioHoldings: projectDonkeyfolioHoldings(dfHoldings),
-        trAppGroundTruth: trAppText.trim(),
-        knownIssues,
+      const result = await runAiValidationFromSnapshot(apiKey, snapshot, trAppText.trim(), {
+        forceRefresh,
+        donkeyfolioHoldings: dfHoldings,
       });
       setReport(result);
-      // Pre-select all major + critical issues — those are the ones the
+      // Pre-select all major + critical findings — those are the ones the
       // user almost certainly wants to fix.
       const preselect = new Set<number>();
-      result.issues.forEach((iss, idx) => {
-        if (iss.severity === "major" || iss.severity === "critical") preselect.add(idx);
+      result.findings.forEach((f, idx) => {
+        if (f.severity === "major" || f.severity === "critical") preselect.add(idx);
       });
       setSelected(preselect);
     } catch (err) {
@@ -183,23 +215,26 @@ export default function AiWizardPanel({
     const errors: string[] = [];
 
     for (const idx of selected) {
-      const issue = report.issues[idx];
+      const finding = report.findings[idx];
+      if (!finding.suggestedFix || finding.suggestedFix.action === "INFO_ONLY") {
+        skipped += 1;
+        continue;
+      }
       try {
-        await applyIssueFix(ctx, accountId, baseCurrency, issue);
+        await applyFindingFix(ctx, accountId, baseCurrency, finding);
         applied += 1;
       } catch (err) {
         skipped += 1;
-        errors.push(`${issue.identifier}: ${(err as Error).message}`);
+        errors.push(`${finding.identifier}: ${(err as Error).message}`);
       }
     }
     setApplying(false);
     setApplyMsg(
-      `Aplicadas ${applied} fixes${skipped > 0 ? `, ${skipped} falharam` : ""}.${
+      `Aplicadas ${applied} fixes${skipped > 0 ? `, ${skipped} ignoradas` : ""}.${
         errors.length > 0 ? ` Erros: ${errors.slice(0, 3).join("; ")}` : ""
       }`,
     );
 
-    // Trigger recalc so the holdings page updates immediately.
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const portfolio = (ctx.api as any).portfolio;
@@ -215,11 +250,45 @@ export default function AiWizardPanel({
     <Card>
       <div className="border-b px-3 py-2 text-xs">
         <div className="flex items-center justify-between">
-          <span className="font-semibold">AI Validation Wizard</span>
+          <span className="font-semibold">AI Validation Wizard · v3.1.0</span>
           <span className="text-muted-foreground">
-            Powered by Claude · uses your Anthropic API key · ~€0.08 per validation
+            Powered by Claude · BYO key · cache local · ~€0.08 fresh / €0 cached
           </span>
         </div>
+      </div>
+
+      {/* Snapshot preview tile — what Claude is going to see */}
+      <div className="bg-muted/30 border-b px-3 py-2 text-xs">
+        <div className="mb-1 font-medium">
+          Snapshot {snapshot.meta.schemaVersion} · {snapshot.totals.tradeCount} trades ·{" "}
+          {snapshot.totals.holdingsCount} ISINs ·{" "}
+          {snapshot.meta.period.from && snapshot.meta.period.to
+            ? `${snapshot.meta.period.from} → ${snapshot.meta.period.to}`
+            : "sem período"}
+        </div>
+        <div className="text-muted-foreground grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-4">
+          <span>Investido: {fmtEur(snapshot.cashflow.invested)}</span>
+          <span>Vendido: {fmtEur(snapshot.cashflow.divested)}</span>
+          <span>Fees: {fmtEur(snapshot.cashflow.tradingFees)}</span>
+          <span>Juros IN: {fmtEur(snapshot.cashflow.interestIn)}</span>
+          <span>Depósitos: {fmtEur(snapshot.cashflow.deposits)}</span>
+          <span>Levant.: {fmtEur(snapshot.cashflow.withdrawals)}</span>
+          <span>Cost basis: {fmtEur(snapshot.totals.totalCostBasisEur)}</span>
+          <span>Realizado: {fmtEur(snapshot.totals.totalRealizedPnlEur)}</span>
+        </div>
+        {snapshot.saldoChain.openingFromSummary !== null && (
+          <div className="text-muted-foreground mt-1">
+            Saldo: {fmtEur(snapshot.saldoChain.openingFromSummary)} →{" "}
+            {fmtEur(snapshot.saldoChain.closingFromSummary)} (computado{" "}
+            {fmtEur(snapshot.saldoChain.computedClosing)}, Δ {fmtEur(snapshot.saldoChain.delta)}){" "}
+            {snapshot.saldoChain.reconciles ? "✓" : "⚠"}
+          </div>
+        )}
+        {snapshot.unresolved.length > 0 && (
+          <div className="mt-1 text-amber-700 dark:text-amber-400">
+            ⚠ {snapshot.unresolved.length} linhas sem qty resolvido
+          </div>
+        )}
       </div>
 
       {/* API key section */}
@@ -267,7 +336,6 @@ export default function AiWizardPanel({
             </Button>
           </div>
 
-          {/* TR app paste */}
           <div className="space-y-1">
             <label className="text-xs font-medium">
               Cola os teus holdings do TR app (qualquer formato — Claude parse-ia):
@@ -283,10 +351,18 @@ export default function AiWizardPanel({
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <Button onClick={handleValidate} disabled={running || !trAppText.trim()}>
               {running ? "A validar com Claude…" : "Validate"}
             </Button>
+            <label className="text-muted-foreground flex items-center gap-1 text-xs">
+              <input
+                type="checkbox"
+                checked={forceRefresh}
+                onChange={(e) => setForceRefresh(e.target.checked)}
+              />
+              Forçar refresh (ignora cache)
+            </label>
             {errorMsg && <span className="text-destructive text-xs">{errorMsg}</span>}
           </div>
 
@@ -296,21 +372,25 @@ export default function AiWizardPanel({
               <div className="border-t pt-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{report.summary}</span>
-                  {report.usage && (
-                    <span className="text-muted-foreground text-xs">
-                      {report.usage.inputTokens} input ({report.usage.cachedTokens} cached) +{" "}
-                      {report.usage.outputTokens} output · ~€
-                      {report.usage.estimatedCostEur.toFixed(3)}
-                    </span>
-                  )}
+                  <span className="text-muted-foreground text-xs">
+                    {report.fromCache ? (
+                      <>cache hit · €0.000</>
+                    ) : report.usage ? (
+                      <>
+                        {report.usage.inputTokens} in ({report.usage.cachedTokens} cached) +{" "}
+                        {report.usage.outputTokens} out · ~€
+                        {report.usage.estimatedCostEur.toFixed(3)}
+                      </>
+                    ) : null}
+                  </span>
                 </div>
                 <p className="text-muted-foreground text-xs">
-                  {report.totalIssues} issues encontrados.{" "}
+                  {report.totalFindings} findings.{" "}
                   {selected.size > 0 ? `${selected.size} selecionadas para aplicar.` : ""}
                 </p>
               </div>
 
-              {report.issues.length === 0 ? (
+              {report.findings.length === 0 ? (
                 <p className="rounded bg-green-50 p-3 text-xs text-green-700 dark:bg-green-950/30 dark:text-green-400">
                   ✓ Nenhum drift detectado. Tudo bate com o TR app.
                 </p>
@@ -319,15 +399,19 @@ export default function AiWizardPanel({
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8"></TableHead>
-                      <TableHead>Identifier</TableHead>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Action</TableHead>
-                      <TableHead>Description</TableHead>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Sev</TableHead>
+                      <TableHead className="text-right">TR app</TableHead>
+                      <TableHead className="text-right">Imported</TableHead>
+                      <TableHead className="text-right">Δ</TableHead>
+                      <TableHead>Descrição / Fix</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {report.issues.map((issue, idx) => {
-                      const sev = SEVERITY_BADGE[issue.severity];
+                    {report.findings.map((f, idx) => {
+                      const sev = SEVERITY_BADGE[f.severity];
+                      const fixable = !!f.suggestedFix && f.suggestedFix.action !== "INFO_ONLY";
                       return (
                         <TableRow key={idx}>
                           <TableCell>
@@ -340,21 +424,41 @@ export default function AiWizardPanel({
                                 else next.delete(idx);
                                 setSelected(next);
                               }}
-                              disabled={issue.action === "INFO_ONLY"}
+                              disabled={!fixable}
                             />
                           </TableCell>
-                          <TableCell className="font-mono text-xs">{issue.identifier}</TableCell>
+                          <TableCell className="font-mono text-xs">{f.identifier}</TableCell>
+                          <TableCell className="font-mono text-xs">{f.type}</TableCell>
                           <TableCell>
                             <Badge variant={sev.variant} className="text-xs">
                               {sev.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-mono text-xs">{issue.action}</TableCell>
-                          <TableCell className="max-w-[400px]">
-                            <div className="text-xs">{issue.description}</div>
-                            {issue.reasoning && (
+                          <TableCell className="text-right font-mono text-xs">
+                            {fmtNum(f.expected)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs">
+                            {fmtNum(f.actual)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs">
+                            {fmtNum(f.diff)}
+                            {typeof f.diffPct === "number" && (
+                              <div className="text-muted-foreground">{f.diffPct.toFixed(2)}%</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="max-w-[360px]">
+                            <div className="text-xs">{f.description}</div>
+                            {f.suggestedFix && f.suggestedFix.action !== "INFO_ONLY" && (
+                              <div className="text-muted-foreground mt-1 font-mono text-[10px]">
+                                → {f.suggestedFix.action}{" "}
+                                {Object.entries(f.suggestedFix.params)
+                                  .map(([k, v]) => `${k}=${v}`)
+                                  .join(" ")}
+                              </div>
+                            )}
+                            {f.reasoning && (
                               <div className="text-muted-foreground mt-1 text-xs italic">
-                                {issue.reasoning}
+                                {f.reasoning}
                               </div>
                             )}
                           </TableCell>
@@ -365,7 +469,9 @@ export default function AiWizardPanel({
                 </Table>
               )}
 
-              {report.issues.some((i) => i.action !== "INFO_ONLY") && (
+              {report.findings.some(
+                (f) => f.suggestedFix && f.suggestedFix.action !== "INFO_ONLY",
+              ) && (
                 <div className="flex items-center gap-2 pt-2">
                   <Button
                     onClick={handleApplySelected}
@@ -386,23 +492,25 @@ export default function AiWizardPanel({
 }
 
 /**
- * Translate one ValidationIssue into a SDK call. Each action maps to a
- * specific activity create or asset edit. Throws on unknown action so the
- * caller surfaces it to the user instead of silently no-oping.
+ * Translate a Finding's suggestedFix into an SDK call.
+ * Each action maps to a specific activity create or asset edit. Throws on
+ * unknown action so the caller surfaces it instead of silently no-oping.
  */
-async function applyIssueFix(
+async function applyFindingFix(
   ctx: AddonContext,
   accountId: string,
   baseCurrency: string,
-  issue: ValidationIssue,
+  finding: Finding,
 ): Promise<void> {
+  if (!finding.suggestedFix) return;
   const today = new Date().toISOString().slice(0, 10);
-  const isin = issue.identifier;
+  const isin = finding.identifier;
+  const { action, params } = finding.suggestedFix;
 
-  switch (issue.action) {
+  switch (action) {
     case "ADD_SPLIT": {
-      const ratio = Number(issue.params.ratio ?? 0);
-      const date = (issue.params.date as string | undefined) ?? today;
+      const ratio = Number(params.ratio ?? 0);
+      const date = (params.date as string | undefined) ?? today;
       if (!Number.isFinite(ratio) || ratio <= 0) {
         throw new Error("ADD_SPLIT requires positive 'ratio' param.");
       }
@@ -416,7 +524,7 @@ async function applyIssueFix(
         unitPrice: 0,
         amount: ratio,
         currency: baseCurrency,
-        comment: `AI wizard: ${issue.reasoning.slice(0, 200)}`,
+        comment: `AI wizard: ${finding.reasoning.slice(0, 200)}`,
         idempotencyKey: `tr-pdf-ai:split:${isin}:${date}:${ratio}`,
         sourceSystem: "TR_PDF_AI",
         sourceRecordId: `tr-pdf-ai:split:${isin}:${date}:${ratio}`,
@@ -425,19 +533,19 @@ async function applyIssueFix(
     }
     case "ADD_BUY":
     case "ADD_SELL": {
-      const qty = Number(issue.params.quantity ?? 0);
-      const unitPrice = Number(issue.params.unitPrice ?? 0);
-      const amount = Number(issue.params.amount ?? qty * unitPrice);
-      const fee = Number(issue.params.fee ?? 0);
-      const date = (issue.params.date as string | undefined) ?? today;
-      const subtype = (issue.params.subtype as string | undefined) ?? null;
+      const qty = Number(params.quantity ?? 0);
+      const unitPrice = Number(params.unitPrice ?? 0);
+      const amount = Number(params.amount ?? qty * unitPrice);
+      const fee = Number(params.fee ?? 0);
+      const date = (params.date as string | undefined) ?? today;
+      const subtype = (params.subtype as string | undefined) ?? null;
       if (!Number.isFinite(qty) || qty <= 0) {
-        throw new Error(`${issue.action} requires positive 'quantity' param.`);
+        throw new Error(`${action} requires positive 'quantity' param.`);
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (ctx.api.activities as any).create({
         accountId,
-        activityType: issue.action === "ADD_BUY" ? "BUY" : "SELL",
+        activityType: action === "ADD_BUY" ? "BUY" : "SELL",
         activityDate: date,
         subtype,
         symbol: { symbol: isin, kind: "EQUITY" },
@@ -446,17 +554,17 @@ async function applyIssueFix(
         amount,
         fee,
         currency: baseCurrency,
-        comment: `AI wizard: ${issue.reasoning.slice(0, 200)}`,
-        idempotencyKey: `tr-pdf-ai:${issue.action.toLowerCase()}:${isin}:${date}:${qty}`,
+        comment: `AI wizard: ${finding.reasoning.slice(0, 200)}`,
+        idempotencyKey: `tr-pdf-ai:${action.toLowerCase()}:${isin}:${date}:${qty}`,
         sourceSystem: "TR_PDF_AI",
-        sourceRecordId: `tr-pdf-ai:${issue.action.toLowerCase()}:${isin}:${date}:${qty}`,
+        sourceRecordId: `tr-pdf-ai:${action.toLowerCase()}:${isin}:${date}:${qty}`,
       });
       return;
     }
     case "ADD_TRANSFER_IN": {
-      const qty = Number(issue.params.quantity ?? 0);
-      const costBasis = Number(issue.params.costBasisEur ?? 0);
-      const date = (issue.params.date as string | undefined) ?? today;
+      const qty = Number(params.quantity ?? 0);
+      const costBasis = Number(params.costBasisEur ?? 0);
+      const date = (params.date as string | undefined) ?? today;
       if (!Number.isFinite(qty) || qty <= 0) {
         throw new Error("ADD_TRANSFER_IN requires positive 'quantity' param.");
       }
@@ -471,7 +579,7 @@ async function applyIssueFix(
         amount: costBasis,
         fee: 0,
         currency: baseCurrency,
-        comment: `AI wizard: ${issue.reasoning.slice(0, 200)}`,
+        comment: `AI wizard: ${finding.reasoning.slice(0, 200)}`,
         idempotencyKey: `tr-pdf-ai:transfer-in:${isin}:${date}:${qty}`,
         sourceSystem: "TR_PDF_AI",
         sourceRecordId: `tr-pdf-ai:transfer-in:${isin}:${date}:${qty}`,
@@ -479,11 +587,8 @@ async function applyIssueFix(
       return;
     }
     case "INFO_ONLY":
-      // Nothing to do — informational only.
       return;
     default:
-      throw new Error(
-        `Action '${issue.action}' not yet wired. The fix needs to be applied manually.`,
-      );
+      throw new Error(`Action '${action}' not yet wired. The fix needs to be applied manually.`);
   }
 }
