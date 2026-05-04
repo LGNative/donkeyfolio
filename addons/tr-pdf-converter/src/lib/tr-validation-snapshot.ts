@@ -430,8 +430,34 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     const gross = t.isBuy ? totalCash - resolvedFee : totalCash + resolvedFee;
     return gross > 0 ? gross : totalCash;
   }
+  // (v3.3.2) Aggregate partial fills BEFORE FIFO so realized P&L matches
+  // tr-eur-holdings (which now also aggregates).
+  const aggregatedTrades: TradingTransaction[] = [];
+  for (const tx of input.trades) {
+    const baseKey = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
+      tx.isSavingsPlan ? "SP" : "M"
+    }`;
+    const last = aggregatedTrades[aggregatedTrades.length - 1];
+    const lastKey = last
+      ? `${last.date}|${last.isin}|${last.isBuy ? "B" : "S"}|${last.isSavingsPlan ? "SP" : "M"}`
+      : null;
+    if (lastKey === baseKey) {
+      const sumQty = (last.quantity ?? 0) + (tx.quantity ?? 0);
+      const sumAmount = Math.abs(last.amount) + Math.abs(tx.amount);
+      aggregatedTrades[aggregatedTrades.length - 1] = {
+        ...last,
+        quantity: sumQty > 0 ? sumQty : last.quantity,
+        amount: last.isBuy ? sumAmount : -sumAmount,
+        unitPrice: sumQty > 0 ? sumAmount / sumQty : last.unitPrice,
+        pdfFee: last.pdfFee ?? tx.pdfFee,
+        pdfFeeCurrency: last.pdfFeeCurrency ?? tx.pdfFeeCurrency,
+      };
+    } else {
+      aggregatedTrades.push(tx);
+    }
+  }
   const tradesByIsin = new Map<string, TradingTransaction[]>();
-  for (const t of input.trades) {
+  for (const t of aggregatedTrades) {
     if (!t.isin || !t.date || !t.quantity || t.quantity <= 0) continue;
     const arr = tradesByIsin.get(t.isin) ?? [];
     arr.push(t);

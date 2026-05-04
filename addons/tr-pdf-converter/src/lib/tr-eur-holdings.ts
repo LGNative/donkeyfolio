@@ -33,6 +33,54 @@
 import { lookupTicker } from "./tr-isin-tickers";
 import type { TradingTransaction } from "./tr-parser";
 
+/**
+ * (v3.3.2) Adjacency-based partial-fill aggregation. Mirror of the logic
+ * in tr-to-activities.ts (v3.2.3) so the EUR holdings preview computes
+ * realized P&L from the SAME aggregated orders the activity emitter
+ * builds, not from raw partial-fill rows where each fragment carries its
+ * own €1 fee.
+ *
+ * TR rule (verified via support docs): partial fills of one order are
+ * always consecutive in the PDF and are charged €1 ONCE per trading day
+ * per order. So merging adjacent rows with matching
+ * (date, ISIN, direction, savings-plan) recovers the real "order" view.
+ *
+ * Without this aggregation, for a 2-row partial fill of e.g. ServiceNow
+ * (2 sh + 0.036383 sh = 2.036383 sh, €151 cash, €1 fee) we got:
+ *   Lot 1: qty 2,        cost €148.32 - €1 = €147.32
+ *   Lot 2: qty 0.036383, cost €2.68   - €1 = €1.68
+ *   Total cost: €149 (real €150) — under-counted by €1
+ * After aggregation:
+ *   Lot:   qty 2.036383, cost €151    - €1 = €150 ✓
+ */
+function aggregatePartialFills(trades: TradingTransaction[]): TradingTransaction[] {
+  const out: TradingTransaction[] = [];
+  for (const tx of trades) {
+    const baseKey = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
+      tx.isSavingsPlan ? "SP" : "M"
+    }`;
+    const last = out[out.length - 1];
+    const lastKey = last
+      ? `${last.date}|${last.isin}|${last.isBuy ? "B" : "S"}|${last.isSavingsPlan ? "SP" : "M"}`
+      : null;
+    if (lastKey === baseKey) {
+      const sumQty = (last.quantity ?? 0) + (tx.quantity ?? 0);
+      const sumAmount = Math.abs(last.amount) + Math.abs(tx.amount);
+      out[out.length - 1] = {
+        ...last,
+        quantity: sumQty > 0 ? sumQty : last.quantity,
+        amount: last.isBuy ? sumAmount : -sumAmount,
+        unitPrice: sumQty > 0 ? sumAmount / sumQty : last.unitPrice,
+        pdfFee: last.pdfFee ?? tx.pdfFee,
+        pdfFeeCurrency: last.pdfFeeCurrency ?? tx.pdfFeeCurrency,
+      };
+    } else {
+      out.push(tx);
+    }
+  }
+  return out;
+}
+
 export interface EurHoldingRow {
   isin: string;
   symbol: string;
@@ -81,10 +129,16 @@ function resolveEurAmount(t: TradingTransaction): number {
  * descending by current EUR cost basis (biggest positions first).
  */
 export function buildEurHoldings(trades: TradingTransaction[]): EurHoldingRow[] {
+  // (v3.3.2) Run partial-fill aggregation FIRST so each "trade" we walk
+  // below is one logical TR order — €1 fee subtracted once per order,
+  // not once per fragment. This corrects realized P&L drift on partial
+  // fills (the user reported -€1212 parser vs +€6197 expected; the
+  // pre-aggregation cost-basis miscount was contributing to that gap).
+  const aggregated = aggregatePartialFills(trades);
   // Group trades by ISIN, keep them sorted chronologically WITHIN each
   // ISIN (FIFO needs date order to be meaningful).
   const byIsin = new Map<string, TradingTransaction[]>();
-  for (const t of trades) {
+  for (const t of aggregated) {
     if (!t.isin || !t.date || !t.quantity || t.quantity <= 0) continue;
     const arr = byIsin.get(t.isin) ?? [];
     arr.push(t);
