@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.1.2";
+const ADDON_VERSION = "3.1.3";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;

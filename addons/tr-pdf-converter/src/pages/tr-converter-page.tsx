@@ -321,16 +321,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           /\btrade\b|\bHandel\b|\bSavings plan\b/i.test(desc);
         const isSellTrade =
           /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
-        const num = (s: string) => {
-          const m = String(s || "")
-            .replace(/[€\s]/g, "")
-            .match(/-?\d+(?:[.,]\d+)?/);
-          if (!m) return 0;
-          const n = parseFloat(m[0].replace(",", "."));
-          return Number.isFinite(n) ? n : 0;
-        };
-        const inc = num(r.zahlungseingang);
-        const out = num(r.zahlungsausgang);
+        // (v3.1.2) Sanity check uses the shared locale-aware parser. Was
+        // a private regex parser that mis-handled PT thousands+decimal
+        // ("1,234.56" got truncated to 1.234).
+        const inc = parseEuroAmountShared(r.zahlungseingang, getDetectedLocaleFromParser());
+        const out = parseEuroAmountShared(r.zahlungsausgang, getDetectedLocaleFromParser());
         const onlyOut = inc < 0.01 && out > 0.01;
         const onlyIn = inc > 0.01 && out < 0.01;
         if ((isBuyTrade && onlyOut) || (isSellTrade && onlyIn)) {
@@ -449,16 +444,11 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           /\btrade\b|\bHandel\b|\bSavings plan\b/i.test(desc);
         const isSellTrade =
           /\bSell\b|\bVerkauf\b|\bVenta\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
-        const num = (s: string) => {
-          const m = String(s || "")
-            .replace(/[€\s]/g, "")
-            .match(/-?\d+(?:[.,]\d+)?/);
-          if (!m) return 0;
-          const n = parseFloat(m[0].replace(",", "."));
-          return Number.isFinite(n) ? n : 0;
-        };
-        const inc = num(r.zahlungseingang);
-        const out = num(r.zahlungsausgang);
+        // (v3.1.2) Sanity check uses the shared locale-aware parser. Was
+        // a private regex parser that mis-handled PT thousands+decimal
+        // ("1,234.56" got truncated to 1.234).
+        const inc = parseEuroAmountShared(r.zahlungseingang, getDetectedLocaleFromParser());
+        const out = parseEuroAmountShared(r.zahlungsausgang, getDetectedLocaleFromParser());
         const onlyOut = inc < 0.01 && out > 0.01;
         const onlyIn = inc > 0.01 && out < 0.01;
         if ((isBuyTrade && onlyOut) || (isSellTrade && onlyIn)) {
@@ -2347,14 +2337,14 @@ function CashTable({ rows }: { rows: CashTransaction[] }) {
   const tradeCount = rows.length - rows.filter((r) => !isTrade(r)).length;
 
   // Compute totals per cash type (excluding trades).
+  // (v3.1.2) Routes through the shared locale-aware parser. The previous
+  // private parseEur was a 7th naive copy that stripped ALL dots (only
+  // correct for DE format), turning every "0.89" interest payment into
+  // €89 — producing the €89,777 phantom Interest in this table while the
+  // snapshot tile (which used the shared parser) showed €897.77 correctly.
   const summary = React.useMemo(() => {
     const buckets = new Map<string, { count: number; in: number; out: number }>();
-    const parseEur = (s: string) => {
-      if (!s) return 0;
-      const cleaned = s.replace(/[€\s]/g, "").replace(/\./g, "").replace(",", ".");
-      const n = parseFloat(cleaned);
-      return Number.isFinite(n) ? n : 0;
-    };
+    const parseEur = (s: string) => parseEuroAmountShared(s, getDetectedLocaleFromParser());
     for (const r of rows) {
       if (isTrade(r)) continue;
       const t = (r.typ || "Other").trim();
