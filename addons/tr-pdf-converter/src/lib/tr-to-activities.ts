@@ -435,8 +435,27 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   // €73.71 on the same day (different orders, different fees). Real
   // partial fills always execute at the same price (TR settles them at
   // the order's average fill price by design).
+  // (v3.0.11) Aggregation rewrite: PRIMARY check is now unit-price
+  // similarity, NOT tradeId.
+  //
+  // Why: the upstream jcmpagel parser extracts tradeId via /(\d+)\s*$/
+  // from the description's trailing digits. For TR PT cash rows like
+  // "Compra ServiceNow ... quantity: 2" the regex grabs "2" (the qty)
+  // as tradeId, not an order ID. For partial fills 2 + 0.036383 we end
+  // up with tradeIds "2" and "036383" — different — and the previous
+  // tradeId-first matcher created two separate BUYs with €1 fee each
+  // (user-reported: ServiceNow Apr 24 showed €2 fee total, should be €1).
+  //
+  // New strategy: scan existing aggregated entries with same base key
+  // (date + ISIN + direction + savings-plan) and check unit-price drift
+  // ≤ 2%. Real partial fills always settle at the same average price
+  // (TR groups them by design), so unit-price proximity is the most
+  // reliable signal regardless of what tradeId regex captured. tradeId
+  // becomes a tiebreaker only — if both rows have non-empty tradeIds
+  // AND those tradeIds match exactly, we merge regardless of price drift
+  // (covers the rare case of a single TR order filled at materially
+  // different prices, which is unusual but theoretically possible).
   const aggregated: TradingTransaction[] = [];
-  const aggIndex = new Map<string, number>();
   for (const tx of dedupedTrading) {
     const baseKey = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
       tx.isSavingsPlan ? "SP" : "M"
@@ -445,23 +464,6 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     const txAmount = Math.abs(tx.amount);
     const txUnit = txQty > 0 ? txAmount / txQty : 0;
 
-    // Try tradeId-keyed match first.
-    if (tx.tradeId) {
-      const tradeKey = `${baseKey}|tid:${tx.tradeId}`;
-      const idx = aggIndex.get(tradeKey);
-      if (idx !== undefined) {
-        mergeInto(aggregated, idx, tx);
-        continue;
-      }
-      aggIndex.set(tradeKey, aggregated.length);
-      aggregated.push(tx);
-      continue;
-    }
-
-    // Fallback: scan existing aggregated entries with the same base key
-    // and similar unit price. Same-day same-asset same-direction without
-    // tradeId is rare (manual: 1 trade/day typical; savings: 1/asset/day),
-    // so this loop almost always finds 0 or 1 match.
     let matchedIdx = -1;
     for (let i = aggregated.length - 1; i >= 0; i--) {
       const existing = aggregated[i];
@@ -469,21 +471,25 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
         existing.isBuy ? "B" : "S"
       }|${existing.isSavingsPlan ? "SP" : "M"}`;
       if (existingKey !== baseKey) continue;
-      // Unit-price proximity check (skip when one side has no qty).
+
       const existingQty = existing.quantity ?? 0;
       const existingAmount = Math.abs(existing.amount);
       const existingUnit = existingQty > 0 ? existingAmount / existingQty : 0;
+
+      // Tiebreaker: tradeId match → instant merge (same TR order ID).
+      if (tx.tradeId && existing.tradeId && tx.tradeId === existing.tradeId) {
+        matchedIdx = i;
+        break;
+      }
+
+      // Primary: unit-price proximity. Real partial fills settle at the
+      // same average price → drift ≤ 2% means same order.
       if (existingUnit > 0 && txUnit > 0) {
         const drift = Math.abs(existingUnit - txUnit) / existingUnit;
         if (drift <= 0.02) {
           matchedIdx = i;
           break;
         }
-      } else {
-        // One side has no qty (rare). Merge anyway since we have nothing
-        // better to discriminate by — same date+ISIN+direction is strong.
-        matchedIdx = i;
-        break;
       }
     }
     if (matchedIdx >= 0) {
