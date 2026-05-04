@@ -158,35 +158,34 @@ export default function CashflowPanel({ summary, periodLabel = "All data" }: Cas
             </div>
           </div>
 
-          {/* Bars row */}
-          <div
-            className="grid items-end gap-1"
-            style={{
-              gridTemplateColumns: `repeat(${recentMonths.length}, minmax(0, 1fr))`,
-              height: "180px",
-            }}
-          >
+          {/* Bars row — flex layout with explicit child height so bars
+              actually render (CSS grid + h-full was collapsing to 0px). */}
+          <div className="flex items-end gap-1" style={{ height: "180px" }}>
             {recentMonths.map((m) => {
               const inH = (m.in / maxAbs) * 100;
               const outH = (m.out / maxAbs) * 100;
               const invH = (Math.abs(m.invested) / maxAbs) * 100;
               return (
-                <div key={m.month} className="flex h-full items-end gap-0.5">
+                <div
+                  key={m.month}
+                  className="flex flex-1 items-end gap-0.5"
+                  style={{ height: "100%" }}
+                >
                   <div
-                    className="flex-1 rounded-t bg-blue-500/80"
-                    style={{ height: `${Math.max(inH, 1)}%` }}
+                    className="flex-1 rounded-t bg-blue-500"
+                    style={{ height: `${Math.max(inH, 2)}%` }}
                     title={`In: ${fmtEur(m.in)}`}
                   />
                   <div
-                    className="flex-1 rounded-t bg-fuchsia-500/80"
-                    style={{ height: `${Math.max(outH, 1)}%` }}
+                    className="flex-1 rounded-t bg-fuchsia-500"
+                    style={{ height: `${Math.max(outH, 2)}%` }}
                     title={`Out: ${fmtEur(m.out)}`}
                   />
                   <div
                     className={`flex-1 rounded-t ${
-                      m.invested >= 0 ? "bg-amber-500/80" : "bg-amber-500/40"
+                      m.invested >= 0 ? "bg-amber-500" : "bg-amber-700"
                     }`}
-                    style={{ height: `${Math.max(invH, 1)}%` }}
+                    style={{ height: `${Math.max(invH, 2)}%` }}
                     title={`${m.invested >= 0 ? "Invested" : "Divested"}: ${fmtEur(Math.abs(m.invested))}`}
                   />
                 </div>

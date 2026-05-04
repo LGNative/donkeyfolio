@@ -171,10 +171,21 @@ export function parseEuroAmount(
   // to lenient heuristics for edge cases (rare formats, sub-cent values,
   // etc.). Counts strict-hit vs heuristic-hit for the UI's parse-quality
   // indicator.
+  // (v3.2.1) Try PRIMARY locale first, then the OTHER locale before falling
+  // through to heuristics. Some TR PDFs emit a mix — PT body with the page-1
+  // SUMMARY block in DE format (TR's internal templating). Per-value
+  // dispatching makes both formats parse correctly without us having to
+  // choose one over the other.
   const strict = parseEuroAmountStrict(raw, locale);
   if (strict !== null) {
     _parseStats.strictHits += 1;
     return strict;
+  }
+  const otherLocale: AmountLocale = locale === "dot-decimal" ? "comma-decimal" : "dot-decimal";
+  const strictOther = parseEuroAmountStrict(raw, otherLocale);
+  if (strictOther !== null) {
+    _parseStats.strictHits += 1;
+    return strictOther;
   }
   _parseStats.heuristicHits += 1;
   // Capture sample for debugging — see WHAT format escapes the strict regex.
