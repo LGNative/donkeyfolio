@@ -368,7 +368,10 @@ export function enrichTradingWithQuantity(
       // Strip ISINs that may remain after jcmpagel's extraction.
       .replace(/\s*-?\s*[A-Z]{2}[A-Z0-9]{10}\b/g, "")
       // Strip the "Savings plan execution" marker we injected as "Buy" hint.
-      .replace(/\bSavings plan execution\b/i, "")
+      .replace(
+        /\b(?:Savings\s+plan\s+execution|Plano\s+de\s+poupan[cç]a|Plano\s+poupan[cç]a|Sparplan(?:ausf[uü]hrung)?|Plan\s+d['']?[ée]pargne|Piano\s+di\s+accumulo|Plan\s+de\s+ahorro)/i,
+        "",
+      )
       // Strip the German bond suffix "DL-,01" etc.
       .replace(/\s+DL-?,?\d+.*$/i, "")
       // Strip the trailing ", <qty-label>: X" fragment in any of our
@@ -381,7 +384,10 @@ export function enrichTradingWithQuantity(
       .replace(/,\s*$/, "")
       .replace(/\s+/g, " ")
       .trim();
-    const isSavingsPlan = /\bSavings plan execution\b/i.test(originalDesc);
+    const isSavingsPlan =
+      /\b(?:Savings\s+plan\s+execution|Plano\s+de\s+poupan[cç]a|Plano\s+poupan[cç]a|Sparplan(?:ausf[uü]hrung)?|Plan\s+d['']?[ée]pargne|Piano\s+di\s+accumulo|Plan\s+de\s+ahorro)/i.test(
+        originalDesc,
+      );
     const feeFromPdf = extractFeeFromDescription(originalDesc);
     return {
       ...tx,
@@ -987,7 +993,10 @@ export function recoverCashAmounts(cash: CashTransaction[]): {
     const desc = row.beschreibung || "";
     const isManualBuy =
       /\bBuy\b|\bKauf\b|\bCompra\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
-    const isSavingsPlan = /\bSavings plan execution\b/i.test(desc);
+    const isSavingsPlan =
+      /\b(?:Savings\s+plan\s+execution|Plano\s+de\s+poupan[cç]a|Plano\s+poupan[cç]a|Sparplan(?:ausf[uü]hrung)?|Plan\s+d['']?[ée]pargne|Piano\s+di\s+accumulo|Plan\s+de\s+ahorro)/i.test(
+        desc,
+      );
     const isBuy = isManualBuy || isSavingsPlan;
     const isSell =
       /\bSell\b|\bVerkauf\b|\bVenta\b|\bVenda\b/i.test(desc) && /\btrade\b|\bHandel\b/i.test(desc);
