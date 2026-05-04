@@ -140,6 +140,31 @@ const KEYWORDS = {
   saveback: ["saveback", "round up", "round-up", "aufrundung", "arredondamento"],
   // Bonus / referral / promo cash credits
   bonus: ["bonus", "referral", "promo", "promoção", "promocao", "prämie"],
+  // (v3.0.7) TR Card setup fee: one-time 5 EUR (Classic) or 50 EUR (Mirror).
+  // Classified as FEE so it doesn't pollute Card Transaction totals.
+  cardSetup: [
+    "cartão classic",
+    "cartao classic",
+    "cartão mirror",
+    "cartao mirror",
+    "card classic",
+    "card mirror",
+    "karte classic",
+    "karte mirror",
+  ],
+  // (v3.0.7) TR withdrawal fee for amounts < 100 EUR. The fee usually appears
+  // as a separate row "Comissão de levantamento" / "Withdrawal fee" / etc.
+  withdrawalFee: [
+    "comissão de levantamento",
+    "comissao de levantamento",
+    "withdrawal fee",
+    "auszahlungsgebühr",
+    "auszahlungsgebuehr",
+    "frais de retrait",
+    "commissione di prelievo",
+    "comisión de retirada",
+    "comision de retirada",
+  ],
   // Refunds / reimbursements / chargebacks — net incoming cash, NOT income.
   refund: ["refund", "erstattung", "reembolso", "estorno", "rückzahlung", "ruckzahlung"],
   // Settlement / rebooking / rounding adjustments — internal corrections.
@@ -235,6 +260,16 @@ function classifyCashType(
   if (matchAny(probe, KEYWORDS.interest)) return { type: ACT.INTEREST };
   if (matchAny(probe, KEYWORDS.tax)) return { type: ACT.TAX };
   if (matchAny(probe, KEYWORDS.fee)) return { type: ACT.FEE };
+  // (v3.0.7) Specific TR fees: card setup (5/50 EUR one-time) and
+  // withdrawal-under-100-EUR (1 EUR). Both classified as FEE with
+  // descriptive subtypes so the user can filter them in Donkeyfolio's
+  // activity table.
+  if (matchAny(probe, KEYWORDS.cardSetup)) {
+    return { type: ACT.FEE, subtype: "CARD_SETUP" };
+  }
+  if (matchAny(probe, KEYWORDS.withdrawalFee)) {
+    return { type: ACT.FEE, subtype: "WITHDRAWAL_FEE" };
+  }
   // Saveback / Round-up: TR returns 1% of card spending. CREDIT/SAVEBACK so
   // it's separable from referral bonuses. Always incoming — but if the row
   // direction says outgoing (rare edge case), it'll fall through to the
