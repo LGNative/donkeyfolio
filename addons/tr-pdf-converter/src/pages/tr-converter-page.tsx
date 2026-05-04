@@ -2494,12 +2494,92 @@ function InterestTable({ rows }: { rows: InterestTransaction[] }) {
  * in handleImport — if a cell here is empty, that field will also be
  * empty in the imported activity.
  */
+/** (v3.0.5) Click-to-sort key for the trades preview. */
+type TradeSortKey = "date" | "asset" | "qty" | "amount" | "fee" | "type" | "symbol";
+type SortDir = "asc" | "desc";
+
 function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
+  const [sortKey, setSortKey] = React.useState<TradeSortKey>("date");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+
+  const toggleSort = (key: TradeSortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // Sensible default: text columns asc, numeric/date desc.
+      setSortDir(key === "asset" || key === "symbol" || key === "type" ? "asc" : "desc");
+    }
+  };
+
   // Sort chronologically so FIFO cost-basis math is intuitive when scanning.
-  const sorted = React.useMemo(
-    () => [...trades].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
-    [trades],
-  );
+  const sorted = React.useMemo(() => {
+    const arr = [...trades];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      let av: string | number = "";
+      let bv: string | number = "";
+      switch (sortKey) {
+        case "date":
+          av = toIsoDate(a.date).slice(0, 10);
+          bv = toIsoDate(b.date).slice(0, 10);
+          break;
+        case "asset":
+          av = (a.cleanStockName || a.stockName || "").toLowerCase();
+          bv = (b.cleanStockName || b.stockName || "").toLowerCase();
+          break;
+        case "qty":
+          av = a.quantity ?? 0;
+          bv = b.quantity ?? 0;
+          break;
+        case "amount":
+          av = Math.abs(a.amount);
+          bv = Math.abs(b.amount);
+          break;
+        case "fee":
+          av = a.pdfFee ?? (a.isSavingsPlan ? 0 : 1);
+          bv = b.pdfFee ?? (b.isSavingsPlan ? 0 : 1);
+          break;
+        case "type":
+          av = a.isBuy ? "BUY" : "SELL";
+          bv = b.isBuy ? "BUY" : "SELL";
+          break;
+        case "symbol":
+          av = (a.isin ?? "").toLowerCase();
+          bv = (b.isin ?? "").toLowerCase();
+          break;
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+    return arr;
+  }, [trades, sortKey, sortDir]);
+
+  /** Render header cell with sort indicator. */
+  const SortHead = ({
+    k,
+    label,
+    align,
+  }: {
+    k: TradeSortKey;
+    label: string;
+    align?: "right" | "left";
+  }) => {
+    const active = sortKey === k;
+    const arrow = active ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+    return (
+      <TableHead
+        onClick={() => toggleSort(k)}
+        className={`hover:text-foreground cursor-pointer select-none ${
+          align === "right" ? "text-right" : ""
+        }`}
+      >
+        {label}
+        <span className="text-muted-foreground">{arrow}</span>
+      </TableHead>
+    );
+  };
 
   // (v2.20.0) Quality-of-source summary across all trades. Surfaces:
   //   - how many fees came from PDF (ground truth) vs heuristic (€1/€0)
@@ -2565,16 +2645,16 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Asset</TableHead>
-              <TableHead className="font-mono text-xs">ISIN</TableHead>
+              <SortHead k="date" label="Date" />
+              <SortHead k="type" label="Type" />
+              <SortHead k="asset" label="Asset" />
+              <SortHead k="symbol" label="ISIN" />
               <TableHead className="font-mono text-xs">Symbol</TableHead>
               <TableHead>Kind</TableHead>
-              <TableHead className="text-right">Qty</TableHead>
+              <SortHead k="qty" label="Qty" align="right" />
               <TableHead className="text-right">Unit price</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="text-right">Fee</TableHead>
+              <SortHead k="amount" label="Amount" align="right" />
+              <SortHead k="fee" label="Fee" align="right" />
               <TableHead className="text-xs">Fee src</TableHead>
               <TableHead>Quote ccy</TableHead>
               <TableHead className="text-right text-xs">FX hint</TableHead>
@@ -2611,7 +2691,9 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
                   key={`${t.date}-${t.isin}-${i}`}
                   className={dropped ? "bg-amber-50 dark:bg-amber-950/30" : undefined}
                 >
-                  <TableCell className="font-mono text-xs">{t.date.slice(0, 10)}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {toIsoDate(t.date).slice(0, 10)}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={t.isBuy ? "outline" : "secondary"} className="text-xs">
                       {t.isBuy ? "BUY" : "SELL"}
