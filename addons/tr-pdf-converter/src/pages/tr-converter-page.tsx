@@ -1607,7 +1607,23 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Ready to import</CardTitle>
-                <CardDescription>{state.fileName} · all checks ran automatically</CardDescription>
+                <CardDescription>
+                  {state.fileName} ·{" "}
+                  {(() => {
+                    // (v3.0.9) Derive statement period from cash dates so
+                    // user can verify which range this PDF covers — critical
+                    // for incremental imports across years (drop another PDF
+                    // for 2027 without overlapping 2026).
+                    const dates = state.cash
+                      .map((c) => toIsoDate(c.datum).slice(0, 10))
+                      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                      .sort();
+                    if (dates.length === 0) return "no dates parsed";
+                    const start = dates[0];
+                    const end = dates[dates.length - 1];
+                    return start === end ? start : `${start} → ${end}`;
+                  })()}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 text-sm">
                 {/* KPI tiles */}
@@ -2643,7 +2659,7 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
       </div>
       <div className="max-h-[70vh] overflow-auto">
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-background sticky top-0 z-10 shadow-sm">
             <TableRow>
               <SortHead k="date" label="Date" />
               <SortHead k="type" label="Type" />
@@ -2689,7 +2705,13 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
               return (
                 <TableRow
                   key={`${t.date}-${t.isin}-${i}`}
-                  className={dropped ? "bg-amber-50 dark:bg-amber-950/30" : undefined}
+                  className={
+                    dropped
+                      ? "bg-amber-50 dark:bg-amber-950/30"
+                      : i % 2 === 1
+                        ? "bg-muted/20"
+                        : undefined
+                  }
                 >
                   <TableCell className="font-mono text-xs">
                     {toIsoDate(t.date).slice(0, 10)}
@@ -2814,7 +2836,7 @@ function EurHoldingsTable({ trades }: { trades: TradingTransaction[] }) {
       </div>
       <div className="max-h-[70vh] overflow-auto">
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-background sticky top-0 z-10 shadow-sm">
             <TableRow>
               <TableHead className="font-mono text-xs">Symbol</TableHead>
               <TableHead>Name</TableHead>
@@ -2829,10 +2851,15 @@ function EurHoldingsTable({ trades }: { trades: TradingTransaction[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visibleRows.map((r) => {
+            {visibleRows.map((r, i) => {
               const closed = r.qty <= 1e-9;
               return (
-                <TableRow key={r.isin} className={closed ? "text-muted-foreground" : undefined}>
+                <TableRow
+                  key={r.isin}
+                  className={
+                    closed ? "text-muted-foreground" : i % 2 === 1 ? "bg-muted/20" : undefined
+                  }
+                >
                   <TableCell className="font-mono text-xs">{r.symbol}</TableCell>
                   <TableCell className="max-w-[220px] truncate" title={r.name}>
                     {r.name}
