@@ -18,6 +18,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import {
   detectAmountLocale,
   parseEuroAmount as parseEuroAmountShared,
+  parseQty as parseQtyShared,
   resetParseStats,
   type AmountLocale,
 } from "./tr-amount";
@@ -320,12 +321,12 @@ export function enrichTradingWithQuantity(
     const qtyMatch = originalDesc.match(QTY_LABEL_RE);
     let quantity: number | undefined;
     if (qtyMatch) {
-      // Use the format-aware parser — TR descriptions emit "quantity: 0.272851"
-      // (US format with dot as decimal). The previous naive replace(/\./g, "")
-      // turned 0.272851 into 272851, inflating fractional shares 10^6× and
-      // producing absurd Net qty values for stocks with many fractional sells
-      // (PALANTIR sample: -11.37M shares vs. real ~63 net).
-      const q = parseEuroAmount(qtyMatch[1]);
+      // (v3.2.2) Route through parseQty (not parseEuroAmount) — share
+      // quantities have different precision (6+ dp) from currency (2dp)
+      // and don't follow currency strict-regex shape. Going through the
+      // currency parser polluted the "Parse strict %" indicator with
+      // false negatives like "0.129117" / "3" / "1".
+      const q = parseQtyShared(qtyMatch[1], _detectedLocale);
       if (Number.isFinite(q) && q > 0) quantity = q;
     }
     const wkn = extractWknFromDescription(originalDesc, tx.isin);

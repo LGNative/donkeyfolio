@@ -103,6 +103,34 @@ const RE_STRICT_DE_3DP = /^-?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{3}$/;
  * Eliminates the X.YYY inflation bug by design — there's no heuristic to
  * misfire. Either the format is exactly right, or we refuse to guess.
  */
+/**
+ * Parse a SHARE QUANTITY (not a currency amount). Quantities have very
+ * different precision from money: a single TR row might list "0.129117"
+ * shares (6dp) or "11.980687" or pure integers like "3" / "100". They
+ * also use ONE separator (the decimal) — thousands separators in qty
+ * are virtually unheard of.
+ *
+ * v3.2.2: Routing share-qty parses here keeps them OUT of the currency
+ * parse-quality stats. The "Parse strict %" indicator should only reflect
+ * currency parsing (where strict-format matters); quantity parsing is
+ * inherently more permissive because TR doesn't emit ambiguous formats
+ * for qty.
+ */
+export function parseQty(
+  raw: string | null | undefined,
+  locale: AmountLocale = "dot-decimal",
+): number {
+  if (!raw) return 0;
+  const cleaned = String(raw).replace(/[€\s]/g, "").replace(/^\+/, "");
+  if (!cleaned) return 0;
+  const normalized =
+    locale === "comma-decimal"
+      ? cleaned.replace(/\./g, "").replace(",", ".")
+      : cleaned.replace(/,/g, "");
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export function parseEuroAmountStrict(
   raw: string | null | undefined,
   locale: AmountLocale,
