@@ -41,32 +41,59 @@ export type AmountLocale = "dot-decimal" | "comma-decimal";
  * (regex-only, no guessing) path vs the lenient heuristic fallback.
  * High strict-hit ratio = trustworthy numbers. High heuristic ratio
  * = some PDF rows have unusual formatting and need attention.
+ *
+ * v3.1.4: also capture a sample of the first N heuristic-hit raw strings
+ * so we can see WHAT formats are escaping the strict regex without having
+ * to guess. Surfaced via the snapshot tile + console log.
  */
-const _parseStats = { strictHits: 0, heuristicHits: 0 };
-export function getParseStats(): { strictHits: number; heuristicHits: number } {
-  return { ..._parseStats };
+const _parseStats = {
+  strictHits: 0,
+  heuristicHits: 0,
+  /** First HEURISTIC_SAMPLE_LIMIT raw strings that failed the strict regex.
+   *  Trimmed to avoid blowing memory on a 4000-row cash array. */
+  heuristicSamples: [] as string[],
+};
+const HEURISTIC_SAMPLE_LIMIT = 20;
+
+export function getParseStats(): {
+  strictHits: number;
+  heuristicHits: number;
+  heuristicSamples: string[];
+} {
+  return {
+    strictHits: _parseStats.strictHits,
+    heuristicHits: _parseStats.heuristicHits,
+    heuristicSamples: [..._parseStats.heuristicSamples],
+  };
 }
 export function resetParseStats(): void {
   _parseStats.strictHits = 0;
   _parseStats.heuristicHits = 0;
+  _parseStats.heuristicSamples = [];
 }
 
 /**
  * Strict-format regexes per locale. Match the EXACT shape TR emits.
  * Anything that doesn't match is rejected (returns null) rather than
- * being subjected to lossy heuristics. This is the v3.1.2 "no guessing"
- * approach inspired by TrackRepublic (DE-only `\d{1,3}(?:\.\d{3})*,\d{2}`).
+ * being subjected to lossy heuristics. Inspired by TrackRepublic
+ * (DE-only `\d{1,3}(?:\.\d{3})*,\d{2}`) but multi-locale.
  *
  * Patterns accept:
  *   - optional minus
- *   - optional thousands separators in groups of 3
- *   - REQUIRED 2-decimal tail (TR currency precision)
- *   - 3-decimal tail allowed for the rare 3dp case (interest accruals)
+ *   - integer part EITHER with thousands separator ("1,234" / "1.234")
+ *     OR plain ("1234" / "12345" / "0") — TR omits the separator
+ *     for amounts under €10K depending on layout, so we must accept both
+ *   - 2 or 3 decimal places (currency precision is 2dp; interest accruals
+ *     and share quantities sometimes use 3dp)
+ *
+ * v3.1.4: relaxed regex to accept no-thousands-separator integers (was
+ * the source of the 9% heuristic-hit rate on PT statements where many
+ * cash rows write small amounts without commas).
  */
-const RE_STRICT_PT_2DP = /^-?\d{1,3}(?:,\d{3})*\.\d{2}$/;
-const RE_STRICT_PT_3DP = /^-?\d{1,3}(?:,\d{3})*\.\d{3}$/;
-const RE_STRICT_DE_2DP = /^-?\d{1,3}(?:\.\d{3})*,\d{2}$/;
-const RE_STRICT_DE_3DP = /^-?\d{1,3}(?:\.\d{3})*,\d{3}$/;
+const RE_STRICT_PT_2DP = /^-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$/;
+const RE_STRICT_PT_3DP = /^-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{3}$/;
+const RE_STRICT_DE_2DP = /^-?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}$/;
+const RE_STRICT_DE_3DP = /^-?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{3}$/;
 
 /**
  * Strict parser. Returns the parsed number when the cleaned string EXACTLY
@@ -150,6 +177,13 @@ export function parseEuroAmount(
     return strict;
   }
   _parseStats.heuristicHits += 1;
+  // Capture sample for debugging — see WHAT format escapes the strict regex.
+  if (_parseStats.heuristicSamples.length < HEURISTIC_SAMPLE_LIMIT) {
+    const sample = String(raw).slice(0, 32);
+    if (!_parseStats.heuristicSamples.includes(sample)) {
+      _parseStats.heuristicSamples.push(sample);
+    }
+  }
   const s = String(raw).replace(/[€\s]/g, "");
   if (!s) return 0;
   const hasComma = s.includes(",");

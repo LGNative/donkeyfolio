@@ -176,6 +176,7 @@ export interface ValidationSnapshot {
     cashRowCount: number;
     parseStrictHits: number;
     parseHeuristicHits: number;
+    parseHeuristicSamples: string[];
   };
   perIsin: PerIsinFigure[];
   perCurrency: PerCurrencyFigure[];
@@ -544,8 +545,10 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
       // values went through the regex-only path vs the lenient heuristic
       // fallback. 100% strict = trustworthy numbers; lower = some rows have
       // unusual formatting and may need attention.
+      // (v3.1.4) Plus a sample of escaping raw strings for debugging.
       parseStrictHits: getParseStats().strictHits,
       parseHeuristicHits: getParseStats().heuristicHits,
+      parseHeuristicSamples: getParseStats().heuristicSamples,
     },
     perIsin,
     perCurrency,

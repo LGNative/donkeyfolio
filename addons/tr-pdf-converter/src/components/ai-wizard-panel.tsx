@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.1.3";
+const ADDON_VERSION = "3.1.4";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -278,13 +278,24 @@ export default function AiWizardPanel({
                 : pct >= 95
                   ? "text-amber-700 dark:text-amber-400"
                   : "text-red-600 dark:text-red-400";
+            const samples = snapshot.totals.parseHeuristicSamples ?? [];
+            const tooltip =
+              samples.length > 0
+                ? `${samples.length} sample(s) escaping strict regex:\n${samples.join("\n")}`
+                : undefined;
             return (
-              <span className={`font-mono text-[10px] ${cls}`}>
+              <span className={`font-mono text-[10px] ${cls}`} title={tooltip}>
                 Parse strict {pct}% ({snapshot.totals.parseStrictHits}/{total})
+                {pct < 100 && samples.length > 0 ? " ⓘ" : ""}
               </span>
             );
           })()}
         </div>
+        {snapshot.totals.parseHeuristicSamples?.length > 0 && (
+          <div className="text-muted-foreground mt-1 font-mono text-[10px]">
+            Heuristic samples: {snapshot.totals.parseHeuristicSamples.slice(0, 8).join(" · ")}
+          </div>
+        )}
         <div className="text-muted-foreground grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-4">
           <span>Investido: {fmtEur(snapshot.cashflow.invested)}</span>
           <span>Vendido: {fmtEur(snapshot.cashflow.divested)}</span>
