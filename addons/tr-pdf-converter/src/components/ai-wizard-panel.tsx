@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.2.5";
+const ADDON_VERSION = "3.3.0";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -301,18 +301,35 @@ export default function AiWizardPanel({
             <div className="text-muted-foreground mb-1 text-[10px] font-medium uppercase tracking-wider">
               Per-year (cross-check fiscal report)
             </div>
-            <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 font-mono text-[10px] md:grid-cols-2">
+            <div className="space-y-1 font-mono text-[10px]">
               {snapshot.perYear.map((y) => (
-                <div key={y.year} className="flex items-baseline gap-1">
-                  <span className="text-foreground font-semibold">{y.year}:</span>
-                  <span>
-                    {y.buyOrders} BUY (€{y.buyFees}) + {y.sellOrders} SELL (€{y.sellFees}) ={" "}
-                  </span>
-                  <span className="font-semibold">€{y.totalFees}</span>
-                  <span className="text-muted-foreground">
-                    · invested €{y.invested.toLocaleString("pt-PT")} · sold €
-                    {y.divested.toLocaleString("pt-PT")}
-                  </span>
+                <div key={y.year} className="border-muted border-l-2 pl-2">
+                  <div className="flex flex-wrap items-baseline gap-x-3">
+                    <span className="text-foreground font-semibold">{y.year}</span>
+                    <span>
+                      Fees: <span className="font-semibold">€{y.totalFees}</span> ({y.buyOrders} BUY
+                      + {y.sellOrders} SELL)
+                    </span>
+                    <span>
+                      Realized:{" "}
+                      <span
+                        className={
+                          y.realizedPnlEur >= 0
+                            ? "font-semibold text-emerald-600 dark:text-emerald-400"
+                            : "font-semibold text-red-600 dark:text-red-400"
+                        }
+                      >
+                        {y.realizedPnlEur >= 0 ? "+" : ""}€
+                        {y.realizedPnlEur.toLocaleString("pt-PT")}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground flex flex-wrap gap-x-3">
+                    <span>Invested: €{y.invested.toLocaleString("pt-PT")}</span>
+                    <span>Sold: €{y.divested.toLocaleString("pt-PT")}</span>
+                    <span>Earnings: €{y.earnings.toLocaleString("pt-PT")}</span>
+                    <span>Juros: €{y.interestIn.toLocaleString("pt-PT")}</span>
+                  </div>
                 </div>
               ))}
             </div>

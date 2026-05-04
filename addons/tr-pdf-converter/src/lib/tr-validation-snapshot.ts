@@ -194,6 +194,14 @@ export interface ValidationSnapshot {
     totalFees: number;
     invested: number;
     divested: number;
+    /** (v3.3.0) Realized P&L from SELLs that happened in this year, FIFO
+     *  cost basis (cost may come from BUYs in earlier years). Lets the
+     *  user spot-check whether 2024 was a loss / 2025+2026 were gains. */
+    realizedPnlEur: number;
+    /** Cash dividends + earnings classified to Earnings bucket in this year. */
+    earnings: number;
+    /** Interest in this year (Save & Invest). */
+    interestIn: number;
   }>;
   perIsin: PerIsinFigure[];
   perCurrency: PerCurrencyFigure[];
@@ -403,6 +411,66 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     else if (bucket === "rewards") cashflow.rewards += inAmt;
     else if (bucket === "refunds") cashflow.refunds += inAmt;
     else if (bucket === "taxes") cashflow.taxes += outAmt || inAmt;
+
+    // (v3.3.0) Attribute earnings + interest to year for cross-check.
+    const cashYear = toIsoCompare(c.datum).slice(0, 4) || "unknown";
+    if (bucket === "earnings") ensureYear(cashYear).earnings += inAmt;
+    else if (bucket === "interestIn") ensureYear(cashYear).interestIn += inAmt;
+  }
+
+  // (v3.3.0) Realized P&L per year via FIFO with per-SELL year tracking.
+  // Walks trades chronologically per ISIN, accumulating BUY lots and
+  // consuming them on each SELL. The realized contribution of each SELL
+  // is attributed to the YEAR the SELL happened (cost basis can come
+  // from BUYs in earlier years — that's how IRS Anexo G works too).
+  function resolveSnapshotEurAmount(t: TradingTransaction): number {
+    const totalCash = Math.abs(t.amount);
+    const heuristicFee = t.isSavingsPlan ? 0 : 1;
+    const resolvedFee = t.pdfFee ?? heuristicFee;
+    const gross = t.isBuy ? totalCash - resolvedFee : totalCash + resolvedFee;
+    return gross > 0 ? gross : totalCash;
+  }
+  const tradesByIsin = new Map<string, TradingTransaction[]>();
+  for (const t of input.trades) {
+    if (!t.isin || !t.date || !t.quantity || t.quantity <= 0) continue;
+    const arr = tradesByIsin.get(t.isin) ?? [];
+    arr.push(t);
+    tradesByIsin.set(t.isin, arr);
+  }
+  for (const [, isinTrades] of tradesByIsin) {
+    isinTrades.sort((a, b) => {
+      const ai = toIsoCompare(a.date);
+      const bi = toIsoCompare(b.date);
+      return ai < bi ? -1 : ai > bi ? 1 : 0;
+    });
+    const lots: Array<{ qty: number; amountEur: number }> = [];
+    for (const t of isinTrades) {
+      const qty = t.quantity ?? 0;
+      const grossEur = resolveSnapshotEurAmount(t);
+      if (t.isBuy) {
+        lots.push({ qty, amountEur: grossEur });
+      } else {
+        let remaining = qty;
+        let costOfSold = 0;
+        while (remaining > 1e-9 && lots.length > 0) {
+          const lot = lots[0];
+          if (lot.qty <= remaining + 1e-9) {
+            remaining -= lot.qty;
+            costOfSold += lot.amountEur;
+            lots.shift();
+          } else {
+            const ratio = remaining / lot.qty;
+            const consumed = lot.amountEur * ratio;
+            costOfSold += consumed;
+            lot.amountEur -= consumed;
+            lot.qty -= remaining;
+            remaining = 0;
+          }
+        }
+        const sellYear = toIsoCompare(t.date).slice(0, 4) || "unknown";
+        ensureYear(sellYear).realizedPnlEur += grossEur - costOfSold;
+      }
+    }
   }
 
   // ─── Trading totals + per-currency + per-ISIN (via FIFO) ────────────
@@ -419,7 +487,7 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   // The previous per-row sum overcounted fees on partial fills (the very
   // bug v3.2.3 fixed in the activity emitter).
   const seenOrderKeys = new Set<string>();
-  // (v3.2.5) Per-year breakdown for fiscal cross-check.
+  // (v3.2.5 / v3.3.0) Per-year breakdown for fiscal cross-check.
   type YearAcc = {
     buyOrders: number;
     sellOrders: number;
@@ -427,12 +495,25 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     sellFees: number;
     invested: number;
     divested: number;
+    realizedPnlEur: number;
+    earnings: number;
+    interestIn: number;
   };
   const perYearMap = new Map<string, YearAcc>();
   const ensureYear = (yyyy: string): YearAcc => {
     let y = perYearMap.get(yyyy);
     if (!y) {
-      y = { buyOrders: 0, sellOrders: 0, buyFees: 0, sellFees: 0, invested: 0, divested: 0 };
+      y = {
+        buyOrders: 0,
+        sellOrders: 0,
+        buyFees: 0,
+        sellFees: 0,
+        invested: 0,
+        divested: 0,
+        realizedPnlEur: 0,
+        earnings: 0,
+        interestIn: 0,
+      };
       perYearMap.set(yyyy, y);
     }
     return y;
@@ -624,6 +705,9 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
         totalFees: r2(y.buyFees + y.sellFees),
         invested: r2(y.invested),
         divested: r2(y.divested),
+        realizedPnlEur: r2(y.realizedPnlEur),
+        earnings: r2(y.earnings),
+        interestIn: r2(y.interestIn),
       }))
       .sort((a, b) => (a.year < b.year ? -1 : 1)),
   };
