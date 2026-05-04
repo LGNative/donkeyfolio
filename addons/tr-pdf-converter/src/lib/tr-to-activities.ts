@@ -430,45 +430,41 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
   // AND those tradeIds match exactly, we merge regardless of price drift
   // (covers the rare case of a single TR order filled at materially
   // different prices, which is unusual but theoretically possible).
+  // (v3.2.3) Aggregation by base key alone — date+ISIN+direction+SP flag.
+  // Removed the unit-price drift gate that v3.0.11 added: it failed for
+  // partial fills where TR allocates the €1 fee unevenly across the rows
+  // (ServiceNow Apr 24 case: row 1 €147.32/2sh = €73.66 implied unit;
+  // row 2 €1.68/0.036383sh = €46.18 implied unit because €1.68 includes
+  // most of the fee allocated to that fragment). Drift = 37%, well above
+  // the 2% gate, so we never merged → user saw €1 fee TWICE.
+  //
+  // New strategy: trust the base key. Multiple distinct orders for the
+  // SAME stock on the SAME day with the SAME direction and SP flag are
+  // virtually unheard of for TR retail users. Aggregating them is far
+  // safer than letting partial fills slip through unmerged. Edge case
+  // handled in mergeInto via the math-validated fee derivation below.
+  // (v3.2.3) Adjacency-based aggregation. Per the user's observation: TR
+  // partial fills are ALWAYS consecutive in the PDF (TR processes them as
+  // a batch and prints each fragment back-to-back). So we only merge with
+  // the IMMEDIATELY PREVIOUS row, not any historical match. This avoids
+  // accidentally collapsing two genuine same-day orders that happen to
+  // share the same base key but are separated by other transactions.
+  //
+  // For 3+ consecutive fragments, this still works — after merging row2
+  // into row1, the merged entry stays at [length-1], so row3 matches it
+  // on the next iteration. The chain continues as long as consecutive
+  // rows share the base key.
   const aggregated: TradingTransaction[] = [];
   for (const tx of dedupedTrading) {
     const baseKey = `${tx.date}|${tx.isin}|${tx.isBuy ? "B" : "S"}|${
       tx.isSavingsPlan ? "SP" : "M"
     }`;
-    const txQty = tx.quantity ?? 0;
-    const txAmount = Math.abs(tx.amount);
-    const txUnit = txQty > 0 ? txAmount / txQty : 0;
-
-    let matchedIdx = -1;
-    for (let i = aggregated.length - 1; i >= 0; i--) {
-      const existing = aggregated[i];
-      const existingKey = `${existing.date}|${existing.isin}|${
-        existing.isBuy ? "B" : "S"
-      }|${existing.isSavingsPlan ? "SP" : "M"}`;
-      if (existingKey !== baseKey) continue;
-
-      const existingQty = existing.quantity ?? 0;
-      const existingAmount = Math.abs(existing.amount);
-      const existingUnit = existingQty > 0 ? existingAmount / existingQty : 0;
-
-      // Tiebreaker: tradeId match → instant merge (same TR order ID).
-      if (tx.tradeId && existing.tradeId && tx.tradeId === existing.tradeId) {
-        matchedIdx = i;
-        break;
-      }
-
-      // Primary: unit-price proximity. Real partial fills settle at the
-      // same average price → drift ≤ 2% means same order.
-      if (existingUnit > 0 && txUnit > 0) {
-        const drift = Math.abs(existingUnit - txUnit) / existingUnit;
-        if (drift <= 0.02) {
-          matchedIdx = i;
-          break;
-        }
-      }
-    }
-    if (matchedIdx >= 0) {
-      mergeInto(aggregated, matchedIdx, tx);
+    const last = aggregated[aggregated.length - 1];
+    const lastKey = last
+      ? `${last.date}|${last.isin}|${last.isBuy ? "B" : "S"}|${last.isSavingsPlan ? "SP" : "M"}`
+      : null;
+    if (lastKey === baseKey) {
+      mergeInto(aggregated, aggregated.length - 1, tx);
       continue;
     }
     aggregated.push(tx);
@@ -478,14 +474,19 @@ export function buildActivitiesFromParsed(opts: BuildOpts): ActivityImport[] {
     const existing = arr[idx];
     const sumQty = (existing.quantity ?? 0) + (incoming.quantity ?? 0);
     const sumAmount = Math.abs(existing.amount) + Math.abs(incoming.amount);
+    // The fee is allocated to the merged ORDER once at emission time
+    // (€1 manual / €0 savings plan), so we don't carry it per-row here.
+    // Cash and qty just accumulate. Unit price is recomputed from the
+    // post-fee gross at emission, not from the raw cash sum.
     arr[idx] = {
       ...existing,
       quantity: sumQty > 0 ? sumQty : existing.quantity,
       amount: existing.isBuy ? sumAmount : -sumAmount,
       unitPrice: sumQty > 0 ? sumAmount / sumQty : existing.unitPrice,
-      // Preserve the first non-empty PDF fee found across the merged rows
-      // — TR usually prints Fremdkostenzuschlag once per ORDER, not per
-      // fill, so whichever fragment has it carries the canonical value.
+      // Preserve the first non-empty PDF fee — TR usually prints
+      // Fremdkostenzuschlag once per ORDER, not per fill, so whichever
+      // fragment has it carries the canonical value. (Heuristic €1 still
+      // wins when no PDF fee is present, applied once for the whole order.)
       pdfFee: existing.pdfFee ?? incoming.pdfFee,
       pdfFeeCurrency: existing.pdfFeeCurrency ?? incoming.pdfFeeCurrency,
     };
