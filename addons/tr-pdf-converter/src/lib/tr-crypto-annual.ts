@@ -1,5 +1,7 @@
+import * as pdfjs from "pdfjs-dist";
+
 /**
- * TR Crypto Annual Statement parser. (v3.1.0)
+ * TR Crypto Annual Statement parser. (v3.3.1)
  *
  * What this is:
  *   Trade Republic publishes an annual "Crypto Annual Statement" PDF
@@ -198,4 +200,81 @@ export function parseCryptoAnnualStatement(text: string): CryptoAnnualEntry[] {
   }
 
   return out;
+}
+
+export interface CryptoAnnualResult {
+  fileName: string;
+  isCryptoAnnual: boolean;
+  entries: CryptoAnnualEntry[];
+}
+
+/**
+ * (v3.3.1) PDF wrapper — extracts text from a TR Crypto Annual Statement
+ * PDF and parses it. Returns isCryptoAnnual=false if the file isn't a
+ * crypto annual (caller should route to the regular Account Statement
+ * parser instead). Mirrors the parseTaxReport(buffer, fileName) shape so
+ * the page handler can dispatch by sniff.
+ */
+export async function parseCryptoAnnualPdf(
+  buffer: ArrayBuffer,
+  fileName: string,
+  onProgress?: (page: number, total: number) => void,
+): Promise<CryptoAnnualResult> {
+  const pdf = await pdfjs.getDocument({ data: buffer }).promise;
+  const allText: string[] = [];
+  const totalPages = pdf.numPages;
+  for (let i = 1; i <= totalPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((it: any) => (typeof it.str === "string" ? it.str : ""))
+      .join(" ");
+    allText.push(pageText);
+    onProgress?.(i, totalPages);
+  }
+  const fullText = allText.join("\n");
+  if (!isCryptoAnnualStatement(fullText)) {
+    return { fileName, isCryptoAnnual: false, entries: [] };
+  }
+  return {
+    fileName,
+    isCryptoAnnual: true,
+    entries: parseCryptoAnnualStatement(fullText),
+  };
+}
+
+/**
+ * Cross-reference Crypto Annual entries with cash-row "Compra direta" /
+ * crypto-buy trades that are missing qty. For each unresolved trade,
+ * find the matching crypto annual entry by date + crypto symbol +
+ * volume (€ amount) and return a Map keyed by (date|isin) → qty.
+ *
+ * Match tolerance:
+ *   - date: exact (YYYY-MM-DD)
+ *   - volume: ±€0.01 (rounding)
+ *   - direction: BUY <-> "BUY", SELL <-> "SELL"
+ */
+export function buildCryptoQtyIndex(
+  entries: CryptoAnnualEntry[],
+): Map<string, { qty: number; pricePerUnit: number; fee: number }> {
+  const index = new Map<string, { qty: number; pricePerUnit: number; fee: number }>();
+  for (const e of entries) {
+    if (!e.pseudoIsin) continue;
+    // Date in entry is "DD.MM.YYYY"; convert to ISO for matching.
+    const m = e.date.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (!m) continue;
+    const iso = `${m[3]}-${m[2]}-${m[1]}`;
+    const dir = e.direction === "BUY" ? "B" : e.direction === "SELL" ? "S" : "";
+    if (!dir) continue;
+    // Round volume to cents for stable key.
+    const volKey = e.volume.toFixed(2);
+    const key = `${iso}|${e.pseudoIsin}|${dir}|${volKey}`;
+    index.set(key, {
+      qty: e.qty,
+      pricePerUnit: e.pricePerUnit,
+      fee: e.fee,
+    });
+  }
+  return index;
 }

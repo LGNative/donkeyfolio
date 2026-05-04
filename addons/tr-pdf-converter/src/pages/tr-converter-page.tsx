@@ -78,6 +78,11 @@ import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../l
 import { mergeParsedPdfs, type ParsedPdf } from "../lib/tr-multi-pdf";
 import AiWizardPanel from "../components/ai-wizard-panel";
 import CashflowPanel from "../components/cashflow-panel";
+import {
+  buildCryptoQtyIndex,
+  parseCryptoAnnualPdf,
+  type CryptoAnnualEntry,
+} from "../lib/tr-crypto-annual";
 import { buildMonthlyCashflow } from "../lib/tr-monthly-cashflow";
 import {
   parseTaxReport,
@@ -587,6 +592,10 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         const accountStatements: ParsedPdf[] = [];
         const taxReports: TaxReportData[] = [];
         const allStaking: StakingRewardEntry[] = [];
+        // (v3.3.1) Crypto Annual Statements provide EXACT qty for the
+        // "Compra direta" rows that the regular Account Statement omits.
+        // Collected here, applied as a qty backfill after main parsing.
+        const allCryptoAnnualEntries: CryptoAnnualEntry[] = [];
 
         for (let i = 0; i < pdfs.length; i++) {
           const file = pdfs[i];
@@ -596,8 +605,39 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             phase: "parsing",
             message: `${prefix}Detecting type of ${file.name}…`,
           }));
-          // Try Tax Report first — cheap text scan over the same buffer.
           const buffer = await file.arrayBuffer();
+
+          // (v3.3.1) Sniff for Crypto Annual Statement first — header
+          // detection is fast, and a positive match means we definitely
+          // skip both Tax Report and Account Statement parsers.
+          let cryptoAnnualHit = false;
+          try {
+            const cryptoAnnual = await parseCryptoAnnualPdf(
+              buffer.slice(0),
+              file.name,
+              (page, total) => {
+                setState((s) => ({
+                  ...s,
+                  message: `${prefix}Scanning ${file.name} for Crypto Annual…`,
+                  progress: { page, total },
+                }));
+              },
+            );
+            if (cryptoAnnual.isCryptoAnnual) {
+              allCryptoAnnualEntries.push(...cryptoAnnual.entries);
+              cryptoAnnualHit = true;
+              ctx.api.logger.info(
+                `[TR PDF] Crypto Annual ${file.name}: ${cryptoAnnual.entries.length} entries`,
+              );
+            }
+          } catch (err) {
+            ctx.api.logger.warn(
+              `[TR PDF] crypto-annual sniff failed for ${file.name} (non-fatal): ${(err as Error).message}`,
+            );
+          }
+          if (cryptoAnnualHit) continue;
+
+          // Try Tax Report next — cheap text scan over the same buffer.
           let detected: TaxReportData;
           try {
             detected = await parseTaxReport(buffer.slice(0), file.name, (page, total) => {
@@ -629,7 +669,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             continue;
           }
 
-          // Not a Tax Report → parse as Account Statement.
+          // Not a Crypto Annual nor Tax Report → parse as Account Statement.
           const parsed = await parseOnePdf(file, (_phase, msg, page, total) => {
             setState((s) => ({
               ...s,
@@ -638,6 +678,37 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             }));
           });
           accountStatements.push(parsed);
+        }
+
+        // (v3.3.1) Backfill missing qty on trades using the Crypto Annual
+        // index (date + pseudoIsin + direction + volume → qty). Resolves
+        // the "Compra direta" rows that the Account Statement parser
+        // couldn't fill alone.
+        if (allCryptoAnnualEntries.length > 0 && accountStatements.length > 0) {
+          const qtyIndex = buildCryptoQtyIndex(allCryptoAnnualEntries);
+          let backfilled = 0;
+          for (const stmt of accountStatements) {
+            for (const t of stmt.trading) {
+              if (t.quantity && t.quantity > 0) continue;
+              const isoDate = toIsoDate(t.date);
+              const dir = t.isBuy ? "B" : "S";
+              const volKey = Math.abs(t.amount).toFixed(2);
+              const key = `${isoDate}|${t.isin}|${dir}|${volKey}`;
+              const hit = qtyIndex.get(key);
+              if (hit) {
+                t.quantity = hit.qty;
+                t.unitPrice = hit.pricePerUnit;
+                if (hit.fee > 0) {
+                  t.pdfFee = hit.fee;
+                  t.pdfFeeCurrency = "EUR";
+                }
+                backfilled += 1;
+              }
+            }
+          }
+          ctx.api.logger.info(
+            `[TR PDF] Crypto Annual backfill: ${backfilled} qty/price/fee resolved across ${allCryptoAnnualEntries.length} annual entries`,
+          );
         }
 
         setState((s) => ({ ...s, phase: "building", message: "Merging…" }));
