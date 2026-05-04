@@ -393,15 +393,29 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   const dateRange: { min: string | null; max: string | null } = { min: null, max: null };
   const perIsinFirstLastDate = new Map<string, { first: string; last: string }>();
 
+  // (v3.2.3) Fee aggregation matches the TR rule: €1 once per ORDER, where
+  // an order is the unique (date, ISIN, direction, savings-plan) tuple.
+  // Multiple partial-fill rows for the same order share a single €1 fee,
+  // confirmed by TR's official docs:
+  //   "partial fills are charged only once per trading day, multiple
+  //    partial fills on the same day incur just the single 1 EUR fee"
+  // The previous per-row sum overcounted fees on partial fills (the very
+  // bug v3.2.3 fixed in the activity emitter).
+  const seenOrderKeys = new Set<string>();
   for (const t of input.trades) {
     const cash = Math.abs(t.amount);
-    const fee = t.pdfFee ?? (t.isSavingsPlan ? 0 : 1);
+    const orderKey = `${t.date}|${t.isin}|${t.isBuy ? "B" : "S"}|${t.isSavingsPlan ? "SP" : "M"}`;
+    const isFirstFragment = !seenOrderKeys.has(orderKey);
+    seenOrderKeys.add(orderKey);
     if (t.isBuy) {
       cashflow.invested += cash;
     } else {
       cashflow.divested += cash;
     }
-    cashflow.tradingFees += fee;
+    if (isFirstFragment) {
+      const fee = t.pdfFee ?? (t.isSavingsPlan ? 0 : 1);
+      cashflow.tradingFees += fee;
+    }
 
     const ccy = t.pdfFeeCurrency ?? input.baseCurrency;
     const cur = perCurMap.get(ccy) ?? {
