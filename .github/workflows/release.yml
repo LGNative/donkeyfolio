@@ -95,7 +95,10 @@ jobs:
           # signing via tauri.conf.json signingIdentity "-". macOS users may
           # need ctrl+click > Open on first launch.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD intentionally unset: key has no password
+          # Password decrypts the signing key. If your TAURI_PRIVATE_KEY was
+          # generated with `tauri signer generate -p ""` (no password) you can
+          # leave this secret unset; tauri-action treats missing as empty.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }} # This only works if the workflow triggers on new tags.
           releaseName: "Donkeyfolio v__VERSION__" # tauri-action replaces \_\_VERSION\_\_ with the app version.
