@@ -680,21 +680,41 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
           accountStatements.push(parsed);
         }
 
-        // (v3.3.1) Backfill missing qty on trades using the Crypto Annual
-        // index (date + pseudoIsin + direction + volume → qty). Resolves
-        // the "Compra direta" rows that the Account Statement parser
-        // couldn't fill alone.
+        // (v3.3.1 / v3.3.4) Backfill missing qty on trades using the
+        // Crypto Annual index. The annual statement's VOLUME column is
+        // the gross stock value (excluding the €1 fee), but the cash row
+        // amount in the Account Statement is Volume ± fee. Try both keys
+        // (volume alone, and volume ± 1) to catch the actual cash impact.
         if (allCryptoAnnualEntries.length > 0 && accountStatements.length > 0) {
           const qtyIndex = buildCryptoQtyIndex(allCryptoAnnualEntries);
           let backfilled = 0;
+          let attempted = 0;
           for (const stmt of accountStatements) {
             for (const t of stmt.trading) {
               if (t.quantity && t.quantity > 0) continue;
+              attempted += 1;
               const isoDate = toIsoDate(t.date);
               const dir = t.isBuy ? "B" : "S";
-              const volKey = Math.abs(t.amount).toFixed(2);
-              const key = `${isoDate}|${t.isin}|${dir}|${volKey}`;
-              const hit = qtyIndex.get(key);
+              const cashAmt = Math.abs(t.amount);
+              // Try matching the cash row's amount against:
+              //  1. volume alone (annual Volume column, no fee)
+              //  2. volume + 1 (BUY: cash = volume + €1 fee)
+              //  3. volume - 1 (SELL: cash = volume - €1 fee)
+              // First match wins.
+              const candidates = [
+                cashAmt.toFixed(2),
+                (cashAmt - 1).toFixed(2),
+                (cashAmt + 1).toFixed(2),
+              ];
+              let hit: { qty: number; pricePerUnit: number; fee: number } | undefined;
+              for (const volKey of candidates) {
+                const key = `${isoDate}|${t.isin}|${dir}|${volKey}`;
+                const candidate = qtyIndex.get(key);
+                if (candidate) {
+                  hit = candidate;
+                  break;
+                }
+              }
               if (hit) {
                 t.quantity = hit.qty;
                 t.unitPrice = hit.pricePerUnit;
@@ -707,7 +727,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             }
           }
           ctx.api.logger.info(
-            `[TR PDF] Crypto Annual backfill: ${backfilled} qty/price/fee resolved across ${allCryptoAnnualEntries.length} annual entries`,
+            `[TR PDF] Crypto Annual backfill: ${backfilled}/${attempted} qty resolved across ${allCryptoAnnualEntries.length} annual entries`,
           );
         }
 

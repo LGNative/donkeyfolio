@@ -34,6 +34,58 @@ import { lookupTicker } from "./tr-isin-tickers";
 import type { TradingTransaction } from "./tr-parser";
 
 /**
+ * (v3.3.4) Convert TR's date format to ISO for chronological string-compare
+ * sort. Without this, "DD.MM.YYYY" formatted dates would sort lexicographically
+ * (e.g. "30.06.2024" > "01.07.2024" → June 30 sorts AFTER July 1, breaking
+ * FIFO walk). Pre-v3.3.4 the EUR-holdings FIFO used raw t.date string compare,
+ * which silently corrupted realized P&L on cross-month boundaries.
+ *
+ * Handles formats:
+ *   - "2024-06-20" (already ISO)
+ *   - "20.06.2024" (DE/PT)
+ *   - "20 Jun 2024" (display)
+ *   Falls back to original string when format unrecognised.
+ */
+function toIsoForSort(raw: string): string {
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw;
+  let m = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  m = raw.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]{3,})\.?\s+(\d{4})/);
+  if (m) {
+    const months: Record<string, string> = {
+      jan: "01",
+      fev: "02",
+      feb: "02",
+      mar: "03",
+      mär: "03",
+      abr: "04",
+      apr: "04",
+      mai: "05",
+      may: "05",
+      jun: "06",
+      giu: "06",
+      jul: "07",
+      lug: "07",
+      ago: "08",
+      aug: "08",
+      set: "09",
+      sep: "09",
+      out: "10",
+      okt: "10",
+      oct: "10",
+      nov: "11",
+      dez: "12",
+      dec: "12",
+      dic: "12",
+    };
+    const mm = months[m[2].toLowerCase().slice(0, 3)];
+    if (mm) return `${m[3]}-${mm}-${m[1].padStart(2, "0")}`;
+  }
+  return raw;
+}
+
+/**
  * (v3.3.2) Adjacency-based partial-fill aggregation. Mirror of the logic
  * in tr-to-activities.ts (v3.2.3) so the EUR holdings preview computes
  * realized P&L from the SAME aggregated orders the activity emitter
@@ -147,7 +199,16 @@ export function buildEurHoldings(trades: TradingTransaction[]): EurHoldingRow[] 
 
   const rows: EurHoldingRow[] = [];
   for (const [isin, isinTrades] of byIsin) {
-    isinTrades.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    // (v3.3.4) Convert to ISO before compare. Without this, "30.06.2024"
+    // sorts AFTER "01.07.2024" lexicographically, breaking FIFO across
+    // month boundaries and inflating cost basis for cross-month sells.
+    // JS sort is stable so same-day items preserve PDF (chronological)
+    // order — TR statement preserves intra-day sequence.
+    isinTrades.sort((a, b) => {
+      const ai = toIsoForSort(a.date);
+      const bi = toIsoForSort(b.date);
+      return ai < bi ? -1 : ai > bi ? 1 : 0;
+    });
     const lots: Lot[] = [];
     let totalBoughtEur = 0;
     let totalSoldEur = 0;
