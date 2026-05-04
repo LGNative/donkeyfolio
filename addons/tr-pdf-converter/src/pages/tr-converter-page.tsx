@@ -1431,7 +1431,7 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
 
   // ─── RENDER ───────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-6">
+    <div className="mx-auto w-full max-w-screen-2xl space-y-6 p-6 xl:px-8">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -2641,7 +2641,7 @@ function TradesPreviewTable({ trades }: { trades: TradingTransaction[] }) {
           </span>
         </div>
       </div>
-      <div className="max-h-[600px] overflow-auto">
+      <div className="max-h-[70vh] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -2812,7 +2812,7 @@ function EurHoldingsTable({ trades }: { trades: TradingTransaction[] }) {
           )}
         </div>
       </div>
-      <div className="max-h-[600px] overflow-auto">
+      <div className="max-h-[70vh] overflow-auto">
         <Table>
           <TableHeader>
             <TableRow>
