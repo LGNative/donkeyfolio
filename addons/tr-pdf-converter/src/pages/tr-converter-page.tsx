@@ -67,6 +67,11 @@ import {
 } from "../lib/tr-ticker-discovery";
 import { buildReconciliation, type ReconcileResult } from "../lib/tr-reconcile";
 import { resolveFxRates, lookupFxRate } from "../lib/tr-fx-rates";
+import {
+  findOverlappingPeriods,
+  recordImport,
+  type ImportedPeriod,
+} from "../lib/tr-import-history";
 import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../lib/tr-eur-holdings";
 import { mergeParsedPdfs, type ParsedPdf } from "../lib/tr-multi-pdf";
 import AiWizardPanel from "../components/ai-wizard-panel";
@@ -1061,6 +1066,30 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         `[TR PDF] import done: ${imported} imported, ${failures} failed, ${totalElapsed}s`,
       );
 
+      // (v3.0.10) Record this import's period in localStorage so the
+      // next PDF drop can warn about overlap with an already-imported
+      // range. Idempotency keys still prevent duplicate writes at the
+      // activity level, but the warning is the user-facing signal.
+      try {
+        const dates = state.cash
+          .map((c) => toIsoDate(c.datum).slice(0, 10))
+          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+          .sort();
+        if (dates.length > 0 && acct.id) {
+          recordImport({
+            accountId: acct.id,
+            startDate: dates[0],
+            endDate: dates[dates.length - 1],
+            fileName: state.fileName || "(unknown)",
+            importedAt: new Date().toISOString(),
+            activitiesCreated: imported,
+          });
+        }
+      } catch (err) {
+        // Non-fatal — localStorage failures shouldn't break the import flow.
+        ctx.api.logger.warn(`[TR PDF] failed to record import history: ${(err as Error).message}`);
+      }
+
       setImportState({
         status: "done",
         imported,
@@ -1607,6 +1636,50 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Ready to import</CardTitle>
+                {/* (v3.0.10) Overlap warning. If this PDF's period
+                    overlaps a previously-imported one for the same
+                    account, surface it loudly. Idempotency keys still
+                    prevent double-writes, but the user gets context
+                    about what's happening. */}
+                {(() => {
+                  if (!selectedAccountId || state.cash.length === 0) return null;
+                  const dates = state.cash
+                    .map((c) => toIsoDate(c.datum).slice(0, 10))
+                    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                    .sort();
+                  if (dates.length === 0) return null;
+                  const overlaps = findOverlappingPeriods(
+                    selectedAccountId,
+                    dates[0],
+                    dates[dates.length - 1],
+                  );
+                  if (overlaps.length === 0) return null;
+                  return (
+                    <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                      <strong>⚠ Overlap detectado.</strong> Este PDF cobre{" "}
+                      <span className="font-mono">
+                        {dates[0]} → {dates[dates.length - 1]}
+                      </span>{" "}
+                      mas já importaste períodos sobrepostos:
+                      <ul className="ml-4 mt-1 list-disc">
+                        {overlaps.slice(0, 3).map((o, i) => (
+                          <li key={i}>
+                            <span className="font-mono">
+                              {o.startDate} → {o.endDate}
+                            </span>
+                            {" — "}
+                            {o.fileName} ({o.activitiesCreated ?? 0} activities,{" "}
+                            {new Date(o.importedAt).toLocaleDateString()})
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-1">
+                        Idempotency keys vão evitar duplicates — re-import só vai adicionar linhas
+                        que faltavam (se houver).
+                      </div>
+                    </div>
+                  );
+                })()}
                 <CardDescription>
                   {state.fileName} ·{" "}
                   {(() => {
