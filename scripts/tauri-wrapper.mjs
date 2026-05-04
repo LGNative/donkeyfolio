@@ -67,6 +67,21 @@ if (genResult !== 0) {
 
 // ─── Spawn tauri with inherited env ─────────────────────────────────────
 const args = process.argv.slice(2);
+
+// `tauri-action@v0` calls `pnpm tauri init --ci` before the build to
+// auto-scaffold a config when the project doesn't have one. For us, that
+// overwrites the tauri.conf.json we JUST generated from the template
+// with empty defaults ({productName:"", version:""}), then the build
+// fails with "Could not determine package name and version".
+//
+// We already have a fully-populated tauri.conf.json from the template
+// generation step above, so this `init` call is destructive. Treat it
+// as a no-op.
+if (args[0] === "init") {
+  console.log("[tauri-wrapper] Skipping `tauri init` — config already generated from template.");
+  process.exit(0);
+}
+
 const tauriBin = path.join(projectRoot, "node_modules/.bin/tauri");
 const actualBin = existsSync(tauriBin) ? tauriBin : "tauri";
 
