@@ -178,6 +178,23 @@ export interface ValidationSnapshot {
     parseHeuristicHits: number;
     parseHeuristicSamples: string[];
   };
+  /** (v3.2.5) Per-year breakdown for cross-checking against the fiscal
+   *  report. Each entry is keyed by year (YYYY) and reports orders that
+   *  PARSED IN THE PERIOD with their fees split BUY/SELL. The fiscal
+   *  report's Tabela 9.2A Despesas e Encargos (€58.93 for 2024) covers
+   *  closed positions only — comparable to (buyFees + sellFees) restricted
+   *  to that year's CLOSED trades, but as a quick sanity check the totals
+   *  here help spot 10× / 100× drifts. */
+  perYear: Array<{
+    year: string;
+    buyOrders: number;
+    sellOrders: number;
+    buyFees: number;
+    sellFees: number;
+    totalFees: number;
+    invested: number;
+    divested: number;
+  }>;
   perIsin: PerIsinFigure[];
   perCurrency: PerCurrencyFigure[];
   unresolved: UnresolvedRow[];
@@ -402,19 +419,49 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   // The previous per-row sum overcounted fees on partial fills (the very
   // bug v3.2.3 fixed in the activity emitter).
   const seenOrderKeys = new Set<string>();
+  // (v3.2.5) Per-year breakdown for fiscal cross-check.
+  type YearAcc = {
+    buyOrders: number;
+    sellOrders: number;
+    buyFees: number;
+    sellFees: number;
+    invested: number;
+    divested: number;
+  };
+  const perYearMap = new Map<string, YearAcc>();
+  const ensureYear = (yyyy: string): YearAcc => {
+    let y = perYearMap.get(yyyy);
+    if (!y) {
+      y = { buyOrders: 0, sellOrders: 0, buyFees: 0, sellFees: 0, invested: 0, divested: 0 };
+      perYearMap.set(yyyy, y);
+    }
+    return y;
+  };
   for (const t of input.trades) {
     const cash = Math.abs(t.amount);
     const orderKey = `${t.date}|${t.isin}|${t.isBuy ? "B" : "S"}|${t.isSavingsPlan ? "SP" : "M"}`;
     const isFirstFragment = !seenOrderKeys.has(orderKey);
     seenOrderKeys.add(orderKey);
+    const iso = toIsoCompare(t.date);
+    const year = iso.slice(0, 4) || "unknown";
+    const yAcc = ensureYear(year);
     if (t.isBuy) {
       cashflow.invested += cash;
+      yAcc.invested += cash;
     } else {
       cashflow.divested += cash;
+      yAcc.divested += cash;
     }
     if (isFirstFragment) {
       const fee = t.pdfFee ?? (t.isSavingsPlan ? 0 : 1);
       cashflow.tradingFees += fee;
+      if (t.isBuy) {
+        yAcc.buyOrders += 1;
+        yAcc.buyFees += fee;
+      } else {
+        yAcc.sellOrders += 1;
+        yAcc.sellFees += fee;
+      }
     }
 
     const ccy = t.pdfFeeCurrency ?? input.baseCurrency;
@@ -567,6 +614,18 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     perIsin,
     perCurrency,
     unresolved,
+    perYear: Array.from(perYearMap.entries())
+      .map(([year, y]) => ({
+        year,
+        buyOrders: y.buyOrders,
+        sellOrders: y.sellOrders,
+        buyFees: r2(y.buyFees),
+        sellFees: r2(y.sellFees),
+        totalFees: r2(y.buyFees + y.sellFees),
+        invested: r2(y.invested),
+        divested: r2(y.divested),
+      }))
+      .sort((a, b) => (a.year < b.year ? -1 : 1)),
   };
 }
 

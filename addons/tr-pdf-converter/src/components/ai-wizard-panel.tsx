@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.2.4";
+const ADDON_VERSION = "3.2.5";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -294,6 +294,28 @@ export default function AiWizardPanel({
         {snapshot.totals.parseHeuristicSamples?.length > 0 && (
           <div className="text-muted-foreground mt-1 font-mono text-[10px]">
             Heuristic samples: {snapshot.totals.parseHeuristicSamples.slice(0, 8).join(" · ")}
+          </div>
+        )}
+        {snapshot.perYear && snapshot.perYear.length > 0 && (
+          <div className="mt-2 border-t pt-2">
+            <div className="text-muted-foreground mb-1 text-[10px] font-medium uppercase tracking-wider">
+              Per-year (cross-check fiscal report)
+            </div>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 font-mono text-[10px] md:grid-cols-2">
+              {snapshot.perYear.map((y) => (
+                <div key={y.year} className="flex items-baseline gap-1">
+                  <span className="text-foreground font-semibold">{y.year}:</span>
+                  <span>
+                    {y.buyOrders} BUY (€{y.buyFees}) + {y.sellOrders} SELL (€{y.sellFees}) ={" "}
+                  </span>
+                  <span className="font-semibold">€{y.totalFees}</span>
+                  <span className="text-muted-foreground">
+                    · invested €{y.invested.toLocaleString("pt-PT")} · sold €
+                    {y.divested.toLocaleString("pt-PT")}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <div className="text-muted-foreground grid grid-cols-2 gap-x-4 gap-y-0.5 md:grid-cols-4">
