@@ -77,6 +77,8 @@ import {
 import { buildEurHoldings, summarizeEurHoldings, type EurHoldingRow } from "../lib/tr-eur-holdings";
 import { mergeParsedPdfs, type ParsedPdf } from "../lib/tr-multi-pdf";
 import AiWizardPanel from "../components/ai-wizard-panel";
+import CashflowPanel from "../components/cashflow-panel";
+import { buildMonthlyCashflow } from "../lib/tr-monthly-cashflow";
 import {
   parseTaxReport,
   stakingRewardsToActivities,
@@ -1916,6 +1918,20 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {/* (v3.2.0) Cashflow panel — Track Republic-style 5 cards
+              (IN/OUT/INVESTED/NET/CASH BALANCE) + monthly trend bars.
+              Shows the user the shape of their money before they import. */}
+          {!isImported && state.status === "done" && state.cash.length > 0 && (
+            <CashflowPanel
+              summary={buildMonthlyCashflow(state.cash, state.trading, pdfEnding)}
+              periodLabel={
+                state.cash.length > 0
+                  ? `${state.cash[0]?.datum ?? ""} → ${state.cash[state.cash.length - 1]?.datum ?? ""}`
+                  : "All data"
+              }
+            />
           )}
 
           {/* (v3.0.2) AI Wizard ALSO available pre-import. After parsing
