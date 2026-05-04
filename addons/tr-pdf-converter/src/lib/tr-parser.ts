@@ -210,13 +210,18 @@ function parseEuroAmount(raw: string): number {
       normalized = s.replace(/,/g, "");
     }
   } else if (hasComma) {
-    const parts = s.split(",");
-    // "1,234" (exactly 3 digits after comma, nothing before > 3 groups) → US thousands
-    if (parts.length === 2 && parts[1].length === 3) {
-      normalized = s.replace(/,/g, "");
-    } else {
-      normalized = s.replace(",", ".");
-    }
+    // (v3.0.4) TR PT/DE/IT/FR/ES uses comma as DECIMAL separator. The
+    // previous heuristic treated "X,XXX" (3 digits after comma) as US
+    // thousands separator — but this fired wrongly on legit PT 3-decimal
+    // amounts like "16,664 €" (=€16.664), inflating them 1000× to €16,664.
+    // User reported Interest total €89,777 vs real €914 — ~100× inflation
+    // matched 1-2 rows of "X,XXX" being misclassified as thousands.
+    //
+    // Fix: when only comma is present (no dot), comma is ALWAYS decimal in
+    // TR PDFs — replace and call it done. The "1,234" → 1234 case (US
+    // thousands) is only valid when there's also a dot somewhere, and that
+    // path is handled by the comma+dot branch above.
+    normalized = s.replace(",", ".");
   } else if (hasDot) {
     const parts = s.split(".");
     if (parts.length > 2) {
