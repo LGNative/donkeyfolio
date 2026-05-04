@@ -376,8 +376,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               `Resolving crypto qty (${done}/${total}) for ${file.name}…`,
             );
           },
+          // (v3.3.7) Pass `ctx` not `ctx.api` — the resolver accesses
+          // `ctxLike?.api?.assets?.getAll` internally. Passing ctx.api was
+          // looking for ctx.api.api.assets.getAll → always undefined →
+          // cache lookup silently failed → fell through to Yahoo only.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ctx.api as any,
+          ctx as any,
         );
         cryptoTrading = result.trading;
         cryptoResolved = result.resolved;
@@ -542,8 +546,12 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
               message: `Resolving crypto qty (${done}/${total})…`,
             }));
           },
+          // (v3.3.7) Pass `ctx` not `ctx.api` — the resolver accesses
+          // `ctxLike?.api?.assets?.getAll` internally. Passing ctx.api was
+          // looking for ctx.api.api.assets.getAll → always undefined →
+          // cache lookup silently failed → fell through to Yahoo only.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ctx.api as any,
+          ctx as any,
         );
         cryptoTrading = result.trading;
         cryptoResolved = result.resolved;
