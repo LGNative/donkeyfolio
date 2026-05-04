@@ -355,8 +355,45 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         ? (parseTradingTransactions(analyticsCashForTrading) as TradingTransaction[])
         : [];
       const trading = enrichTradingWithQuantity(rawTrading, analyticsCashForTrading);
-      const cryptoTrading = trading;
-      const cryptoResolved = 0;
+
+      // (v3.3.5) Resolve crypto "Execução Compra direta" rows that lack
+      // qty inline. Pre-2025 TR PT statements emit crypto direct-buy rows
+      // as "Execução Compra direta XF000... C1016xxxxxx" with NO
+      // "quantity:" label. tr-crypto-resolver.ts uses cached daily-close
+      // prices (from Donkeyfolio's quotes table) and falls back to Yahoo
+      // when the cache misses, computing qty = amount / close-price.
+      // Resolves the 99 missing-qty rows the user reported on Nov-Dec
+      // 2024 crypto buys without requiring the Crypto Annual PDF.
+      onProgress?.("resolving-crypto", `Resolving crypto direct buys for ${file.name}…`);
+      let cryptoTrading = trading;
+      let cryptoResolved = 0;
+      try {
+        const result = await resolveCryptoDirectBuys(
+          trading,
+          (done, total) => {
+            onProgress?.(
+              "resolving-crypto",
+              `Resolving crypto qty (${done}/${total}) for ${file.name}…`,
+            );
+          },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ctx.api as any,
+        );
+        cryptoTrading = result.trading;
+        cryptoResolved = result.resolved;
+        ctx.api.logger.info(
+          `[TR PDF] Crypto resolver: ${result.resolved} resolved, ${result.failed} failed`,
+        );
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] crypto resolver failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
+      // Suppress unused-import warning when extractCryptoDirectBuysFromCash
+      // is loaded but only used for the cash[]-only path (currently we
+      // route through trading[] — most crypto rows reach it via the
+      // Trade-type classification).
+      void extractCryptoDirectBuysFromCash;
 
       onProgress?.("discovering-tickers", `Discovering tickers for ${file.name}…`);
       const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
@@ -485,14 +522,36 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
       // and unitPrice that didn't match the TR app. Worse, fees got folded
       // into the trade value because we had no separate fee column for them.
       //
-      // What this means in practice:
-      //   - Savings plan crypto BUYs (qty IS in PDF) → still imported ✅
-      //   - "Compra direta" / "Direct buy" crypto rows → flow through as
-      //     plain WITHDRAWAL cash legs (matches TR app's cash view).
-      //   - User adds the corresponding crypto BUY activities by hand in
-      //     Donkeyfolio with the exact qty + avg price the TR app shows.
-      const cryptoTrading = trading;
-      const cryptoResolved = 0;
+      // (v3.3.5) Run the crypto resolver here too (multi-PDF / re-import
+      // path). Same logic as the single-PDF parseOnePdf branch — fills
+      // qty for "Execução Compra direta" rows from cached prices or
+      // Yahoo daily closes.
+      setState((s) => ({
+        ...s,
+        phase: "resolving-crypto",
+        message: "Resolving crypto direct buys…",
+      }));
+      let cryptoTrading = trading;
+      let cryptoResolved = 0;
+      try {
+        const result = await resolveCryptoDirectBuys(
+          trading,
+          (done, total) => {
+            setState((s) => ({
+              ...s,
+              message: `Resolving crypto qty (${done}/${total})…`,
+            }));
+          },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ctx.api as any,
+        );
+        cryptoTrading = result.trading;
+        cryptoResolved = result.resolved;
+      } catch (err) {
+        ctx.api.logger.warn(
+          `[TR PDF] crypto resolver failed (non-fatal): ${(err as Error).message}`,
+        );
+      }
 
       setState((s) => ({ ...s, phase: "discovering-tickers", message: "Discovering tickers…" }));
       const unmappedRequests: { isin: string; name: string; wkn?: string }[] = [];
