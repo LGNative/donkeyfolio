@@ -13,6 +13,12 @@ import {
   PopoverTrigger,
   Icons,
 } from "@wealthfolio/ui";
+import { toFiniteAmount } from "../lib/utils";
+
+function formatGoalTarget(goal: Goal) {
+  const targetAmount = toFiniteAmount(goal.summaryTargetAmount ?? goal.targetAmount);
+  return targetAmount > 0 ? `Target: $${targetAmount.toLocaleString()}` : "Target not set";
+}
 
 // Goal selector component with searchable dropdown using design system
 function GoalSelector({
@@ -75,9 +81,7 @@ function GoalSelector({
                   />
                   <div className="flex flex-col">
                     <span>{goal.title}</span>
-                    <span className="text-muted-foreground text-xs">
-                      Target: ${goal.targetAmount.toLocaleString()}
-                    </span>
+                    <span className="text-muted-foreground text-xs">{formatGoalTarget(goal)}</span>
                   </div>
                 </CommandItem>
               ))}

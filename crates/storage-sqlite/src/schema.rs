@@ -216,16 +216,46 @@ diesel::table! {
         title -> Text,
         description -> Nullable<Text>,
         target_amount -> Double,
-        is_achieved -> Bool,
+        goal_type -> Text,
+        status_lifecycle -> Text,
+        status_health -> Text,
+        priority -> Integer,
+        cover_image_key -> Nullable<Text>,
+        currency -> Nullable<Text>,
+        start_date -> Nullable<Text>,
+        target_date -> Nullable<Text>,
+        summary_current_value -> Nullable<Double>,
+        summary_progress -> Nullable<Double>,
+        projected_completion_date -> Nullable<Text>,
+        projected_value_at_target_date -> Nullable<Double>,
+        created_at -> Text,
+        updated_at -> Text,
+        summary_target_amount -> Nullable<Double>,
+    }
+}
+
+diesel::table! {
+    goal_plans (goal_id) {
+        goal_id -> Text,
+        plan_kind -> Text,
+        planner_mode -> Nullable<Text>,
+        settings_json -> Text,
+        summary_json -> Text,
+        version -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
     }
 }
 
 diesel::table! {
     goals_allocation (id) {
         id -> Text,
-        percent_allocation -> Integer,
         goal_id -> Text,
         account_id -> Text,
+        share_percent -> Double,
+        tax_bucket -> Nullable<Text>,
+        created_at -> Text,
+        updated_at -> Text,
     }
 }
 
@@ -388,6 +418,7 @@ diesel::table! {
         entity_id -> Text,
         last_event_id -> Text,
         last_client_timestamp -> Text,
+        last_op -> Text,
         last_seq -> BigInt,
     }
 }
@@ -460,6 +491,7 @@ diesel::joinable!(asset_taxonomy_assignments -> assets (asset_id));
 diesel::joinable!(brokers_sync_state -> accounts (account_id));
 diesel::joinable!(brokers_sync_state -> import_runs (last_run_id));
 diesel::joinable!(goals_allocation -> accounts (account_id));
+diesel::joinable!(goal_plans -> goals (goal_id));
 diesel::joinable!(goals_allocation -> goals (goal_id));
 diesel::joinable!(import_runs -> accounts (account_id));
 diesel::joinable!(quotes -> assets (asset_id));
@@ -481,6 +513,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     contribution_limits,
     market_data_custom_providers,
     daily_account_valuation,
+    goal_plans,
     goals,
     goals_allocation,
     health_issue_dismissals,

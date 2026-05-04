@@ -5,6 +5,7 @@ import {
   METADATA_CONTRACT_MULTIPLIER,
   QuoteMode,
 } from "@/lib/constants";
+import { isSecuritiesTransfer } from "@/lib/activity-utils";
 import { parseOccSymbol } from "@/lib/occ-symbol";
 import type { ActivityDetails } from "@/lib/types";
 import { BuyForm, type BuyFormValues } from "../components/forms/buy-form";
@@ -86,6 +87,18 @@ function getBaseDefaults(
   };
 }
 
+function selectedExistingAsset(
+  assetSymbol: string | null | undefined,
+  existingAssetId: string | null | undefined,
+  instrumentType?: string | null,
+) {
+  if (!assetSymbol?.trim()) return {};
+  if (instrumentType?.trim().toUpperCase() === "OPTION") return {};
+
+  const id = existingAssetId?.trim();
+  return id ? { existingAssetId: id } : {};
+}
+
 // Configuration for each activity type
 export const ACTIVITY_FORM_CONFIG: Record<
   PickerActivityType,
@@ -145,6 +158,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         accountId: d.accountId,
         activityDate: d.activityDate,
         assetId: d.assetId,
+        ...selectedExistingAsset(d.assetId, d.existingAssetId, d.symbolInstrumentType),
         quantity: d.quantity,
         unitPrice: d.unitPrice,
         fee: d.fee,
@@ -226,6 +240,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         accountId: d.accountId,
         activityDate: d.activityDate,
         assetId: d.assetId,
+        ...selectedExistingAsset(d.assetId, d.existingAssetId, d.symbolInstrumentType),
         quantity: d.quantity,
         unitPrice: d.unitPrice,
         fee: d.fee,
@@ -320,6 +335,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         accountId: d.accountId,
         activityDate: d.activityDate,
         assetId: d.symbol,
+        ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.amount,
         unitPrice: d.unitPrice,
         quantity: d.quantity,
@@ -339,8 +355,12 @@ export const ACTIVITY_FORM_CONFIG: Record<
     activityType: ActivityType.TRANSFER_OUT,
     getDefaults: (activity, _accounts) => {
       // Derive transferMode from existing activity data
-      const hasSecurityData = !!(activity?.assetSymbol || activity?.assetId);
-      const transferMode = hasSecurityData ? "securities" : "cash";
+      const transferIsSecurity = isSecuritiesTransfer(
+        activity?.activityType ?? "",
+        activity?.assetSymbol,
+        activity?.assetId,
+      );
+      const transferMode = transferIsSecurity ? "securities" : "cash";
       // Derive isExternal from metadata (if flow.is_external is true)
       const flowMetadata = activity?.metadata?.flow as { is_external?: boolean } | undefined;
       const isExternal = flowMetadata?.is_external === true;
@@ -355,8 +375,9 @@ export const ACTIVITY_FORM_CONFIG: Record<
         activityDate: activity?.date ? new Date(activity.date) : new Date(),
         transferMode,
         amount: absNum(activity?.amount),
-        assetId: activity?.assetSymbol ?? activity?.assetId ?? null,
-        quantity: absNum(activity?.quantity) ?? null,
+        assetId: transferIsSecurity ? (activity?.assetSymbol ?? activity?.assetId ?? null) : null,
+        quantity: transferIsSecurity ? (absNum(activity?.quantity) ?? null) : null,
+        unitPrice: transferIsSecurity ? (absNum(activity?.unitPrice) ?? null) : null,
         comment: activity?.comment ?? null,
         // Advanced options
         currency: activity?.currency,
@@ -374,6 +395,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         activityDate: d.activityDate,
         amount: d.amount ?? undefined,
         assetId: d.assetId ?? undefined,
+        ...selectedExistingAsset(d.assetId, d.existingAssetId, d.symbolInstrumentType),
         quantity: d.quantity ?? undefined,
         unitPrice: d.unitPrice ?? undefined,
         comment: d.comment ?? undefined,
@@ -414,6 +436,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         accountId: d.accountId,
         activityDate: d.activityDate,
         assetId: d.symbol,
+        ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.splitRatio,
         comment: d.comment,
         subtype: d.subtype ?? undefined,
@@ -467,6 +490,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         accountId: d.accountId,
         activityDate: d.activityDate,
         assetId: d.symbol?.trim() || undefined,
+        ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.amount,
         comment: d.comment,
         subtype: d.subtype,

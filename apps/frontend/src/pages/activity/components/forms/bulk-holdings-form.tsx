@@ -134,6 +134,9 @@ const HoldingRow = memo(
         // Fall back to the account currency when the search result has no currency
         // (common for bonds/OTC securities).
         const accountCurrency = getValues("currency") || "";
+        setValue(`holdings.${index}.assetId`, searchResult?.existingAssetId ?? "", {
+          shouldDirty: true,
+        });
         setValue(`holdings.${index}.exchangeMic`, searchResult?.exchangeMic ?? "", {
           shouldDirty: true,
         });

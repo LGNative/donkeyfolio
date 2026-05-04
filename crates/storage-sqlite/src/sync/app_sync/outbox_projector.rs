@@ -46,13 +46,15 @@ pub(crate) fn flush_projected_outbox(
     conn: &mut SqliteConnection,
     requests: Vec<OutboxWriteRequest>,
     projected_changes: Vec<ProjectedChange>,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut inserted_count = 0;
     for request in requests.into_iter().chain(
         projected_changes
             .into_iter()
             .map(ProjectedChange::into_outbox_request),
     ) {
         insert_outbox_event(conn, request)?;
+        inserted_count += 1;
     }
-    Ok(())
+    Ok(inserted_count)
 }

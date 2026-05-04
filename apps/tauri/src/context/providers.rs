@@ -3,7 +3,7 @@ use super::registry::ServiceContext;
 use crate::domain_events::TauriDomainEventSink;
 use crate::secret_store::shared_secret_store;
 use crate::services::ConnectService;
-use log::error;
+use log::{error, warn};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use wealthfolio_ai::{AiProviderService, ChatConfig, ChatService};
@@ -54,6 +54,7 @@ use wealthfolio_storage_sqlite::{
 pub struct ContextInitResult {
     pub context: ServiceContext,
     pub event_receiver: mpsc::UnboundedReceiver<DomainEvent>,
+    pub sync_outbox_wake_receiver: mpsc::Receiver<()>,
 }
 
 pub async fn initialize_context(
@@ -63,7 +64,14 @@ pub async fn initialize_context(
     db::run_migrations(&db_path)?;
 
     let pool = db::create_pool(&db_path)?;
-    let writer = write_actor::spawn_writer(pool.as_ref().clone()).map_err(|e| {
+    let (sync_outbox_wake_sender, sync_outbox_wake_receiver) = mpsc::channel(128);
+    let writer = write_actor::spawn_writer_with_outbox_observer(
+        pool.as_ref().clone(),
+        Arc::new(move || {
+            let _ = sync_outbox_wake_sender.try_send(());
+        }),
+    )
+    .map_err(|e| {
         error!("Failed to initialize writer actor: {}", e);
         e
     })?;
@@ -184,7 +192,7 @@ pub async fn initialize_context(
         )
         .with_event_sink(domain_event_sink.clone()),
     );
-    let goal_service = Arc::new(GoalService::new(goal_repo.clone()));
+    let goal_service = Arc::new(GoalService::new(goal_repo.clone(), account_service.clone()));
     let limits_service = Arc::new(ContributionLimitService::new_with_timezone(
         fx_service.clone(),
         limit_repository.clone(),
@@ -335,6 +343,16 @@ pub async fn initialize_context(
         app_version,
     ));
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
+    let now = chrono::Utc::now();
+    if let Err(err) = app_sync_repository
+        .prune_sync_outbox(
+            now - chrono::Duration::days(7),
+            now - chrono::Duration::days(30),
+        )
+        .await
+    {
+        warn!("Failed to prune local sync outbox: {}", err);
+    }
 
     Ok(ContextInitResult {
         context: ServiceContext {
@@ -371,6 +389,7 @@ pub async fn initialize_context(
             custom_provider_service,
         },
         event_receiver,
+        sync_outbox_wake_receiver,
     })
 }
 

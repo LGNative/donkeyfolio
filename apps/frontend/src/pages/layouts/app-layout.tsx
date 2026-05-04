@@ -3,6 +3,7 @@ import { MobileLoadingIndicator } from "@/components/mobile-loading-indicator";
 import { Toaster } from "@/components/sonner";
 import { UpdateDialog } from "@/components/update-dialog";
 import { PortfolioSyncProvider } from "@/context/portfolio-sync-context";
+import { useActiveAppSyncTrigger } from "@/features/devices-sync/hooks/use-active-app-sync-trigger";
 import useNavigationEventListener from "@/hooks/use-navigation-event-listener";
 import { useIsMobileViewport, usePlatform } from "@/hooks/use-platform";
 import { useSettings } from "@/hooks/use-settings";
@@ -21,7 +22,7 @@ const AppLayoutContent = () => {
   const { data: settings, isSuccess: isSettingsReady } = useSettings();
   const location = useLocation();
   const navigation = useNavigation();
-  const { isMobile } = usePlatform();
+  const { isMobile, isTauri } = usePlatform();
   const isMobileViewport = useIsMobileViewport();
   const isIPad =
     typeof window !== "undefined" &&
@@ -36,6 +37,7 @@ const AppLayoutContent = () => {
 
   useGlobalEventListener();
   useNavigationEventListener();
+  useActiveAppSyncTrigger({ enabled: isTauri, requireWindowFocusForInterval: !isMobile });
 
   if (!isSettingsReady) {
     return (

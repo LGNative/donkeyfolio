@@ -44,6 +44,7 @@ mod tests {
         assert_eq!(mic_to_exchange_name("XNYS"), Some("NYSE"));
         assert_eq!(mic_to_exchange_name("XNAS"), Some("NASDAQ"));
         assert_eq!(mic_to_exchange_name("XTSE"), Some("TSX"));
+        assert_eq!(mic_to_exchange_name("XNEO"), Some("Cboe Canada"));
         assert_eq!(mic_to_exchange_name("XLON"), Some("LSE"));
         assert_eq!(mic_to_exchange_name("CXE"), Some("Cboe UK"));
         assert_eq!(mic_to_exchange_name("XETR"), Some("XETRA"));

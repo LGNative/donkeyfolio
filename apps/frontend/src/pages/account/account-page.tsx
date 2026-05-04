@@ -8,6 +8,7 @@ import {
   CardTitle,
   GainAmount,
   GainPercent,
+  AnimatedToggleGroup,
   IntervalSelector,
   Page,
   PageContent,
@@ -26,7 +27,7 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { canAddHoldings } from "@/lib/activity-restrictions";
-import { AccountType } from "@/lib/constants";
+import { AccountType, HoldingType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import {
@@ -70,6 +71,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AccountContributionLimit } from "./account-contribution-limit";
 import AccountHoldings from "./account-holdings";
 import AccountMetrics from "./account-metrics";
+import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
   date: string;
@@ -77,6 +79,8 @@ interface HistoryChartData {
   netContribution: number;
   currency: string;
 }
+
+type AccountDetailTab = "holdings" | "snapshots";
 
 // Map account types to icons for visual distinction
 const accountTypeIcons: Record<AccountType, Icon> = {
@@ -120,6 +124,7 @@ const AccountPage = () => {
   const [selectedActivityDate, setSelectedActivityDate] = useState<string | null>(null);
   const [isActivitySheetOpen, setIsActivitySheetOpen] = useState(false);
   const [showBulkHoldingsForm, setShowBulkHoldingsForm] = useState(false);
+  const [accountDetailTab, setAccountDetailTab] = useState<AccountDetailTab>("holdings");
 
   const recalculatePortfolioMutation = useRecalculatePortfolioMutation();
   const { accounts, isLoading: isAccountsLoading } = useAccounts();
@@ -147,6 +152,28 @@ const AccountPage = () => {
     if (!holdings) return false;
     return holdings.length > 0;
   }, [holdings]);
+
+  const hasNonCashHoldings = useMemo(() => {
+    if (!holdings) return false;
+    return holdings.some((holding) => holding.holdingType !== HoldingType.CASH);
+  }, [holdings]);
+
+  const shouldShowSnapshotHistory = isHoldingsMode && hasHoldings && !isHoldingsLoading;
+
+  const accountDetailTabs = useMemo(() => {
+    if (!shouldShowSnapshotHistory) return [];
+
+    const tabs: { value: AccountDetailTab; label: string }[] = [];
+    if (hasNonCashHoldings) {
+      tabs.push({ value: "holdings", label: "Holdings" });
+    }
+    tabs.push({ value: "snapshots", label: "Snapshots" });
+    return tabs;
+  }, [shouldShowSnapshotHistory, hasNonCashHoldings]);
+
+  const activeAccountDetailTab = accountDetailTabs.some((tab) => tab.value === accountDetailTab)
+    ? accountDetailTab
+    : (accountDetailTabs[0]?.value ?? "holdings");
 
   // Format date range for snapshot query
   const snapshotDateFrom = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : undefined;
@@ -625,7 +652,35 @@ const AccountPage = () => {
               </div>
             </div>
 
-            <AccountHoldings accountId={id} onAddHoldings={() => setIsEditingHoldings(true)} />
+            {shouldShowSnapshotHistory && account ? (
+              <div className="space-y-4">
+                <AnimatedToggleGroup<AccountDetailTab>
+                  items={accountDetailTabs}
+                  value={activeAccountDetailTab}
+                  onValueChange={setAccountDetailTab}
+                  className="text-sm"
+                />
+
+                {activeAccountDetailTab === "holdings" ? (
+                  <AccountHoldings
+                    accountId={id}
+                    showEmptyState={false}
+                    onAddHoldings={() => setIsEditingHoldings(true)}
+                  />
+                ) : (
+                  <AccountSnapshotHistory
+                    account={account}
+                    canEditSnapshots={canEditHoldingsDirectly}
+                    onAddSnapshot={() => {
+                      setEditingSnapshotDate(null);
+                      setIsEditingHoldings(true);
+                    }}
+                  />
+                )}
+              </div>
+            ) : (
+              <AccountHoldings accountId={id} onAddHoldings={() => setIsEditingHoldings(true)} />
+            )}
           </>
         ) : (
           <AccountHoldings

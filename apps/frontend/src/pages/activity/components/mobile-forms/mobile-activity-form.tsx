@@ -1,4 +1,5 @@
 import { logger } from "@/adapters";
+import { buildAssetResolutionInput } from "@/lib/asset-resolution-input";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Form } from "@wealthfolio/ui/components/ui/form";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -11,16 +12,16 @@ import {
   SheetTitle,
 } from "@wealthfolio/ui/components/ui/sheet";
 import { ActivityType, METADATA_CONTRACT_MULTIPLIER, QuoteMode } from "@/lib/constants";
-import { isSymbolRequired } from "@/lib/activity-utils";
+import { isSecuritiesTransfer, isSymbolRequired } from "@/lib/activity-utils";
 import { buildOccSymbol, parseOccSymbol } from "@/lib/occ-symbol";
 import { generateId } from "@/lib/id";
-import type { ActivityCreate, ActivityDetails, SymbolInput } from "@/lib/types";
+import type { ActivityCreate, ActivityDetails } from "@/lib/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm, type Resolver, type SubmitHandler } from "react-hook-form";
 import { toast } from "sonner";
 import { useActivityMutations } from "../../hooks/use-activity-mutations";
-import type { AccountSelectOption } from "../forms/fields";
+import { showValidationToast, type AccountSelectOption } from "../forms/fields";
 import { newActivitySchema, type NewActivityFormValues } from "../forms/schemas";
 import { MobileActivitySteps } from "./mobile-activity-steps";
 
@@ -152,6 +153,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           "TRANSFER_OUT",
           "FEE",
           "TAX",
+          "CREDIT",
           "ADJUSTMENT",
         ].includes(type)
       : false;
@@ -160,8 +162,10 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
   // Derive transfer mode from existing activity data
   const isTransferType =
     activity?.activityType === "TRANSFER_IN" || activity?.activityType === "TRANSFER_OUT";
-  const hasSecurityData = !!(activity?.assetSymbol || activity?.assetId);
-  const initialTransferMode = isTransferType && hasSecurityData ? "securities" : "cash";
+  const isSecurityTransferActivity =
+    isTransferType &&
+    isSecuritiesTransfer(activity?.activityType ?? "", activity?.assetSymbol, activity?.assetId);
+  const initialTransferMode = isSecurityTransferActivity ? "securities" : "cash";
 
   // Detect option/bond activities for editing
   const isOptionActivity = activity?.instrumentType === "OPTION";
@@ -173,11 +177,24 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
     accountId: activity?.accountId ?? "",
     activityType: isValidActivityType(activity?.activityType) ? activity.activityType : undefined,
     amount: activity?.amount ? Number(activity.amount) : undefined,
-    quantity: activity?.quantity ? Number(activity.quantity) : undefined,
-    unitPrice: activity?.unitPrice ? Number(activity.unitPrice) : undefined,
+    quantity:
+      isTransferType && !isSecurityTransferActivity
+        ? undefined
+        : activity?.quantity
+          ? Number(activity.quantity)
+          : undefined,
+    unitPrice:
+      isTransferType && !isSecurityTransferActivity
+        ? undefined
+        : activity?.unitPrice
+          ? Number(activity.unitPrice)
+          : undefined,
     fee: activity?.fee ? Number(activity.fee) : 0,
     comment: activity?.comment ?? null,
-    assetId: activity?.assetSymbol ?? activity?.assetId,
+    assetId:
+      isTransferType && !isSecurityTransferActivity
+        ? undefined
+        : (activity?.assetSymbol ?? activity?.assetId),
     activityDate: activity?.date
       ? new Date(activity.date)
       : (() => {
@@ -269,6 +286,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
       if (_assetType === "option" && _underlying && _strike && _expiration && _optType) {
         const occSymbol = buildOccSymbol(_underlying, _expiration, _optType, _strike);
         submitData.assetId = occSymbol;
+        submitData.existingAssetId = undefined;
         submitData.symbolInstrumentType = "OPTION";
         submitData.assetMetadata = {
           name: `${_underlying.toUpperCase()} ${_expiration} ${_optType} ${_strike}`,
@@ -320,6 +338,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         // Extract symbol-related and fxRate fields from flat form data
         const {
           assetId,
+          existingAssetId,
           fxRate,
           exchangeMic,
           quoteMode,
@@ -337,18 +356,19 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           delete sharedFields.amount;
         }
 
-        // Build nested symbol object for securities transfers
-        const symbolInput: ActivityCreate["symbol"] =
+        // Build nested asset object for securities transfers
+        const assetInput: ActivityCreate["asset"] =
           isSecuritiesTransfer && assetId
-            ? {
+            ? buildAssetResolutionInput({
+                id: existingAssetId as string | undefined,
                 symbol: assetId as string,
                 exchangeMic: exchangeMic as string | undefined,
-                quoteMode: quoteMode as SymbolInput["quoteMode"],
+                quoteMode: quoteMode as string | undefined,
                 quoteCcy: symbolQuoteCcy as string | undefined,
                 instrumentType: symbolInstrumentType as string | undefined,
                 name: (assetMetadata as { name?: string })?.name,
                 kind: (assetMetadata as { kind?: string })?.kind,
-              }
+              })
             : undefined;
 
         const transferOutActivity: ActivityCreate = {
@@ -357,7 +377,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           activityType: ActivityType.TRANSFER_OUT,
           currency: fromAccount?.currency,
           sourceGroupId,
-          symbol: symbolInput,
+          asset: assetInput,
         } as ActivityCreate;
 
         const transferInActivity: ActivityCreate = {
@@ -366,7 +386,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           activityType: ActivityType.TRANSFER_IN,
           currency: toAccount?.currency,
           sourceGroupId,
-          symbol: symbolInput,
+          asset: assetInput,
           fxRate: fxRate as ActivityCreate["fxRate"],
         } as ActivityCreate;
 
@@ -400,7 +420,11 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
       }
 
       if (id) {
-        await updateActivityMutation.mutateAsync({ id, ...submitData });
+        await updateActivityMutation.mutateAsync({
+          id,
+          ...submitData,
+          currentAssetId: activity?.assetId,
+        } as NewActivityFormValues & { id: string; currentAssetId?: string });
       } else {
         await addActivityMutation.mutateAsync(submitData);
       }
@@ -416,6 +440,9 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
       return;
     }
   };
+  const handleValidatedSubmit = form.handleSubmit(onSubmit, (errors) => {
+    showValidationToast(errors, form.getValues);
+  });
 
   const handleNext = async () => {
     const fields = getFieldsForStep(currentStep);
@@ -446,11 +473,18 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
           }
           return [...baseFields, "assetId", "quantity", "unitPrice", "fee"];
         }
-        if (["DEPOSIT", "WITHDRAWAL", "TRANSFER_IN", "TRANSFER_OUT"].includes(activityType ?? "")) {
+        if (
+          ["DEPOSIT", "WITHDRAWAL", "TRANSFER_IN", "TRANSFER_OUT", "CREDIT"].includes(
+            activityType ?? "",
+          )
+        ) {
           return [...baseFields, "amount", "fee"];
         }
         if (["DIVIDEND", "INTEREST"].includes(activityType ?? "")) {
           return [...baseFields, "assetId", "amount"];
+        }
+        if (activityType === "ADJUSTMENT") {
+          return [...baseFields, "assetId"];
         }
         return ["amount", ...baseFields];
       }
@@ -488,7 +522,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
         <div className="flex-1 overflow-y-auto">
           <div className="p-4">
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="flex h-full flex-col">
+              <form onSubmit={handleValidatedSubmit} className="flex h-full flex-col">
                 <MobileActivitySteps
                   currentStep={currentStep}
                   accounts={accounts}
@@ -529,7 +563,7 @@ export function MobileActivityForm({ accounts, activity, open, onClose }: Mobile
               <Button
                 type="button"
                 size="default"
-                onClick={form.handleSubmit(onSubmit)}
+                onClick={handleValidatedSubmit}
                 className="flex-1 font-medium"
                 disabled={isLoading}
               >

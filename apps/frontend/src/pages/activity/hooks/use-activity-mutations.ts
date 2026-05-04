@@ -1,4 +1,13 @@
-import { createActivity, deleteActivity, logger, saveActivities, updateActivity } from "@/adapters";
+import {
+  createActivity,
+  deleteActivity,
+  linkTransferActivities,
+  logger,
+  saveActivities,
+  unlinkTransferActivities,
+  updateActivity,
+} from "@/adapters";
+import { buildAssetResolutionInput, normalizeOptionalString } from "@/lib/asset-resolution-input";
 import { generateId } from "@/lib/id";
 import {
   ActivityBulkMutationRequest,
@@ -15,15 +24,11 @@ export function useActivityMutations(
   onSuccess?: (activity: { accountId?: string | null }) => void,
 ) {
   const queryClient = useQueryClient();
-  const normalizeOptionalString = (value: unknown): string | undefined => {
-    if (typeof value !== "string") return undefined;
-    const trimmed = value.trim();
-    return trimmed === "" ? undefined : trimmed;
-  };
 
-  const buildSymbolInput = ({
+  const buildActivityAssetInput = ({
     assetId,
-    symbolId,
+    existingAssetId,
+    currentAssetId,
     exchangeMic,
     quoteMode,
     assetKind,
@@ -33,7 +38,8 @@ export function useActivityMutations(
     includeId,
   }: {
     assetId?: string;
-    symbolId?: string;
+    existingAssetId?: string;
+    currentAssetId?: string;
     exchangeMic?: string;
     quoteMode?: string;
     assetKind?: string;
@@ -41,26 +47,30 @@ export function useActivityMutations(
     symbolQuoteCcy?: string;
     symbolInstrumentType?: string;
     includeId: boolean;
-  }): ActivityCreate["symbol"] => {
+  }): ActivityCreate["asset"] => {
     const normalizedAssetId = normalizeOptionalString(assetId);
-    const normalizedSymbolId = normalizeOptionalString(symbolId);
-    const symbol = {
-      id: includeId ? (normalizedSymbolId ?? normalizedAssetId) : undefined,
-      symbol: normalizedAssetId,
-      exchangeMic: normalizeOptionalString(exchangeMic),
-      kind: normalizeOptionalString(assetKind) ?? normalizeOptionalString(assetMetadata?.kind),
-      name: normalizeOptionalString(assetMetadata?.name),
-      quoteMode: normalizeOptionalString(quoteMode) as ActivityCreate["symbol"] extends {
-        quoteMode?: infer P;
-      }
-        ? P
-        : never,
-      quoteCcy: normalizeOptionalString(symbolQuoteCcy),
-      instrumentType: normalizeOptionalString(symbolInstrumentType),
-    };
+    const normalizedInstrumentType = normalizeOptionalString(symbolInstrumentType);
+    const normalizedExistingAssetId =
+      normalizedAssetId && normalizedInstrumentType?.toUpperCase() !== "OPTION"
+        ? normalizeOptionalString(existingAssetId)
+        : undefined;
+    const normalizedCurrentAssetId = includeId
+      ? normalizeOptionalString(currentAssetId)
+      : undefined;
+    if (!normalizedAssetId && !normalizedCurrentAssetId) return undefined;
 
-    const hasAnyField = Object.values(symbol).some((v) => v !== undefined);
-    return hasAnyField ? symbol : undefined;
+    return buildAssetResolutionInput({
+      id: normalizedExistingAssetId ?? normalizedCurrentAssetId,
+      symbol: normalizedAssetId,
+      exchangeMic: normalizedAssetId ? exchangeMic : undefined,
+      kind: normalizedAssetId
+        ? (normalizeOptionalString(assetKind) ?? normalizeOptionalString(assetMetadata?.kind))
+        : undefined,
+      name: normalizedAssetId ? assetMetadata?.name : undefined,
+      quoteMode: normalizedAssetId ? quoteMode : undefined,
+      quoteCcy: normalizedAssetId ? symbolQuoteCcy : undefined,
+      instrumentType: normalizedAssetId ? normalizedInstrumentType : undefined,
+    });
   };
 
   const toDecimalPayload = (value: unknown): string | null | undefined => {
@@ -91,6 +101,7 @@ export function useActivityMutations(
         exchangeMic,
         metadata,
         assetMetadata,
+        existingAssetId,
         quoteMode,
         assetKind,
         symbolQuoteCcy,
@@ -105,6 +116,7 @@ export function useActivityMutations(
         exchangeMic?: string;
         metadata?: Record<string, unknown>;
         assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
+        existingAssetId?: string;
         quoteMode?: string;
         assetKind?: string;
         symbolQuoteCcy?: string;
@@ -128,8 +140,9 @@ export function useActivityMutations(
         amount: toDecimalPayload(amount),
         fee: toDecimalPayload(fee),
         fxRate: toDecimalPayload(fxRate),
-        symbol: buildSymbolInput({
+        asset: buildActivityAssetInput({
           assetId,
+          existingAssetId,
           exchangeMic,
           quoteMode,
           assetKind,
@@ -152,10 +165,11 @@ export function useActivityMutations(
       // Extract asset-related fields from form data
       const {
         assetId,
-        existingAssetId,
+        currentAssetId,
         exchangeMic,
         metadata,
         assetMetadata,
+        existingAssetId,
         quoteMode,
         assetKind,
         symbolQuoteCcy,
@@ -168,10 +182,11 @@ export function useActivityMutations(
       } = data as NewActivityFormValues & {
         id: string;
         assetId?: string;
-        existingAssetId?: string;
+        currentAssetId?: string;
         exchangeMic?: string;
         metadata?: Record<string, unknown>;
         assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
+        existingAssetId?: string;
         quoteMode?: string;
         assetKind?: string;
         symbolQuoteCcy?: string;
@@ -195,9 +210,10 @@ export function useActivityMutations(
         amount: toDecimalPayload(amount),
         fee: toDecimalPayload(fee),
         fxRate: toDecimalPayload(fxRate),
-        symbol: buildSymbolInput({
+        asset: buildActivityAssetInput({
           assetId,
-          symbolId: existingAssetId,
+          existingAssetId,
+          currentAssetId,
           exchangeMic,
           quoteMode,
           assetKind,
@@ -231,6 +247,40 @@ export function useActivityMutations(
     ...createMutationOptions("deleting"),
   });
 
+  const linkTransferActivitiesMutation = useMutation({
+    mutationFn: ({ activityAId, activityBId }: { activityAId: string; activityBId: string }) =>
+      linkTransferActivities(activityAId, activityBId),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      toast.success("Transfers linked", {
+        description: "The two activities are now paired as an internal transfer.",
+      });
+    },
+    onError: (error: string) => {
+      logger.error(`Error linking transfers: ${String(error)}`);
+      toast.error("Failed to link transfers", {
+        description: String(error),
+      });
+    },
+  });
+
+  const unlinkTransferActivitiesMutation = useMutation({
+    mutationFn: ({ activityAId, activityBId }: { activityAId: string; activityBId: string }) =>
+      unlinkTransferActivities(activityAId, activityBId),
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      toast.success("Transfers unlinked", {
+        description: "The two activities are external transfers again.",
+      });
+    },
+    onError: (error: string) => {
+      logger.error(`Error unlinking transfers: ${String(error)}`);
+      toast.error("Failed to unlink transfers", {
+        description: String(error),
+      });
+    },
+  });
+
   const duplicateActivity = async (activityToDuplicate: ActivityDetails) => {
     const {
       id: _id,
@@ -259,12 +309,13 @@ export function useActivityMutations(
       fxRate: restOfActivityData.fxRate ?? undefined,
       activityDate: date,
       comment: "Duplicated",
-      // Use nested symbol object
-      symbol: {
+      asset: buildAssetResolutionInput({
+        id: _assetId,
         symbol: assetSymbol,
         exchangeMic,
         quoteMode: assetQuoteMode,
-      },
+        instrumentType: activityToDuplicate.instrumentType,
+      }),
     };
 
     return await createActivity(createPayload);
@@ -330,5 +381,7 @@ export function useActivityMutations(
     deleteActivityMutation,
     duplicateActivityMutation,
     saveActivitiesMutation,
+    linkTransferActivitiesMutation,
+    unlinkTransferActivitiesMutation,
   };
 }

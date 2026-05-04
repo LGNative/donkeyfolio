@@ -72,6 +72,7 @@ export type BootstrapCheckResult =
       localRows: number;
       nonEmptyTables: { table: string; rows: number }[];
     }
+  | { status: "not_ready"; message: string }
   | { status: "waiting_snapshot"; message: string }
   | { status: "applied"; message: string }
   | { status: "error"; message: string };
@@ -552,6 +553,9 @@ class SyncService {
     const result = await deviceSyncReconcileReadyStateApi(allowOverwrite);
     if (result.status === "error") {
       return { status: "error", message: result.message };
+    }
+    if (result.status === "skipped_not_ready" || result.bootstrapStatus === "skipped_not_ready") {
+      return { status: "not_ready", message: result.message };
     }
 
     const waitingForSnapshot =

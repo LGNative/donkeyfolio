@@ -8,6 +8,10 @@ import { DataGrid, useDataGrid, type SymbolSearchResult } from "@wealthfolio/ui"
 import { useCallback, useMemo, useRef, useState } from "react";
 import { resolveSymbolQuote } from "@/adapters";
 import { CreateCustomAssetDialog } from "@/components/create-custom-asset-dialog";
+import { ActivityType } from "@/lib/constants";
+import { generateId } from "@/lib/id";
+import { LinkTransferModal } from "../link-transfer-modal";
+import { useActivityMutations } from "../../hooks/use-activity-mutations";
 import { ActivityDataGridPagination } from "./activity-data-grid-pagination";
 import { ActivityDataGridToolbar } from "./activity-data-grid-toolbar";
 import {
@@ -163,6 +167,8 @@ export function ActivityDataGrid({
         createdAt: now,
         updatedAt: now,
         isNew: true,
+        comment: "Duplicated",
+        idempotencyKey: generateId("manual-duplicate"),
       };
       setLocalTransactions((prev) => [duplicated, ...prev]);
       markDirtyBatch([duplicated.id]);
@@ -196,18 +202,22 @@ export function ActivityDataGrid({
 
       // Currency fallback: search result (from exchange) → account → base
       const provisionalCurrency = result.currency;
+      let dirtyId: string | undefined;
 
       setLocalTransactions((prev) => {
         const updated = [...prev];
         if (updated[rowIndex]) {
           const row = updated[rowIndex];
+          dirtyId = row.id;
           const currency = provisionalCurrency ?? row.accountCurrency ?? fallbackCurrency;
           updated[rowIndex] = {
             ...row,
+            assetSymbol: result.symbol,
             exchangeMic: result.exchangeMic,
             assetQuoteMode: result.dataSource === "MANUAL" ? "MANUAL" : "MARKET",
             currency,
             instrumentType: result.quoteType,
+            pendingAssetId: result.existingAssetId,
             // Capture asset metadata for custom assets
             pendingAssetName: result.longName,
             pendingAssetKind: result.assetKind,
@@ -217,6 +227,9 @@ export function ActivityDataGrid({
         }
         return updated;
       });
+      if (dirtyId) {
+        markDirtyBatch([dirtyId]);
+      }
 
       // Resolve quote to confirm currency and get latest price
       if (result.dataSource !== "MANUAL") {
@@ -292,10 +305,12 @@ export function ActivityDataGrid({
       if (rowIndex < 0) return;
 
       // Update the transaction with the symbol and asset metadata
+      let dirtyId: string | undefined;
       setLocalTransactions((prev) => {
         const updated = [...prev];
         if (updated[rowIndex]) {
           const row = updated[rowIndex];
+          dirtyId = row.id;
           const currency = result.currency ?? row.accountCurrency ?? fallbackCurrency;
           updated[rowIndex] = {
             ...row,
@@ -304,6 +319,7 @@ export function ActivityDataGrid({
             assetQuoteMode: "MANUAL",
             currency,
             instrumentType: result.quoteType,
+            pendingAssetId: result.existingAssetId,
             pendingAssetName: result.longName,
             pendingAssetKind: result.assetKind,
             pendingQuoteCcy: result.currency,
@@ -314,14 +330,13 @@ export function ActivityDataGrid({
       });
 
       // Mark the transaction as dirty
-      const transaction = localTransactions[rowIndex];
-      if (transaction) {
-        markDirtyBatch([transaction.id]);
+      if (dirtyId) {
+        markDirtyBatch([dirtyId]);
       }
 
       setCustomAssetDialog({ open: false, rowIndex: -1, symbol: "" });
     },
-    [customAssetDialog, setLocalTransactions, fallbackCurrency, localTransactions, markDirtyBatch],
+    [customAssetDialog, setLocalTransactions, fallbackCurrency, markDirtyBatch],
   );
 
   // Column definitions
@@ -456,6 +471,157 @@ export function ActivityDataGrid({
     [selectedRows],
   );
 
+  // Link state: validate that the 2-row selection is a valid TRANSFER_IN/TRANSFER_OUT pair
+  const { linkTransferActivitiesMutation, unlinkTransferActivitiesMutation } =
+    useActivityMutations();
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferDialogMode, setTransferDialogMode] = useState<"link" | "unlink">("link");
+
+  const linkValidation = useMemo(() => {
+    if (selectedRows.length !== 2) {
+      return { canLink: false, reason: "" } as const;
+    }
+    const [first, second] = selectedRows.map((row) => row.original);
+    if (first.isNew || second.isNew) {
+      return {
+        canLink: false,
+        reason: "Save new activities before linking",
+      } as const;
+    }
+    if (dirtyTransactionIds.has(first.id) || dirtyTransactionIds.has(second.id)) {
+      return {
+        canLink: false,
+        reason: "Save or discard pending edits on the selected rows before linking",
+      } as const;
+    }
+    const types = new Set([first.activityType, second.activityType]);
+    if (
+      !types.has(ActivityType.TRANSFER_IN) ||
+      !types.has(ActivityType.TRANSFER_OUT) ||
+      types.size !== 2
+    ) {
+      return {
+        canLink: false,
+        reason: "Select one TRANSFER_IN and one TRANSFER_OUT activity",
+      } as const;
+    }
+    if (first.sourceGroupId || second.sourceGroupId) {
+      return {
+        canLink: false,
+        reason: "One of the selected activities is already linked",
+      } as const;
+    }
+    const transferIn = first.activityType === ActivityType.TRANSFER_IN ? first : second;
+    const transferOut = first.activityType === ActivityType.TRANSFER_OUT ? first : second;
+    if (transferIn.accountId === transferOut.accountId) {
+      return {
+        canLink: false,
+        reason: "Both legs share the same account",
+      } as const;
+    }
+    return { canLink: true, transferIn, transferOut } as const;
+  }, [selectedRows, dirtyTransactionIds]);
+
+  const unlinkValidation = useMemo(() => {
+    if (selectedRows.length !== 2) {
+      return { canUnlink: false, reason: "" } as const;
+    }
+    const [first, second] = selectedRows.map((row) => row.original);
+    if (first.isNew || second.isNew) {
+      return {
+        canUnlink: false,
+        reason: "Save new activities before unlinking",
+      } as const;
+    }
+    if (dirtyTransactionIds.has(first.id) || dirtyTransactionIds.has(second.id)) {
+      return {
+        canUnlink: false,
+        reason: "Save or discard pending edits on the selected rows before unlinking",
+      } as const;
+    }
+    const types = new Set([first.activityType, second.activityType]);
+    if (
+      !types.has(ActivityType.TRANSFER_IN) ||
+      !types.has(ActivityType.TRANSFER_OUT) ||
+      types.size !== 2
+    ) {
+      return {
+        canUnlink: false,
+        reason: "Select one TRANSFER_IN and one TRANSFER_OUT activity",
+      } as const;
+    }
+    if (!first.sourceGroupId || !second.sourceGroupId) {
+      return {
+        canUnlink: false,
+        reason: "Both selected activities must already be linked",
+      } as const;
+    }
+    if (first.sourceGroupId !== second.sourceGroupId) {
+      return {
+        canUnlink: false,
+        reason: "Selected activities belong to different linked transfers",
+      } as const;
+    }
+    const transferIn = first.activityType === ActivityType.TRANSFER_IN ? first : second;
+    const transferOut = first.activityType === ActivityType.TRANSFER_OUT ? first : second;
+    return { canUnlink: true, transferIn, transferOut } as const;
+  }, [selectedRows, dirtyTransactionIds]);
+
+  const showUnlinkSelected = useMemo(
+    () => selectedRows.length === 2 && selectedRows.every((row) => !!row.original.sourceGroupId),
+    [selectedRows],
+  );
+
+  const linkWarnings = useMemo(() => {
+    if (!linkValidation.canLink) return [] as string[];
+    const { transferIn, transferOut } = linkValidation;
+    const warnings: string[] = [];
+    if (transferIn.currency !== transferOut.currency) {
+      warnings.push(
+        `Currencies differ (${transferOut.currency} → ${transferIn.currency}). The pair will still be linked.`,
+      );
+    }
+    const inAmount = Number(transferIn.amount ?? transferIn.unitPrice ?? 0);
+    const outAmount = Number(transferOut.amount ?? transferOut.unitPrice ?? 0);
+    if (Number.isFinite(inAmount) && Number.isFinite(outAmount) && inAmount && outAmount) {
+      const diff = Math.abs(inAmount - outAmount) / Math.max(inAmount, outAmount);
+      if (diff > 0.01) {
+        warnings.push("Amounts differ by more than 1%.");
+      }
+    }
+    const inDate = new Date(transferIn.date).getTime();
+    const outDate = new Date(transferOut.date).getTime();
+    if (Number.isFinite(inDate) && Number.isFinite(outDate)) {
+      const dayDiff = Math.abs(inDate - outDate) / (1000 * 60 * 60 * 24);
+      if (dayDiff > 7) {
+        warnings.push(`Dates differ by ${Math.round(dayDiff)} days.`);
+      }
+    }
+    return warnings;
+  }, [linkValidation]);
+
+  const handleLinkConfirm = useCallback(async () => {
+    if (!linkValidation.canLink) return;
+    await linkTransferActivitiesMutation.mutateAsync({
+      activityAId: linkValidation.transferIn.id,
+      activityBId: linkValidation.transferOut.id,
+    });
+    setTransferDialogOpen(false);
+    dataGrid.table.resetRowSelection();
+    onRefetch();
+  }, [linkValidation, linkTransferActivitiesMutation, dataGrid.table, onRefetch]);
+
+  const handleUnlinkConfirm = useCallback(async () => {
+    if (!unlinkValidation.canUnlink) return;
+    await unlinkTransferActivitiesMutation.mutateAsync({
+      activityAId: unlinkValidation.transferIn.id,
+      activityBId: unlinkValidation.transferOut.id,
+    });
+    setTransferDialogOpen(false);
+    dataGrid.table.resetRowSelection();
+    onRefetch();
+  }, [unlinkValidation, unlinkTransferActivitiesMutation, dataGrid.table, onRefetch]);
+
   // Delete selected rows handler
   const deleteSelectedRows = useCallback(() => {
     const selected = dataGrid.table.getSelectedRowModel().rows;
@@ -530,6 +696,15 @@ export function ActivityDataGrid({
     customAssetDialog.rowIndex >= 0 && localTransactions[customAssetDialog.rowIndex]
       ? (localTransactions[customAssetDialog.rowIndex].accountCurrency ?? fallbackCurrency)
       : fallbackCurrency;
+  let dialogActivityIn: LocalTransaction | undefined;
+  let dialogActivityOut: LocalTransaction | undefined;
+  if (transferDialogMode === "link" && linkValidation.canLink) {
+    dialogActivityIn = linkValidation.transferIn;
+    dialogActivityOut = linkValidation.transferOut;
+  } else if (transferDialogMode === "unlink" && unlinkValidation.canUnlink) {
+    dialogActivityIn = unlinkValidation.transferIn;
+    dialogActivityOut = unlinkValidation.transferOut;
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col space-y-3">
@@ -545,6 +720,21 @@ export function ActivityDataGrid({
         onApproveSelected={approveSelectedRows}
         onSave={handleSaveChanges}
         onCancel={handleCancelChanges}
+        onLinkSelected={() => {
+          setTransferDialogMode("link");
+          setTransferDialogOpen(true);
+        }}
+        canLinkSelected={linkValidation.canLink}
+        linkDisabledReason={linkValidation.canLink ? undefined : linkValidation.reason}
+        isLinking={linkTransferActivitiesMutation.isPending}
+        onUnlinkSelected={() => {
+          setTransferDialogMode("unlink");
+          setTransferDialogOpen(true);
+        }}
+        showUnlinkSelected={showUnlinkSelected}
+        canUnlinkSelected={unlinkValidation.canUnlink}
+        unlinkDisabledReason={unlinkValidation.canUnlink ? undefined : unlinkValidation.reason}
+        isUnlinking={unlinkTransferActivitiesMutation.isPending}
       />
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -571,6 +761,21 @@ export function ActivityDataGrid({
         onAssetCreated={handleCustomAssetCreated}
         defaultSymbol={customAssetDialog.symbol}
         defaultCurrency={dialogDefaultCurrency}
+      />
+
+      <LinkTransferModal
+        isOpen={transferDialogOpen}
+        mode={transferDialogMode}
+        isProcessing={
+          transferDialogMode === "link"
+            ? linkTransferActivitiesMutation.isPending
+            : unlinkTransferActivitiesMutation.isPending
+        }
+        activityIn={dialogActivityIn}
+        activityOut={dialogActivityOut}
+        warnings={transferDialogMode === "link" ? linkWarnings : []}
+        onConfirm={transferDialogMode === "link" ? handleLinkConfirm : handleUnlinkConfirm}
+        onCancel={() => setTransferDialogOpen(false)}
       />
     </div>
   );

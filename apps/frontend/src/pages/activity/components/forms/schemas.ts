@@ -4,9 +4,9 @@ import { z } from "zod";
 // Asset metadata schema for custom assets
 export const assetMetadataSchema = z
   .object({
-    name: z.string().optional(),
-    kind: z.string().optional(),
-    exchangeMic: z.string().optional(),
+    name: z.string().nullable().optional(),
+    kind: z.string().nullable().optional(),
+    exchangeMic: z.string().nullable().optional(),
   })
   .optional();
 
@@ -23,13 +23,15 @@ export const baseActivitySchema = z.object({
     .optional()
     .nullable(),
   // Exchange MIC for canonical asset ID generation (e.g., "XNAS", "XTSE")
-  exchangeMic: z.string().optional(),
+  exchangeMic: z.string().nullable().optional(),
   // Asset metadata for custom assets (name, etc.)
   assetMetadata: assetMetadataSchema,
   // Optional symbol-level quote currency hint from search/provider (e.g., "GBp")
-  symbolQuoteCcy: z.string().optional(),
+  symbolQuoteCcy: z.string().nullable().optional(),
   // Optional symbol-level instrument type hint from search/provider (e.g., "EQUITY", "CRYPTO")
-  symbolInstrumentType: z.string().optional(),
+  symbolInstrumentType: z.string().nullable().optional(),
+  // Existing asset id selected from symbol search, when available
+  existingAssetId: z.string().nullable().optional(),
 });
 
 // Transfer schema: TRANSFER_IN/OUT supports both cash (amount) and securities (assetId + quantity + unitPrice)
@@ -192,12 +194,48 @@ export const otherActivitySchema = baseActivitySchema.extend({
     .optional(),
 });
 
+export const creditActivitySchema = baseActivitySchema.extend({
+  activityType: z.enum([ActivityType.CREDIT]),
+  amount: z.coerce
+    .number({
+      required_error: "Please enter a valid amount.",
+      invalid_type_error: "Amount must be a positive number.",
+    })
+    .positive(),
+  fee: z.coerce
+    .number({
+      invalid_type_error: "Fee must be a positive number.",
+    })
+    .min(0, { message: "Fee must be a non-negative number." })
+    .default(0)
+    .optional(),
+  quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MANUAL),
+});
+
+export const adjustmentActivitySchema = baseActivitySchema.extend({
+  activityType: z.enum([ActivityType.ADJUSTMENT]),
+  assetId: z.string().min(1, { message: "Please select a security" }),
+  quantity: z.coerce.number().nonnegative().optional().nullable(),
+  unitPrice: z.coerce.number().nonnegative().optional().nullable(),
+  amount: z.coerce.number().optional().nullable(),
+  fee: z.coerce
+    .number({
+      invalid_type_error: "Fee must be a positive number.",
+    })
+    .min(0, { message: "Fee must be a non-negative number." })
+    .default(0)
+    .optional(),
+  quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MARKET),
+});
+
 export const newActivitySchema = z
   .discriminatedUnion("activityType", [
     tradeActivitySchema,
     cashActivitySchema,
     incomeActivitySchema,
     otherActivitySchema,
+    creditActivitySchema,
+    adjustmentActivitySchema,
     transferActivitySchema,
   ])
   .and(

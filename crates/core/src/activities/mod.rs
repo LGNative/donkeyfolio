@@ -24,12 +24,12 @@ pub use activities_model::{
     Activity, ActivityBulkIdentifierMapping, ActivityBulkMutationError,
     ActivityBulkMutationRequest, ActivityBulkMutationResult, ActivityDetails, ActivityImport,
     ActivitySearchResponse, ActivitySearchResponseMeta, ActivityStatus, ActivityType,
-    ActivityUpdate, ActivityUpsert, BrokerActivityProfileConfig, BrokerProfileScope,
-    BrokerSyncProfileData, BulkUpsertResult, FieldMappingValue, ImportActivitiesResult,
-    ImportActivitiesSummary, ImportAssetCandidate, ImportAssetPreviewItem,
+    ActivityUpdate, ActivityUpsert, AssetResolutionInput, BrokerActivityProfileConfig,
+    BrokerProfileScope, BrokerSyncProfileData, BulkUpsertResult, FieldMappingValue,
+    ImportActivitiesResult, ImportActivitiesSummary, ImportAssetCandidate, ImportAssetPreviewItem,
     ImportAssetPreviewStatus, ImportMapping, ImportMappingData, ImportTemplate, ImportTemplateData,
     ImportTemplateScope, IncomeData, NewActivity, PrepareActivitiesResult,
-    SaveBrokerSyncProfileRulesRequest, Sort, SymbolInput, TemplateKind,
+    SaveBrokerSyncProfileRulesRequest, Sort, TemplateKind,
 };
 pub use activities_service::ActivityService;
 pub use activities_traits::{ActivityRepositoryTrait, ActivityServiceTrait};

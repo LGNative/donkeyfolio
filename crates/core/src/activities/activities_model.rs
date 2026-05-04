@@ -216,22 +216,22 @@ impl Activity {
 /// Consolidates all asset-related fields into a single nested object.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct SymbolInput {
-    /// Asset ID - optional, for backward compatibility with existing assets
+pub struct AssetResolutionInput {
+    /// Existing asset ID. When provided without natural identity, it must refer to a persisted asset.
     pub id: Option<String>,
-    /// Symbol (e.g., "AAPL", "BTC") - used to generate canonical asset ID
+    /// Symbol (e.g., "AAPL", "BTC") used to resolve or create an asset.
     pub symbol: Option<String>,
-    /// Exchange MIC code (e.g., "XNAS", "XTSE") for securities
+    /// Exchange MIC code (e.g., "XNAS", "XTSE") for securities.
     pub exchange_mic: Option<String>,
-    /// Asset kind input (e.g., "SECURITY", "CRYPTO") - if not provided, inferred
+    /// Asset kind hint (e.g., "SECURITY", "CRYPTO") - if not provided, inferred.
     pub kind: Option<String>,
-    /// Asset name for custom/manual assets
+    /// Asset name hint for custom/manual assets.
     pub name: Option<String>,
-    /// Quote mode: "MARKET" or "MANUAL" - controls how asset is priced
+    /// Quote mode hint: "MARKET" or "MANUAL".
     pub quote_mode: Option<String>,
-    /// Optional quote currency from symbol search/provider (e.g., "GBp")
+    /// Optional quote currency from symbol search/provider (e.g., "GBp").
     pub quote_ccy: Option<String>,
-    /// Optional instrument type from symbol search/provider (e.g., "EQUITY", "CRYPTO")
+    /// Optional instrument type from symbol search/provider (e.g., "EQUITY", "CRYPTO").
     pub instrument_type: Option<String>,
 }
 
@@ -242,10 +242,10 @@ pub struct NewActivity {
     pub id: Option<String>,
     pub account_id: String,
 
-    /// Symbol input - consolidates id, symbol, exchangeMic, kind, name, quoteMode
+    /// Asset resolution input. Accepts the old `symbol` JSON field during transition.
     /// Optional for cash activities which don't require an asset
-    #[serde(alias = "asset")]
-    pub symbol: Option<SymbolInput>,
+    #[serde(alias = "symbol")]
+    pub asset: Option<AssetResolutionInput>,
 
     pub activity_type: String,
     pub subtype: Option<String>, // Semantic variation (DRIP, STAKING_REWARD, etc.)
@@ -314,38 +314,50 @@ impl NewActivity {
         Ok(())
     }
 
-    // Helper methods to extract fields from nested `symbol`
+    // Helper methods to extract fields from nested asset resolution input.
+
+    pub fn get_asset_resolution_id(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.id.as_deref())
+    }
+
+    pub fn get_asset_symbol(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.symbol.as_deref())
+    }
+
+    pub fn get_asset_exchange_mic(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.exchange_mic.as_deref())
+    }
 
     pub fn get_symbol_id(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.id.as_deref())
+        self.get_asset_resolution_id()
     }
 
     pub fn get_symbol_code(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.symbol.as_deref())
+        self.get_asset_symbol()
     }
 
     pub fn get_exchange_mic(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.exchange_mic.as_deref())
+        self.get_asset_exchange_mic()
     }
 
     pub fn get_kind(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.kind.as_deref())
+        self.asset.as_ref().and_then(|a| a.kind.as_deref())
     }
 
     pub fn get_name(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.name.as_deref())
+        self.asset.as_ref().and_then(|a| a.name.as_deref())
     }
 
     pub fn get_quote_mode(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.quote_mode.as_deref())
+        self.asset.as_ref().and_then(|a| a.quote_mode.as_deref())
     }
 
     pub fn get_quote_ccy(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.quote_ccy.as_deref())
+        self.asset.as_ref().and_then(|a| a.quote_ccy.as_deref())
     }
 
     pub fn get_instrument_type(&self) -> Option<&str> {
-        self.symbol
+        self.asset
             .as_ref()
             .and_then(|a| a.instrument_type.as_deref())
     }
@@ -358,10 +370,10 @@ pub struct ActivityUpdate {
     pub id: String,
     pub account_id: String,
 
-    /// Symbol input - consolidates id, symbol, exchangeMic, kind, name, quoteMode
+    /// Asset resolution input. Accepts the old `symbol` JSON field during transition.
     /// Optional for cash activities which don't require an asset
-    #[serde(alias = "asset")]
-    pub symbol: Option<SymbolInput>,
+    #[serde(alias = "symbol")]
+    pub asset: Option<AssetResolutionInput>,
 
     pub activity_type: String,
     pub subtype: Option<String>, // Semantic variation (DRIP, STAKING_REWARD, etc.)
@@ -422,38 +434,50 @@ impl ActivityUpdate {
         Ok(())
     }
 
-    // Helper methods to extract fields from nested `symbol`
+    // Helper methods to extract fields from nested asset resolution input.
+
+    pub fn get_asset_resolution_id(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.id.as_deref())
+    }
+
+    pub fn get_asset_symbol(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.symbol.as_deref())
+    }
+
+    pub fn get_asset_exchange_mic(&self) -> Option<&str> {
+        self.asset.as_ref().and_then(|a| a.exchange_mic.as_deref())
+    }
 
     pub fn get_symbol_id(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.id.as_deref())
+        self.get_asset_resolution_id()
     }
 
     pub fn get_symbol_code(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.symbol.as_deref())
+        self.get_asset_symbol()
     }
 
     pub fn get_exchange_mic(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.exchange_mic.as_deref())
+        self.get_asset_exchange_mic()
     }
 
     pub fn get_kind(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.kind.as_deref())
+        self.asset.as_ref().and_then(|a| a.kind.as_deref())
     }
 
     pub fn get_name(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.name.as_deref())
+        self.asset.as_ref().and_then(|a| a.name.as_deref())
     }
 
     pub fn get_quote_mode(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.quote_mode.as_deref())
+        self.asset.as_ref().and_then(|a| a.quote_mode.as_deref())
     }
 
     pub fn get_quote_ccy(&self) -> Option<&str> {
-        self.symbol.as_ref().and_then(|a| a.quote_ccy.as_deref())
+        self.asset.as_ref().and_then(|a| a.quote_ccy.as_deref())
     }
 
     pub fn get_instrument_type(&self) -> Option<&str> {
-        self.symbol
+        self.asset
             .as_ref()
             .and_then(|a| a.instrument_type.as_deref())
     }
@@ -532,6 +556,7 @@ pub struct ActivityDetails {
     // Sync/source metadata
     pub source_system: Option<String>,
     pub source_record_id: Option<String>,
+    pub source_group_id: Option<String>,
     pub idempotency_key: Option<String>,
     pub import_run_id: Option<String>,
     pub is_user_modified: bool,
@@ -1486,19 +1511,22 @@ pub struct PrepareActivitiesResult {
 
 impl From<ActivityImport> for NewActivity {
     fn from(import: ActivityImport) -> Self {
-        let symbol = if import.symbol.is_empty() {
-            import.asset_id.as_ref().map(|asset_id| SymbolInput {
-                id: Some(asset_id.clone()),
-                symbol: None,
-                exchange_mic: None,
-                kind: None,
-                name: import.symbol_name.clone(),
-                quote_mode: import.quote_mode.clone(),
-                quote_ccy: import.quote_ccy.clone(),
-                instrument_type: import.instrument_type.clone(),
-            })
+        let asset = if import.symbol.is_empty() {
+            import
+                .asset_id
+                .as_ref()
+                .map(|asset_id| AssetResolutionInput {
+                    id: Some(asset_id.clone()),
+                    symbol: None,
+                    exchange_mic: None,
+                    kind: None,
+                    name: import.symbol_name.clone(),
+                    quote_mode: import.quote_mode.clone(),
+                    quote_ccy: import.quote_ccy.clone(),
+                    instrument_type: import.instrument_type.clone(),
+                })
         } else {
-            Some(SymbolInput {
+            Some(AssetResolutionInput {
                 id: import.asset_id.clone(),
                 symbol: Some(import.symbol),
                 exchange_mic: import.exchange_mic,
@@ -1519,7 +1547,7 @@ impl From<ActivityImport> for NewActivity {
         NewActivity {
             id: import.id,
             account_id: import.account_id.unwrap_or_default(),
-            symbol,
+            asset,
             activity_type: import.activity_type,
             subtype: import.subtype,
             activity_date: import.date,

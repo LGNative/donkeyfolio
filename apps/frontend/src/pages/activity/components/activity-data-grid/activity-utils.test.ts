@@ -352,12 +352,112 @@ describe("activity-utils", () => {
       );
 
       expect(result.creates).toHaveLength(1);
-      expect(result.creates[0].symbol).toEqual(
+      expect(result.creates[0].asset).toEqual(
         expect.objectContaining({
           symbol: "VWRPL.XC",
           exchangeMic: "XLON",
           quoteCcy: "GBP",
           instrumentType: "EQUITY",
+        }),
+      );
+    });
+
+    it("should preserve explicit idempotency keys for new manual duplicates", () => {
+      const transactions: LocalTransaction[] = [
+        createMockTransaction({
+          id: "temp-new-1",
+          isNew: true,
+          idempotencyKey: "manual-duplicate-123",
+        }),
+      ];
+      const dirtyIds = new Set(["temp-new-1"]);
+
+      const result = buildSavePayload(
+        transactions,
+        dirtyIds,
+        new Set(),
+        mockResolveTransactionCurrency,
+        dirtyCurrencyLookup,
+        assetCurrencyLookup,
+        "USD",
+      );
+
+      expect(result.creates).toHaveLength(1);
+      expect(result.creates[0].idempotencyKey).toBe("manual-duplicate-123");
+    });
+
+    it("should include existing asset id selected from search for new market activities", () => {
+      const transactions: LocalTransaction[] = [
+        createMockTransaction({
+          id: "temp-new-1",
+          isNew: true,
+          assetId: "",
+          assetSymbol: "AAPL",
+          exchangeMic: "XNAS",
+          pendingAssetId: "SEC:AAPL:XNAS",
+          pendingQuoteCcy: "USD",
+          pendingInstrumentType: "EQUITY",
+        }),
+      ];
+      const dirtyIds = new Set(["temp-new-1"]);
+
+      const result = buildSavePayload(
+        transactions,
+        dirtyIds,
+        new Set(),
+        mockResolveTransactionCurrency,
+        dirtyCurrencyLookup,
+        assetCurrencyLookup,
+        "USD",
+      );
+
+      expect(result.creates).toHaveLength(1);
+      expect(result.creates[0].asset).toEqual(
+        expect.objectContaining({
+          id: "SEC:AAPL:XNAS",
+          symbol: "AAPL",
+          exchangeMic: "XNAS",
+          quoteCcy: "USD",
+          instrumentType: "EQUITY",
+        }),
+      );
+    });
+
+    it("should send asset identity when same symbol changes exchange", () => {
+      const transactions: LocalTransaction[] = [
+        createMockTransaction({
+          id: "existing-1",
+          isNew: false,
+          assetSymbol: "FBTC",
+          exchangeMic: "XTSE",
+          _originalAssetSymbol: "FBTC",
+          _originalExchangeMic: "NEOE",
+          _originalAssetId: "SEC:FBTC:NEOE",
+          pendingAssetId: "SEC:FBTC:XTSE",
+          pendingQuoteCcy: "CAD",
+          pendingInstrumentType: "ETF",
+        }),
+      ];
+      const dirtyIds = new Set(["existing-1"]);
+
+      const result = buildSavePayload(
+        transactions,
+        dirtyIds,
+        new Set(),
+        mockResolveTransactionCurrency,
+        dirtyCurrencyLookup,
+        assetCurrencyLookup,
+        "USD",
+      );
+
+      expect(result.updates).toHaveLength(1);
+      expect(result.updates[0].asset).toEqual(
+        expect.objectContaining({
+          id: "SEC:FBTC:XTSE",
+          symbol: "FBTC",
+          exchangeMic: "XTSE",
+          quoteCcy: "CAD",
+          instrumentType: "ETF",
         }),
       );
     });
@@ -387,7 +487,7 @@ describe("activity-utils", () => {
       );
 
       expect(result.updates).toHaveLength(1);
-      expect(result.updates[0].symbol).toEqual(
+      expect(result.updates[0].asset).toEqual(
         expect.objectContaining({
           id: "asset-1",
           quoteCcy: "GBP",
@@ -423,7 +523,7 @@ describe("activity-utils", () => {
       );
 
       expect(result.creates).toHaveLength(1);
-      expect(result.creates[0].symbol).toEqual(
+      expect(result.creates[0].asset).toEqual(
         expect.objectContaining({
           symbol: "VWRPL.XC",
           exchangeMic: "XLON",
@@ -431,8 +531,8 @@ describe("activity-utils", () => {
           instrumentType: "EQUITY",
         }),
       );
-      expect(result.creates[0].symbol?.kind).toBeUndefined();
-      expect(result.creates[0].symbol?.name).toBeUndefined();
+      expect(result.creates[0].asset?.kind).toBeUndefined();
+      expect(result.creates[0].asset?.name).toBeUndefined();
     });
 
     it("should include pending delete IDs", () => {
@@ -521,7 +621,7 @@ describe("activity-utils", () => {
 
       // Backend now generates CASH:{currency} IDs for cash activities
       // Frontend doesn't set symbol for cash activities
-      expect(result.updates[0].symbol).toBeUndefined();
+      expect(result.updates[0].asset).toBeUndefined();
     });
 
     it("should not force account currency for securities transfers", () => {
@@ -548,7 +648,7 @@ describe("activity-utils", () => {
       );
 
       expect(result.updates[0].currency).toBeUndefined();
-      expect(result.updates[0].symbol).toEqual(
+      expect(result.updates[0].asset).toEqual(
         expect.objectContaining({
           symbol: "AAPL",
         }),

@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "donkeyfolio"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8051,7 +8051,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-ai"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8065,6 +8065,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -8075,7 +8076,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-connect"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -8093,7 +8094,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-core"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8138,7 +8139,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-device-sync"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -8162,7 +8163,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-market-data"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8184,7 +8185,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-server"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8231,7 +8232,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-storage-sqlite"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "async-trait",

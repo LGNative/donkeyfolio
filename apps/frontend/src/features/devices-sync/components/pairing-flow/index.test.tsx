@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PairingFlow } from "./index";
 
@@ -22,6 +22,8 @@ vi.mock("@/adapters", () => ({
     debug: vi.fn(),
     trace: vi.fn(),
   },
+  backupDatabase: vi.fn(),
+  openFileSaveDialog: vi.fn(),
 }));
 
 describe("PairingFlow", () => {
@@ -77,5 +79,33 @@ describe("PairingFlow", () => {
         "Sync needs to be restored from this device before you can connect another device.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows claimer overwrite prompt and approves overwrite once", () => {
+    const approveOverwrite = vi.fn();
+    hookMocks.useSyncStatus.mockReturnValue({
+      device: { trustState: "untrusted" },
+    });
+    hookMocks.usePairingClaimer.mockReturnValue({
+      step: "overwrite_required",
+      error: null,
+      sas: null,
+      overwriteInfo: {
+        localRows: 1,
+        nonEmptyTables: [{ table: "accounts", rows: 1 }],
+      },
+      isApprovingOverwrite: false,
+      submitCode: vi.fn(),
+      approveOverwrite,
+      cancel: vi.fn(),
+      retry: vi.fn(),
+    });
+    hookMocks.usePairingIssuer.mockReturnValue({});
+
+    render(<PairingFlow />);
+
+    expect(screen.getByText("Replace data on this device?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Replace & Sync" }));
+    expect(approveOverwrite).toHaveBeenCalledTimes(1);
   });
 });

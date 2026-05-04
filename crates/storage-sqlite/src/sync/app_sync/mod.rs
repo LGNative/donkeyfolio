@@ -14,6 +14,5 @@ pub use model::{
 };
 pub(crate) use outbox_projector::{flush_projected_outbox, ProjectedChange};
 pub use repository::{
-    insert_outbox_event, AppSyncRepository, OutboxWriteRequest, SyncLocalDataSummary,
-    SyncTableRowCount,
+    AppSyncRepository, OutboxWriteRequest, SyncLocalDataSummary, SyncTableRowCount,
 };

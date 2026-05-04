@@ -265,7 +265,7 @@ mod tests {
         NewActivity {
             id: None,
             account_id: "account-1".to_string(),
-            symbol: Some(SymbolInput {
+            asset: Some(AssetResolutionInput {
                 id: Some("AAPL".to_string()),
                 ..Default::default()
             }),
@@ -361,7 +361,7 @@ mod tests {
     #[test]
     fn test_new_activity_allows_null_asset_id() {
         let mut activity = create_test_new_activity();
-        activity.symbol = None;
+        activity.asset = None;
         activity.activity_type = "DEPOSIT".to_string();
 
         let result = activity.validate();
@@ -376,7 +376,7 @@ mod tests {
         ActivityUpdate {
             id: "activity-1".to_string(),
             account_id: "account-1".to_string(),
-            symbol: Some(SymbolInput {
+            asset: Some(AssetResolutionInput {
                 id: Some("AAPL".to_string()),
                 ..Default::default()
             }),
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn test_activity_update_allows_null_asset_id() {
         let mut update = create_test_activity_update();
-        update.symbol = None;
+        update.asset = None;
         update.activity_type = "DEPOSIT".to_string();
 
         let result = update.validate();
@@ -467,6 +467,47 @@ mod tests {
         );
         assert_eq!(parsed.fee, Some(None));
         assert_eq!(parsed.amount, None);
+    }
+
+    #[test]
+    fn test_activity_inputs_accept_asset_and_legacy_symbol_fields() {
+        let create_with_asset = json!({
+            "accountId": "account-1",
+            "asset": { "id": "asset-1", "symbol": "AAPL", "exchangeMic": "XNAS" },
+            "activityType": "BUY",
+            "activityDate": "2024-01-15",
+            "currency": "USD"
+        });
+        let parsed_create: NewActivity = serde_json::from_value(create_with_asset).unwrap();
+        assert_eq!(
+            parsed_create
+                .asset
+                .as_ref()
+                .and_then(|asset| asset.id.as_deref()),
+            Some("asset-1")
+        );
+        assert_eq!(parsed_create.get_symbol_code(), Some("AAPL"));
+        assert_eq!(parsed_create.get_exchange_mic(), Some("XNAS"));
+
+        let update_with_legacy_symbol = json!({
+            "id": "activity-1",
+            "accountId": "account-1",
+            "symbol": { "id": "asset-2", "symbol": "MSFT", "exchangeMic": "XNAS" },
+            "activityType": "BUY",
+            "activityDate": "2024-01-15",
+            "currency": "USD"
+        });
+        let parsed_update: ActivityUpdate =
+            serde_json::from_value(update_with_legacy_symbol).unwrap();
+        assert_eq!(
+            parsed_update
+                .asset
+                .as_ref()
+                .and_then(|asset| asset.id.as_deref()),
+            Some("asset-2")
+        );
+        assert_eq!(parsed_update.get_symbol_code(), Some("MSFT"));
+        assert_eq!(parsed_update.get_exchange_mic(), Some("XNAS"));
     }
 
     #[test]
@@ -624,7 +665,7 @@ mod tests {
         let activity = NewActivity {
             id: Some("a1".to_string()),
             account_id: "acc-1".to_string(),
-            symbol: Some(SymbolInput {
+            asset: Some(AssetResolutionInput {
                 symbol: Some("AZN".to_string()),
                 exchange_mic: Some("XLON".to_string()),
                 quote_ccy: Some("GBp".to_string()),
@@ -655,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn test_activity_import_to_new_activity_preserves_symbol_inputs() {
+    fn test_activity_import_to_new_activity_preserves_asset_resolution_inputs() {
         let import = ActivityImport {
             id: Some("imp-1".to_string()),
             date: "2024-01-15".to_string(),
@@ -689,10 +730,10 @@ mod tests {
         };
 
         let converted = NewActivity::from(import);
-        let symbol = converted.symbol.expect("symbol should be present");
-        assert_eq!(symbol.quote_ccy.as_deref(), Some("GBp"));
-        assert_eq!(symbol.instrument_type.as_deref(), Some("EQUITY"));
-        assert_eq!(symbol.exchange_mic.as_deref(), Some("XLON"));
-        assert_eq!(symbol.quote_mode.as_deref(), Some("MANUAL"));
+        let asset = converted.asset.expect("asset should be present");
+        assert_eq!(asset.quote_ccy.as_deref(), Some("GBp"));
+        assert_eq!(asset.instrument_type.as_deref(), Some("EQUITY"));
+        assert_eq!(asset.exchange_mic.as_deref(), Some("XLON"));
+        assert_eq!(asset.quote_mode.as_deref(), Some("MANUAL"));
     }
 }

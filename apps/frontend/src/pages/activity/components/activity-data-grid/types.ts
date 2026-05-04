@@ -1,4 +1,4 @@
-import type { ActivityDetails } from "@/lib/types";
+import type { ActivityDetails, AssetResolutionInput } from "@/lib/types";
 
 /**
  * Represents a local transaction that extends ActivityDetails with draft state
@@ -14,10 +14,16 @@ export interface LocalTransaction extends ActivityDetails {
   pendingQuoteCcy?: string;
   /** Pending symbol instrument type hint from search/provider (e.g., "EQUITY") */
   pendingInstrumentType?: string;
+  /** Persisted asset id selected from symbol search, if the result already exists */
+  pendingAssetId?: string;
   /** Whether this transfer is external (from/to outside tracked accounts). Stored in metadata.flow.is_external */
   isExternal?: boolean;
   /** Original asset symbol from server - used to detect symbol changes for updates */
   _originalAssetSymbol?: string;
+  /** Original exchange MIC from server - used to detect asset identity changes for updates */
+  _originalExchangeMic?: string;
+  /** Original instrument type from server - used to detect asset identity changes for updates */
+  _originalInstrumentType?: string;
   /** Original asset ID from server - sent for updates when symbol hasn't changed */
   _originalAssetId?: string;
 }
@@ -45,6 +51,8 @@ export function toLocalTransaction(activity: ActivityDetails): LocalTransaction 
     isExternal,
     // Capture original values for change detection during updates
     _originalAssetSymbol: activity.assetSymbol,
+    _originalExchangeMic: activity.exchangeMic,
+    _originalInstrumentType: activity.instrumentType,
     _originalAssetId: activity.assetId,
   };
 }
@@ -137,51 +145,29 @@ interface ActivityBasePayload {
 }
 
 /**
- * Symbol input for activity payloads - matches backend's SymbolInput struct
- */
-export interface SymbolInput {
-  /** Asset ID - optional, for backward compatibility with existing assets */
-  id?: string;
-  /** Symbol (e.g., "AAPL", "BTC") - used to generate canonical asset ID */
-  symbol?: string;
-  /** Exchange MIC code (e.g., "XNAS", "XTSE") for securities */
-  exchangeMic?: string;
-  /** Asset kind hint (e.g., "SECURITY", "CRYPTO") - if not provided, inferred */
-  kind?: string;
-  /** Asset name for custom/manual assets */
-  name?: string;
-  /** Quote mode: "MARKET" or "MANUAL" - controls how asset is priced */
-  quoteMode?: string;
-  /** Optional quote currency hint from symbol search/provider (e.g., "GBp") */
-  quoteCcy?: string;
-  /** Optional instrument type hint from symbol search/provider (e.g., "EQUITY") */
-  instrumentType?: string;
-}
-
-/**
  * Payload for creating a NEW activity
  *
- * Symbol identification:
- * - Send symbol.symbol + symbol.exchangeMic, backend generates the canonical ID
- * - For CASH activities: don't send symbol, backend generates CASH:{currency}
- *
- * IMPORTANT: symbol.id is NOT allowed for creates - backend generates canonical IDs
+ * Asset identification:
+ * - Send asset.symbol + asset.exchangeMic for natural identity resolution
+ * - For CASH activities: don't send asset, backend generates CASH:{currency}
  */
 export interface ActivityCreatePayload extends ActivityBasePayload {
-  /** Symbol input - consolidates id, symbol, exchangeMic, kind, name, quoteMode */
-  symbol?: SymbolInput;
+  /** Explicit key for intentional manual duplicates. */
+  idempotencyKey?: string;
+  /** Asset resolution input - id plus natural identity and creation hints */
+  asset?: AssetResolutionInput;
 }
 
 /**
  * Payload for updating an EXISTING activity
  *
- * Symbol identification:
- * - Send symbol.id for existing assets (backward compatibility)
- * - Or send symbol.symbol + symbol.exchangeMic to re-resolve the asset
+ * Asset identification:
+ * - Send asset.id for existing assets
+ * - Or send asset.symbol + asset.exchangeMic to re-resolve the asset
  */
 export interface ActivityUpdatePayload extends ActivityBasePayload {
-  /** Symbol input - consolidates id, symbol, exchangeMic, kind, name, quoteMode */
-  symbol?: SymbolInput;
+  /** Asset resolution input - id plus natural identity and creation hints */
+  asset?: AssetResolutionInput;
 }
 
 /**

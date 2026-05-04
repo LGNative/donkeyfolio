@@ -1,4 +1,5 @@
 import { ActivityType, QuoteMode } from "@/lib/constants";
+import { buildAssetResolutionInput } from "@/lib/asset-resolution-input";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { Account, ActivityBulkMutationRequest, ActivityCreate } from "@/lib/types";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -134,15 +135,16 @@ export const BulkHoldingsModal = ({
         accountId: data.accountId,
         activityType: ActivityType.TRANSFER_IN,
         activityDate: activityDate.toISOString(),
-        symbol: {
-          symbol: (holding.assetId || holding.ticker || "").toUpperCase().trim(),
+        asset: buildAssetResolutionInput({
+          id: holding.assetId,
+          symbol: (holding.ticker || holding.assetId || "").toUpperCase().trim(),
           exchangeMic: holding.exchangeMic || undefined,
           name: holding.name?.trim() || undefined,
           kind: holding.assetKind?.trim() || undefined,
           quoteMode: holding.quoteMode ?? QuoteMode.MARKET,
           quoteCcy: holding.symbolQuoteCcy || undefined,
           instrumentType: holding.symbolInstrumentType || undefined,
-        },
+        }),
         quantity: Number(holding.sharesOwned),
         unitPrice: Number(holding.averageCost),
         // Securities transfers derive value from qty × unitPrice at display time.

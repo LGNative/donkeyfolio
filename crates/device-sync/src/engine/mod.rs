@@ -1,6 +1,7 @@
 use chrono::Utc;
 use log::{debug, info, warn};
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 use wealthfolio_core::sync::{SyncEntity, SyncOperation};
 
@@ -15,14 +16,26 @@ pub use ports::{
     TransportError,
 };
 pub use runtime::{
-    DeviceSyncRuntimeState, OverwriteInfo, OverwriteTableInfo, PairingFlowPhase,
-    PairingFlowResponse, PairingFlowState,
+    DeviceSyncRuntimeState, DeviceSyncWakeHandle, OverwriteInfo, OverwriteTableInfo,
+    PairingFlowPhase, PairingFlowResponse, PairingFlowState,
 };
 
-/// Foreground pull cadence in seconds.
-pub const DEVICE_SYNC_FOREGROUND_INTERVAL_SECS: u64 = 5 * 60;
+/// Default periodic sync cadence for the background engine.
+pub const DEVICE_SYNC_PERIODIC_INTERVAL_SECS: u64 = 5 * 60;
 /// Maximum jitter (seconds) added to periodic cycle intervals.
 pub const DEVICE_SYNC_INTERVAL_JITTER_SECS: u64 = 5;
+/// Quiet period after a local wake signal before the next cycle starts.
+pub const DEVICE_SYNC_WAKE_DEBOUNCE_MS: u64 = 1_000;
+/// Maximum time a continuous write stream can keep delaying a wake-triggered cycle.
+pub const DEVICE_SYNC_WAKE_DEBOUNCE_MAX_WAIT_MS: u64 = 30_000;
+/// Number of repeated not_ready/config_error cycles before extending the periodic delay.
+pub const DEVICE_SYNC_NOT_READY_BACKOFF_AFTER: u32 = 5;
+/// Maximum repeated not_ready/config_error background delay.
+pub const DEVICE_SYNC_NOT_READY_BACKOFF_CAP_SECS: u64 = 60 * 60;
+/// Cadence for local sync outbox hygiene while the background engine stays alive.
+pub const DEVICE_SYNC_OUTBOX_PRUNE_INTERVAL_SECS: u64 = 24 * 60 * 60;
+pub const DEVICE_SYNC_SENT_OUTBOX_RETENTION_DAYS: i64 = 7;
+pub const DEVICE_SYNC_DEAD_OUTBOX_RETENTION_DAYS: i64 = 30;
 
 /// Exponential backoff in seconds with cap.
 pub fn backoff_seconds(consecutive_failures: i32) -> i64 {
@@ -47,6 +60,7 @@ fn sync_entity_name(entity: &SyncEntity) -> &'static str {
         SyncEntity::ActivityImportProfile => "activity_import_profile",
         SyncEntity::ImportTemplate => "import_template",
         SyncEntity::Goal => "goal",
+        SyncEntity::GoalPlan => "goal_plan",
         SyncEntity::GoalsAllocation => "goals_allocation",
         SyncEntity::AiThread => "ai_thread",
         SyncEntity::AiMessage => "ai_message",
@@ -85,6 +99,18 @@ fn parse_event_operation(event_type: &str) -> Option<SyncOperation> {
         "delete" => Some(SyncOperation::Delete),
         _ => None,
     }
+}
+
+fn sync_identity_is_revoked(identity: Option<SyncIdentity>) -> bool {
+    identity
+        .as_ref()
+        .is_some_and(|identity| identity.root_key.is_none() && identity.device_id.is_some())
+}
+
+fn sync_identity_can_run_background(identity: Option<SyncIdentity>) -> bool {
+    identity
+        .as_ref()
+        .is_some_and(|identity| identity.device_id.is_some() && identity.root_key.is_some())
 }
 
 fn millis_until_rfc3339(target: &str) -> Option<u64> {
@@ -1072,7 +1098,7 @@ async fn compute_cycle_delay_ms<P>(ports: &P, jitter_ms: u64) -> u64
 where
     P: OutboxStore + ReplayStore + Send + Sync,
 {
-    let mut delay_ms = DEVICE_SYNC_FOREGROUND_INTERVAL_SECS.saturating_mul(1000) + jitter_ms;
+    let mut delay_ms = DEVICE_SYNC_PERIODIC_INTERVAL_SECS.saturating_mul(1000) + jitter_ms;
 
     if let Ok(engine_status) = ports.get_engine_status().await {
         if let Some(next_retry_at) = engine_status.next_retry_at.as_deref() {
@@ -1089,13 +1115,93 @@ where
     delay_ms
 }
 
-pub async fn run_background_loop<P>(ports: Arc<P>)
+fn not_ready_backoff_ms(consecutive_not_ready: u32) -> u64 {
+    if consecutive_not_ready <= DEVICE_SYNC_NOT_READY_BACKOFF_AFTER {
+        return 0;
+    }
+
+    let exponent = (consecutive_not_ready - DEVICE_SYNC_NOT_READY_BACKOFF_AFTER).min(4);
+    let delay_secs = DEVICE_SYNC_PERIODIC_INTERVAL_SECS
+        .saturating_mul(1_u64 << exponent)
+        .min(DEVICE_SYNC_NOT_READY_BACKOFF_CAP_SECS);
+    delay_secs.saturating_mul(1000)
+}
+
+async fn prune_sync_outbox_if_due<P>(ports: &P, next_prune_at: &mut tokio::time::Instant)
+where
+    P: ReplayStore + Send + Sync,
+{
+    let now_instant = tokio::time::Instant::now();
+    if now_instant < *next_prune_at {
+        return;
+    }
+
+    *next_prune_at = now_instant + Duration::from_secs(DEVICE_SYNC_OUTBOX_PRUNE_INTERVAL_SECS);
+    let now = Utc::now();
+    match ports
+        .prune_sync_outbox(
+            now - chrono::Duration::days(DEVICE_SYNC_SENT_OUTBOX_RETENTION_DAYS),
+            now - chrono::Duration::days(DEVICE_SYNC_DEAD_OUTBOX_RETENTION_DAYS),
+        )
+        .await
+    {
+        Ok(deleted) if deleted > 0 => {
+            debug!("[DeviceSync] Pruned {} old sync outbox row(s)", deleted);
+        }
+        Ok(_) => {}
+        Err(err) => warn!("[DeviceSync] Failed to prune sync outbox: {}", err),
+    }
+}
+
+async fn wait_for_wake_debounce(runtime: &DeviceSyncRuntimeState) {
+    wait_for_wake_debounce_with_limits(
+        runtime,
+        Duration::from_millis(DEVICE_SYNC_WAKE_DEBOUNCE_MS),
+        Duration::from_millis(DEVICE_SYNC_WAKE_DEBOUNCE_MAX_WAIT_MS),
+    )
+    .await;
+}
+
+async fn wait_for_wake_debounce_with_limits(
+    runtime: &DeviceSyncRuntimeState,
+    quiet_for: Duration,
+    max_wait: Duration,
+) {
+    let quiet_sleep = tokio::time::sleep(quiet_for);
+    let max_sleep = tokio::time::sleep(max_wait);
+    tokio::pin!(quiet_sleep);
+    tokio::pin!(max_sleep);
+
+    loop {
+        tokio::select! {
+            _ = &mut max_sleep => break,
+            _ = &mut quiet_sleep => break,
+            _ = runtime.wait_for_sync_work() => {
+                quiet_sleep.as_mut().reset(tokio::time::Instant::now() + quiet_for);
+            }
+        }
+    }
+}
+
+pub async fn run_background_loop<P>(runtime: Arc<DeviceSyncRuntimeState>, ports: Arc<P>)
 where
     P: OutboxStore + ReplayStore + SyncTransport + CredentialStore + Send + Sync,
 {
     let mut consecutive_not_ready: u32 = 0;
+    let mut next_prune_at =
+        tokio::time::Instant::now() + Duration::from_secs(DEVICE_SYNC_OUTBOX_PRUNE_INTERVAL_SECS);
     loop {
-        let cycle_result = run_sync_cycle(ports.as_ref(), false).await;
+        let identity = ports.get_sync_identity();
+        if !sync_identity_can_run_background(identity.clone()) {
+            if sync_identity_is_revoked(identity) {
+                info!("[DeviceSync] Device appears revoked. Stopping background engine.");
+            } else {
+                debug!("[DeviceSync] Sync identity is not configured. Stopping background engine.");
+            }
+            break;
+        }
+
+        let cycle_result = runtime.run_cycle_serialized(ports.as_ref(), false).await;
         if let Err(err) = &cycle_result {
             warn!("[DeviceSync] Background cycle failed: {}", err);
             consecutive_not_ready = 0;
@@ -1111,27 +1217,36 @@ where
             );
             if result.status == "not_ready" || result.status == "config_error" {
                 consecutive_not_ready += 1;
-                if let Some(identity) = ports.get_sync_identity() {
-                    if identity.root_key.is_none() && identity.device_id.is_some() {
-                        info!("[DeviceSync] Device appears revoked. Stopping background engine.");
-                        break;
-                    }
+                if sync_identity_is_revoked(ports.get_sync_identity()) {
+                    info!("[DeviceSync] Device appears revoked. Stopping background engine.");
+                    break;
                 }
-                if consecutive_not_ready >= 5 {
+                if consecutive_not_ready == 5 {
                     info!(
-                        "[DeviceSync] {} consecutive not_ready/config_error cycles. Stopping background engine.",
+                        "[DeviceSync] {} consecutive not_ready/config_error cycles. Keeping background engine alive.",
                         consecutive_not_ready
                     );
-                    break;
                 }
             } else {
                 consecutive_not_ready = 0;
             }
         }
 
+        prune_sync_outbox_if_due(ports.as_ref(), &mut next_prune_at).await;
+
         let jitter_ms = compute_jitter_ms();
-        let delay_ms = compute_cycle_delay_ms(ports.as_ref(), jitter_ms).await;
-        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        let mut delay_ms = compute_cycle_delay_ms(ports.as_ref(), jitter_ms).await;
+        let not_ready_delay_ms = not_ready_backoff_ms(consecutive_not_ready);
+        if not_ready_delay_ms > 0 {
+            delay_ms = delay_ms.max(not_ready_delay_ms);
+        }
+        let woke_for_work = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => false,
+            _ = runtime.wait_for_sync_work() => true,
+        };
+        if woke_for_work {
+            wait_for_wake_debounce(&runtime).await;
+        }
     }
 }
 
@@ -1139,6 +1254,7 @@ where
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use wealthfolio_core::sync::SyncEngineStatus;
@@ -1156,6 +1272,10 @@ mod tests {
         persisted_trust_states: Arc<Mutex<Vec<String>>>,
         cycle_outcomes: Arc<Mutex<Vec<String>>>,
         engine_errors: Arc<Mutex<Vec<String>>>,
+        prune_calls: Arc<AtomicUsize>,
+        reconcile_delay_ms: u64,
+        active_reconcile_count: Arc<AtomicUsize>,
+        max_active_reconcile_count: Arc<AtomicUsize>,
     }
 
     impl TestPorts {
@@ -1176,7 +1296,16 @@ mod tests {
                 persisted_trust_states: Arc::new(Mutex::new(Vec::new())),
                 cycle_outcomes: Arc::new(Mutex::new(Vec::new())),
                 engine_errors: Arc::new(Mutex::new(Vec::new())),
+                prune_calls: Arc::new(AtomicUsize::new(0)),
+                reconcile_delay_ms: 0,
+                active_reconcile_count: Arc::new(AtomicUsize::new(0)),
+                max_active_reconcile_count: Arc::new(AtomicUsize::new(0)),
             }
+        }
+
+        fn with_reconcile_delay_ms(mut self, delay_ms: u64) -> Self {
+            self.reconcile_delay_ms = delay_ms;
+            self
         }
     }
 
@@ -1282,6 +1411,15 @@ mod tests {
             Ok(())
         }
 
+        async fn prune_sync_outbox(
+            &self,
+            _sent_before: chrono::DateTime<chrono::Utc>,
+            _dead_before: chrono::DateTime<chrono::Utc>,
+        ) -> Result<usize, String> {
+            self.prune_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(0)
+        }
+
         async fn prune_applied_events_up_to_seq(&self, _seq: i64) -> Result<(), String> {
             Ok(())
         }
@@ -1341,6 +1479,24 @@ mod tests {
             _token: &str,
             _device_id: &str,
         ) -> Result<crate::ReconcileReadyStateResponse, TransportError> {
+            let active = self.active_reconcile_count.fetch_add(1, Ordering::SeqCst) + 1;
+            loop {
+                let current_max = self.max_active_reconcile_count.load(Ordering::SeqCst);
+                if active <= current_max {
+                    break;
+                }
+                if self
+                    .max_active_reconcile_count
+                    .compare_exchange(current_max, active, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+            if self.reconcile_delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.reconcile_delay_ms)).await;
+            }
+            self.active_reconcile_count.fetch_sub(1, Ordering::SeqCst);
             Ok(self.reconcile_response.clone())
         }
     }
@@ -1399,6 +1555,291 @@ mod tests {
             ports.cycle_outcomes.lock().await.as_slice(),
             ["config_error"]
         );
+    }
+
+    async fn wait_for_cycle_outcomes(ports: &TestPorts, count: usize, timeout_ms: u64) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            if ports.cycle_outcomes.lock().await.len() >= count {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {count} cycle outcomes"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
+    async fn wait_for_active_reconcile(ports: &TestPorts, timeout_ms: u64) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            if ports.active_reconcile_count.load(Ordering::SeqCst) > 0 {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for active reconcile"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn wait_for_background_stopped(runtime: &DeviceSyncRuntimeState, timeout_ms: u64) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            if !runtime.is_background_running().await {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for background loop to stop"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn background_loop_wakes_from_long_delay_when_notified() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: Some(1),
+        };
+        let ports = Arc::new(TestPorts::new(Some(identity), Ok(SyncState::Ready)));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_cycle_outcomes(ports.as_ref(), 1, 1_000).await;
+
+        runtime.notify_sync_work_available();
+        wait_for_cycle_outcomes(ports.as_ref(), 2, 3_000).await;
+        runtime.ensure_background_stopped().await;
+    }
+
+    #[tokio::test]
+    async fn repeated_wake_notifications_are_debounced() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: Some(1),
+        };
+        let ports = Arc::new(TestPorts::new(Some(identity), Ok(SyncState::Ready)));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_cycle_outcomes(ports.as_ref(), 1, 1_000).await;
+
+        runtime.notify_sync_work_available();
+        runtime.notify_sync_work_available();
+        runtime.notify_sync_work_available();
+
+        wait_for_cycle_outcomes(ports.as_ref(), 2, 3_000).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_300)).await;
+        assert_eq!(ports.cycle_outcomes.lock().await.len(), 2);
+        runtime.ensure_background_stopped().await;
+    }
+
+    #[tokio::test]
+    async fn wake_debounce_has_max_wait_even_when_writes_continue() {
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+        let notifier = Arc::clone(&runtime);
+        let spammer = tokio::spawn(async move {
+            loop {
+                notifier.notify_sync_work_available();
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        });
+        tokio::task::yield_now().await;
+
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            wait_for_wake_debounce_with_limits(
+                runtime.as_ref(),
+                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(120),
+            ),
+        )
+        .await
+        .expect("debounce should stop at max wait");
+        spammer.abort();
+
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(100),
+            "continuous wake stream should be capped by max wait, not quiet sleep"
+        );
+    }
+
+    #[tokio::test]
+    async fn wake_during_active_cycle_is_not_lost() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: Some(1),
+        };
+        let ports = Arc::new(
+            TestPorts::new(Some(identity), Ok(SyncState::Ready)).with_reconcile_delay_ms(100),
+        );
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_active_reconcile(ports.as_ref(), 1_000).await;
+        runtime.notify_sync_work_available();
+
+        wait_for_cycle_outcomes(ports.as_ref(), 2, 3_000).await;
+        runtime.ensure_background_stopped().await;
+    }
+
+    #[tokio::test]
+    async fn manual_and_background_cycles_do_not_overlap() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: Some(1),
+        };
+        let ports = Arc::new(
+            TestPorts::new(Some(identity), Ok(SyncState::Ready)).with_reconcile_delay_ms(100),
+        );
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_active_reconcile(ports.as_ref(), 1_000).await;
+
+        let manual = {
+            let runtime = Arc::clone(&runtime);
+            let ports = Arc::clone(&ports);
+            tokio::spawn(async move { runtime.run_cycle_serialized(ports.as_ref(), false).await })
+        };
+
+        wait_for_cycle_outcomes(ports.as_ref(), 2, 3_000).await;
+        manual.await.expect("manual join").expect("manual cycle");
+        runtime.ensure_background_stopped().await;
+
+        assert_eq!(ports.max_active_reconcile_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn background_loop_continues_after_repeated_not_ready_when_not_revoked() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: Some(1),
+        };
+        let ports = Arc::new(TestPorts::new(Some(identity), Ok(SyncState::Registered)));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        for expected_count in 1..=5 {
+            wait_for_cycle_outcomes(ports.as_ref(), expected_count, 3_000).await;
+            if expected_count < 5 {
+                runtime.notify_sync_work_available();
+            }
+        }
+
+        assert!(runtime.is_background_running().await);
+        runtime.ensure_background_stopped().await;
+    }
+
+    #[tokio::test]
+    async fn background_loop_exits_when_identity_is_revoked() {
+        let identity = SyncIdentity {
+            device_id: Some("019cb093-06a8-7534-8677-546317b17957".to_string()),
+            root_key: None,
+            key_version: Some(1),
+        };
+        let ports = Arc::new(TestPorts::new(Some(identity), Ok(SyncState::Registered)));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_background_stopped(runtime.as_ref(), 1_000).await;
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn background_loop_exits_when_identity_is_not_configured() {
+        let identity = SyncIdentity {
+            device_id: None,
+            root_key: None,
+            key_version: Some(0),
+        };
+        let ports = Arc::new(TestPorts::new(Some(identity), Ok(SyncState::Ready)));
+        let runtime = Arc::new(DeviceSyncRuntimeState::new());
+
+        runtime.ensure_background_started(Arc::clone(&ports)).await;
+        wait_for_background_stopped(runtime.as_ref(), 1_000).await;
+        assert!(ports.cycle_outcomes.lock().await.is_empty());
+    }
+
+    #[test]
+    fn revoked_identity_requires_device_id_without_root_key() {
+        assert!(!sync_identity_is_revoked(None));
+        assert!(!sync_identity_is_revoked(Some(SyncIdentity {
+            device_id: None,
+            root_key: None,
+            key_version: None,
+        })));
+        assert!(!sync_identity_is_revoked(Some(SyncIdentity {
+            device_id: Some("device-1".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: None,
+        })));
+        assert!(sync_identity_is_revoked(Some(SyncIdentity {
+            device_id: Some("device-1".to_string()),
+            root_key: None,
+            key_version: None,
+        })));
+    }
+
+    #[test]
+    fn background_runnable_identity_requires_device_id_and_root_key() {
+        assert!(!sync_identity_can_run_background(None));
+        assert!(!sync_identity_can_run_background(Some(SyncIdentity {
+            device_id: None,
+            root_key: None,
+            key_version: None,
+        })));
+        assert!(!sync_identity_can_run_background(Some(SyncIdentity {
+            device_id: Some("device-1".to_string()),
+            root_key: None,
+            key_version: None,
+        })));
+        assert!(!sync_identity_can_run_background(Some(SyncIdentity {
+            device_id: None,
+            root_key: Some("root-key".to_string()),
+            key_version: None,
+        })));
+        assert!(sync_identity_can_run_background(Some(SyncIdentity {
+            device_id: Some("device-1".to_string()),
+            root_key: Some("root-key".to_string()),
+            key_version: None,
+        })));
+    }
+
+    #[test]
+    fn not_ready_backoff_starts_after_threshold_and_caps() {
+        assert_eq!(not_ready_backoff_ms(0), 0);
+        assert_eq!(not_ready_backoff_ms(DEVICE_SYNC_NOT_READY_BACKOFF_AFTER), 0);
+        assert_eq!(
+            not_ready_backoff_ms(DEVICE_SYNC_NOT_READY_BACKOFF_AFTER + 1),
+            DEVICE_SYNC_PERIODIC_INTERVAL_SECS * 2 * 1000
+        );
+        assert_eq!(
+            not_ready_backoff_ms(DEVICE_SYNC_NOT_READY_BACKOFF_AFTER + 20),
+            DEVICE_SYNC_NOT_READY_BACKOFF_CAP_SECS * 1000
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_sync_outbox_runs_only_when_due() {
+        let ports = TestPorts::new(None, Ok(SyncState::Ready));
+        let mut next_prune_at = tokio::time::Instant::now() - std::time::Duration::from_millis(1);
+
+        prune_sync_outbox_if_due(&ports, &mut next_prune_at).await;
+        assert_eq!(ports.prune_calls.load(Ordering::SeqCst), 1);
+
+        prune_sync_outbox_if_due(&ports, &mut next_prune_at).await;
+        assert_eq!(ports.prune_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

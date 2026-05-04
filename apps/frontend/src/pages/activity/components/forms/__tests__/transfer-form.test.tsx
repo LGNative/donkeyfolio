@@ -351,6 +351,19 @@ describe("TransferForm", () => {
       expect(screen.getByTestId("toggle-cash")).toHaveAttribute("data-active", "false");
       expect(screen.getByTestId("toggle-securities")).toHaveAttribute("data-active", "true");
     });
+
+    it("initializes to cash mode for generated cash asset ids", () => {
+      render(
+        <TransferForm
+          accounts={mockAccounts}
+          onSubmit={mockOnSubmit}
+          defaultValues={{ assetId: "CASH:USD" }}
+        />,
+      );
+
+      expect(screen.getByTestId("toggle-cash")).toHaveAttribute("data-active", "true");
+      expect(screen.getByTestId("toggle-securities")).toHaveAttribute("data-active", "false");
+    });
   });
 
   describe("Loading State", () => {

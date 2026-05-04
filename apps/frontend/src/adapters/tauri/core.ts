@@ -26,21 +26,27 @@ export const logger: Logger = {
   },
 };
 
-// 120 s was too tight for bulk imports of statements with ~80 unique
-// ISINs / ~3000+ activities (the wizard's preview_import_assets has to
-// hit Yahoo Finance synchronously for every unique symbol). Bumped to
-// 10 minutes so the slowest legitimate operations still complete.
-const INVOKE_TIMEOUT_MS = 600_000;
+// 5 min matches the web adapter and server request timeout. Heavy retirement
+// commands can legitimately exceed 2 min on slower machines.
+const DEFAULT_INVOKE_TIMEOUT_MS = 300_000;
+
+// Commands that legitimately do batched network I/O over many symbols can need
+// more than the default cap. Larger imports, especially Options, can exceed 5 min.
+const INVOKE_TIMEOUT_OVERRIDES_MS: Record<string, number> = {
+  preview_import_assets: 600_000,
+  check_activities_import: 600_000,
+};
 
 /**
  * Invoke a Tauri command (internal - use typed adapter functions instead)
  */
 export const invoke = async <T>(command: string, payload?: Record<string, unknown>): Promise<T> => {
+  const timeoutMs = INVOKE_TIMEOUT_OVERRIDES_MS[command] ?? DEFAULT_INVOKE_TIMEOUT_MS;
   try {
     const result = await Promise.race([
       tauriInvoke<T>(command, payload),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Command "${command}" timed out`)), INVOKE_TIMEOUT_MS),
+        setTimeout(() => reject(new Error(`Command "${command}" timed out`)), timeoutMs),
       ),
     ]);
     return result;

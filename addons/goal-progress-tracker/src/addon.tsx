@@ -12,6 +12,7 @@ import {
 import React, { useEffect, useState } from "react";
 import { GoalSelector, HelpPopover, InvestmentCalendar } from "./components";
 import { useGoalProgress } from "./hooks";
+import { toFiniteAmount } from "./lib/utils";
 
 // Main Investment Target Tracker component
 function InvestmentTargetTracker({ ctx }: { ctx: AddonContext }) {
@@ -27,20 +28,24 @@ function InvestmentTargetTracker({ ctx }: { ctx: AddonContext }) {
 
   // Calculate metrics for the selected goal
   const selectedGoalProgress = selectedGoal
-    ? goalsProgress?.find((progress) => progress.name === selectedGoal.title)
+    ? goalsProgress?.find((progress) => progress.goalId === selectedGoal.id)
     : null;
 
-  const currentAmount = selectedGoalProgress?.currentValue || 0;
-  const progressPercent = selectedGoalProgress?.progress ? selectedGoalProgress.progress * 100 : 0;
-  const totalSteps = Math.ceil(targetAmount / stepSize);
-  const completedSteps = Math.floor(currentAmount / stepSize);
-  const remainingAmount = Math.max(0, targetAmount - currentAmount);
-  const isTargetReached = currentAmount >= targetAmount;
+  const currentAmount = toFiniteAmount(selectedGoalProgress?.currentValue);
+  const progressPercent = toFiniteAmount(selectedGoalProgress?.progress) * 100;
+  const safeTargetAmount = Math.max(0, toFiniteAmount(targetAmount));
+  const safeStepSize = Math.max(1, toFiniteAmount(stepSize, 10000));
+  const totalSteps = Math.ceil(safeTargetAmount / safeStepSize);
+  const completedSteps = Math.floor(currentAmount / safeStepSize);
+  const remainingAmount = Math.max(0, safeTargetAmount - currentAmount);
+  const isTargetReached = currentAmount >= safeTargetAmount;
 
   // Update target amount when a goal is selected
   useEffect(() => {
     if (selectedGoal) {
-      setTargetAmount(selectedGoal.targetAmount);
+      setTargetAmount(
+        toFiniteAmount(selectedGoal.summaryTargetAmount ?? selectedGoal.targetAmount),
+      );
     }
   }, [selectedGoal]);
 
@@ -124,7 +129,7 @@ function InvestmentTargetTracker({ ctx }: { ctx: AddonContext }) {
                   You haven&apos;t created any investment goals yet. Create your first goal to start
                   tracking your progress.
                 </EmptyPlaceholder.Description>
-                <Button onClick={() => ctx.api.navigation.navigate("/settings/goals")}>
+                <Button onClick={() => ctx.api.navigation.navigate("/goals/new")}>
                   <Icons.Plus className="mr-2 h-4 w-4" />
                   Create Your First Goal
                 </Button>
@@ -143,8 +148,8 @@ function InvestmentTargetTracker({ ctx }: { ctx: AddonContext }) {
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 sm:gap-6">
           <InvestmentCalendar
             currentAmount={currentAmount}
-            targetAmount={targetAmount}
-            stepSize={stepSize}
+            targetAmount={safeTargetAmount}
+            stepSize={safeStepSize}
             progressPercent={progressPercent}
             completedSteps={completedSteps}
             totalSteps={totalSteps}

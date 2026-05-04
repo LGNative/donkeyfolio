@@ -528,7 +528,7 @@ export const EXCHANGE_DISPLAY_NAMES: Record<string, string> = {
   XTSE: "TSX",
   XTSX: "TSX-V",
   XCNQ: "CSE",
-  XNEO: "Aequitas NEO",
+  XNEO: "Cboe Canada",
 
   // European exchanges
   XLON: "LSE",

@@ -55,14 +55,12 @@ easy-to-use tool to track their investments and goals.
 
 **Wealthfolio Connect** is an optional paid subscription to sustain development:
 
-- Automatic transaction sync from supported brokers
-- Secure device-to-device sync with E2EE
-
 ### Phase 4: Wealth Tracking
 
 - [x] Liabilities and debt tracking
 - [x] Alternative assets (real estate, vehicles, collectibles)
-- [ ] Options trading support
+- [x] Options trading support
+- [ ] Track short positions
 
 ### Phase 5: Smart Tools
 
@@ -70,7 +68,7 @@ easy-to-use tool to track their investments and goals.
       OpenAI/Anthropic)
 - [ ] Portfolio analysis: sector allocation, concentration risk, dividend yield
 - [ ] Monte Carlo projection for portfolio outcomes
-- [ ] Retirement/FIRE planner with withdrawal strategies
+- [x] Retirement/FIRE planner with withdrawal strategies
 
 ### Phase 6: Ecosystem
 

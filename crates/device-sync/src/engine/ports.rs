@@ -124,6 +124,11 @@ pub trait ReplayStore: Send + Sync {
         next_retry_at: Option<String>,
     ) -> Result<(), String>;
     async fn mark_engine_error(&self, message: String) -> Result<(), String>;
+    async fn prune_sync_outbox(
+        &self,
+        sent_before: chrono::DateTime<chrono::Utc>,
+        dead_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, String>;
     async fn prune_applied_events_up_to_seq(&self, seq: i64) -> Result<(), String>;
     async fn get_engine_status(&self) -> Result<SyncEngineStatus, String>;
     /// Called after a sync cycle completes with pulled changes.

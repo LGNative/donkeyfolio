@@ -88,6 +88,8 @@ export function useActivityColumns({
       score: result.score,
       dataSource: result.dataSource,
       assetKind: result.assetKind,
+      isExisting: result.isExisting,
+      existingAssetId: result.existingAssetId,
     }));
   }, []);
 

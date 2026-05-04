@@ -5,7 +5,7 @@ use crate::{
     ai_environment::ServerAiEnvironment, auth::AuthManager, config::Config,
     domain_events::WebDomainEventSink, events::EventBus, secrets::build_secret_store,
 };
-use tracing::error;
+use tracing::{error, warn};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 use wealthfolio_ai::{AiProviderService, AiProviderServiceTrait, ChatConfig, ChatService};
@@ -121,6 +121,32 @@ pub fn init_tracing() {
     }
 }
 
+#[cfg(feature = "device-sync")]
+fn start_sync_outbox_wake_worker(
+    mut receiver: tokio::sync::mpsc::Receiver<()>,
+    state: Arc<AppState>,
+) {
+    tokio::spawn(async move {
+        while receiver.recv().await.is_some() {
+            while receiver.try_recv().is_ok() {}
+            let was_running = state.device_sync_runtime.is_background_running().await;
+            if let Err(err) =
+                crate::api::device_sync_engine::ensure_background_engine_started(Arc::clone(&state))
+                    .await
+            {
+                warn!(
+                    "Failed to start background device sync engine after local outbox write: {}",
+                    err
+                );
+                continue;
+            }
+            if was_running {
+                state.device_sync_runtime.notify_sync_work_available();
+            }
+        }
+    });
+}
+
 pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     // Ensure DATABASE_URL aligns with WF_DB_PATH so core picks the right file
     std::env::set_var("DATABASE_URL", &config.db_path);
@@ -150,7 +176,14 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     db::run_migrations(&db_path)?;
 
     let pool = db::create_pool(&db_path)?;
-    let writer = write_actor::spawn_writer((*pool).clone()).map_err(|e| {
+    let (sync_outbox_wake_sender, sync_outbox_wake_receiver) = tokio::sync::mpsc::channel(128);
+    let writer = write_actor::spawn_writer_with_outbox_observer(
+        (*pool).clone(),
+        Arc::new(move || {
+            let _ = sync_outbox_wake_sender.try_send(());
+        }),
+    )
+    .map_err(|e| {
         error!("Failed to initialize writer actor: {}", e);
         e
     })?;
@@ -296,7 +329,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     ));
 
     let goal_repository = Arc::new(GoalRepository::new(pool.clone(), writer.clone()));
-    let goal_service = Arc::new(GoalService::new(goal_repository));
+    let goal_service = Arc::new(GoalService::new(goal_repository, account_service.clone()));
 
     let limits_repository = Arc::new(ContributionLimitRepository::new(
         pool.clone(),
@@ -420,6 +453,16 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     let event_bus = EventBus::new(256);
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
     let token_lifecycle = Arc::new(TokenLifecycleState::new());
+    let now = chrono::Utc::now();
+    if let Err(err) = app_sync_repository
+        .prune_sync_outbox(
+            now - chrono::Duration::days(7),
+            now - chrono::Duration::days(30),
+        )
+        .await
+    {
+        warn!("Failed to prune local sync outbox: {}", err);
+    }
 
     // Domain event sink - Phase 2: Start the worker now that all services are ready
     domain_event_sink.start_worker(
@@ -431,6 +474,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         quote_service.clone(),
         valuation_service.clone(),
         account_service.clone(),
+        goal_service.clone(),
         fx_service.clone(),
         timezone.clone(),
         secret_store.clone(),
@@ -449,7 +493,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         .transpose()?
         .map(Arc::new);
 
-    Ok(Arc::new(AppState {
+    let state = Arc::new(AppState {
         domain_event_sink,
         account_service,
         settings_service,
@@ -487,5 +531,10 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         health_service,
         token_lifecycle,
         custom_provider_service,
-    }))
+    });
+
+    #[cfg(feature = "device-sync")]
+    start_sync_outbox_wake_worker(sync_outbox_wake_receiver, Arc::clone(&state));
+
+    Ok(state)
 }

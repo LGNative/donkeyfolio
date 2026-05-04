@@ -76,8 +76,8 @@ impl DomainEventSink for TauriDomainEventSink {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_new_returns_sender_and_receiver() {
+    #[tokio::test]
+    async fn test_new_returns_sender_and_receiver() {
         let (sink, mut receiver) = TauriDomainEventSink::new();
 
         let event = DomainEvent::AssetsCreated {
@@ -96,10 +96,12 @@ mod tests {
             }
             _ => panic!("Expected AssetsCreated event"),
         }
+
+        assert!(receiver.try_recv().is_err());
     }
 
-    #[test]
-    fn test_emit_batch_sends_all_events() {
+    #[tokio::test]
+    async fn test_emit_batch_sends_all_events() {
         let (sink, mut receiver) = TauriDomainEventSink::new();
 
         let events = vec![
@@ -113,9 +115,27 @@ mod tests {
 
         sink.emit_batch(events);
 
-        // Check that both events were sent
-        assert!(receiver.try_recv().is_ok());
-        assert!(receiver.try_recv().is_ok());
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            DomainEvent::AssetsCreated { .. }
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            DomainEvent::AssetsCreated { .. }
+        ));
         assert!(receiver.try_recv().is_err()); // No more events
+    }
+
+    #[tokio::test]
+    async fn pull_complete_is_sent_to_queue() {
+        let (sink, mut receiver) = TauriDomainEventSink::new();
+
+        sink.emit(DomainEvent::device_sync_pull_complete());
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            DomainEvent::DeviceSyncPullComplete
+        ));
+        assert!(receiver.try_recv().is_err());
     }
 }

@@ -303,6 +303,46 @@ async fn store_sync_session(
     let _ = state.secret_store.delete_secret(CLOUD_ACCESS_TOKEN_KEY);
     state.token_lifecycle.clear_cache().await;
 
+    if crate::features::device_sync_enabled() {
+        let engine_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let token = match mint_access_token(&engine_state).await {
+                Ok(token) => token,
+                Err(err) => {
+                    debug!(
+                        "[Connect] Skipping post-login device sync background start: {}",
+                        err
+                    );
+                    return;
+                }
+            };
+
+            match engine_state
+                .device_enroll_service
+                .get_sync_state(&token)
+                .await
+            {
+                Ok(sync_state) if sync_state.state == SyncState::Ready => {
+                    if let Err(err) =
+                        device_sync_engine::ensure_background_engine_started(engine_state).await
+                    {
+                        debug!(
+                            "[Connect] Failed to start device sync background engine after login: {}",
+                            err
+                        );
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    debug!(
+                        "[Connect] Skipping post-login device sync background start: {}",
+                        err.message
+                    );
+                }
+            }
+        });
+    }
+
     Ok(Json(()))
 }
 

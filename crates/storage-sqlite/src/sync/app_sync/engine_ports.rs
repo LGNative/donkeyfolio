@@ -166,6 +166,17 @@ impl ReplayStore for SqliteSyncEngineDbPorts {
             .map_err(|e| e.to_string())
     }
 
+    async fn prune_sync_outbox(
+        &self,
+        sent_before: chrono::DateTime<chrono::Utc>,
+        dead_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, String> {
+        self.repository
+            .prune_sync_outbox(sent_before, dead_before)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     async fn prune_applied_events_up_to_seq(&self, seq: i64) -> Result<(), String> {
         self.repository
             .prune_applied_events_up_to_seq(seq)

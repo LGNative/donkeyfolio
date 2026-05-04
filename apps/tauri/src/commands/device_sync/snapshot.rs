@@ -285,7 +285,7 @@ pub async fn sync_bootstrap_snapshot_if_needed(
         .map_err(|e| e.message)?;
     if sync_state.state != SyncState::Ready {
         return Ok(SyncBootstrapResult {
-            status: "skipped".to_string(),
+            status: "skipped_not_ready".to_string(),
             message: "Device is not in READY state".to_string(),
             snapshot_id: None,
             cursor: None,

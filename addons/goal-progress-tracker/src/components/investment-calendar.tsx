@@ -2,13 +2,14 @@ import { type Goal } from "@wealthfolio/addon-sdk";
 import { Card, CardContent } from "@wealthfolio/ui";
 import { useState } from "react";
 import { EditableValue } from "./editable-value";
+import { toFiniteAmount } from "../lib/utils";
 
 // Helper function to format currency with privacy support
 function formatCurrency(amount: number, isHidden: boolean = false): string {
   if (isHidden) {
     return "••••";
   }
-  return `$${amount.toLocaleString()}`;
+  return `$${toFiniteAmount(amount).toLocaleString()}`;
 }
 
 // Calendar dot component - lightweight without individual tooltips

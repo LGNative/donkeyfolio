@@ -7,7 +7,7 @@ mod engine;
 mod snapshot;
 
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -90,6 +90,10 @@ fn get_sync_identity_from_store() -> Option<SyncIdentity> {
             None
         }
     }
+}
+
+fn sync_identity_can_run_background(identity: &SyncIdentity) -> bool {
+    identity.device_id.is_some() && identity.root_key.is_some()
 }
 
 fn get_device_id_from_store() -> Option<String> {
@@ -215,6 +219,68 @@ fn clear_pairing_overwrite_approval(pairing_id: &str) {
     if let Ok(mut guard) = pairing_overwrite_approval_state().lock() {
         guard.remove(pairing_id);
     }
+}
+
+fn pairing_bootstrap_phase(
+    bootstrap: &SyncBootstrapResult,
+) -> Result<Option<PairingFlowPhase>, String> {
+    match bootstrap.status.as_str() {
+        "requested" => Ok(Some(PairingFlowPhase::Syncing {
+            detail: "waiting_snapshot".to_string(),
+        })),
+        "applied" | "skipped" => Ok(None),
+        "skipped_not_ready" => Err(bootstrap.message.clone()),
+        other => Err(format!(
+            "Snapshot bootstrap did not complete (status={}): {}",
+            other, bootstrap.message
+        )),
+    }
+}
+
+async fn abort_pairing_flow_local_state(context: &Arc<ServiceContext>, pairing_id: &str) {
+    clear_pairing_overwrite_approval(pairing_id);
+
+    let device_id = get_device_id_from_store();
+    if let Some(device_id) = device_id.as_deref() {
+        if let Ok(token) = get_access_token(context).await {
+            if let Ok(client) = create_client() {
+                let _ = client.cancel_pairing(&token, device_id, pairing_id).await;
+                if let Err(err) = client.delete_device(&token, device_id).await {
+                    warn!(
+                        "[DeviceSync] Failed to delete confirmed pairing device while cancelling flow: {}",
+                        err
+                    );
+                }
+            }
+        }
+        remove_min_snapshot_created_at_from_store(device_id);
+        let _ = context
+            .app_sync_repository()
+            .clear_min_snapshot_created_at(device_id.to_string())
+            .await;
+    }
+
+    if let Err(err) = ensure_background_engine_stopped(Arc::clone(context)).await {
+        warn!(
+            "[DeviceSync] Failed to stop engine while cancelling pairing flow: {}",
+            err
+        );
+    }
+    if let Err(err) = context.device_enroll_service().clear_sync_data() {
+        warn!(
+            "[DeviceSync] Failed to clear local sync identity while cancelling pairing flow: {}",
+            err.message
+        );
+    }
+    let _ = context
+        .app_sync_repository()
+        .reset_local_sync_session()
+        .await;
+    clear_min_snapshot_created_at_from_store();
+    let _ = context
+        .app_sync_repository()
+        .clear_all_min_snapshot_created_at()
+        .await;
 }
 
 fn should_keep_ready_state_overwrite_approval(
@@ -918,7 +984,7 @@ pub async fn device_sync_bootstrap_overwrite_check(
     }
 
     let summary = sync_repo
-        .get_local_sync_data_summary()
+        .get_local_sync_overwrite_risk_summary()
         .map_err(|e| e.to_string())?;
 
     Ok(SyncBootstrapOverwriteCheckResult {
@@ -1059,13 +1125,27 @@ pub async fn device_sync_bootstrap_snapshot_if_needed(
 ) -> Result<SyncBootstrapResult, String> {
     let context = Arc::clone(state.inner());
     let result = snapshot::sync_bootstrap_snapshot_if_needed(handle, &context).await?;
-    let token = context.connect_service().get_valid_access_token().await?;
-    let should_start_engine = context
-        .device_enroll_service()
-        .get_sync_state(&token)
-        .await
-        .map(|sync_state| sync_state.state == wealthfolio_device_sync::SyncState::Ready)
-        .unwrap_or(false);
+    let should_start_engine = match context.connect_service().get_valid_access_token().await {
+        Ok(token) => context
+            .device_enroll_service()
+            .get_sync_state(&token)
+            .await
+            .map(|sync_state| sync_state.state == wealthfolio_device_sync::SyncState::Ready)
+            .unwrap_or_else(|err| {
+                log::warn!(
+                    "[DeviceSync] Post-bootstrap sync state check failed: {}",
+                    err.message
+                );
+                false
+            }),
+        Err(err) => {
+            log::warn!(
+                "[DeviceSync] Post-bootstrap token refresh failed while starting engine: {}",
+                err
+            );
+            false
+        }
+    };
 
     // Start the background sync engine whenever this device is READY.
     if should_start_engine {
@@ -1432,7 +1512,7 @@ pub async fn confirm_pairing_with_bootstrap(
     if !overwrite_approved {
         let summary = context
             .app_sync_repository()
-            .get_local_sync_data_summary()
+            .get_local_sync_overwrite_risk_summary()
             .map_err(|e| e.to_string())?;
         if summary.total_rows > 0 {
             return Ok(ConfirmPairingWithBootstrapResult {
@@ -1493,7 +1573,9 @@ pub async fn confirm_pairing_with_bootstrap(
 // Pairing Flow Coordinator Commands
 // ─────────────────────────────────────────────────────────────────────────────
 
-use wealthfolio_device_sync::engine::{PairingFlowPhase, PairingFlowResponse};
+use wealthfolio_device_sync::engine::{
+    OverwriteInfo, OverwriteTableInfo, PairingFlowPhase, PairingFlowResponse,
+};
 
 /// Begin the post-SAS confirm+bootstrap phase. Creates a flow entry and returns its state.
 #[tauri::command(rename_all = "camelCase")]
@@ -1563,26 +1645,33 @@ pub async fn begin_pairing_confirm(
         });
     }
 
-    // 4. If local data exists, defer bootstrap to auto-bootstrap AlertDialog
-    //    (which offers "Back up first" option). Pairing is done at this point.
+    // 4. If real local portfolio data exists, keep consent inside the pairing flow.
     let summary = context
         .app_sync_repository()
-        .get_local_sync_data_summary()
+        .get_local_sync_overwrite_risk_summary()
         .map_err(|e| e.to_string())?;
     if summary.total_rows > 0 {
-        info!("[DeviceSync] begin_pairing_confirm: local data found ({} rows), deferring bootstrap to auto-bootstrap", summary.total_rows);
-        return Ok(PairingFlowResponse {
-            flow_id: uuid::Uuid::new_v4().to_string(),
-            phase: PairingFlowPhase::Success,
-        });
+        info!(
+            "[DeviceSync] begin_pairing_confirm: overwrite risk found ({} rows)",
+            summary.total_rows
+        );
+        let phase = PairingFlowPhase::OverwriteRequired {
+            info: OverwriteInfo {
+                local_rows: summary.total_rows,
+                non_empty_tables: summary
+                    .non_empty_tables
+                    .into_iter()
+                    .map(|SyncTableRowCount { table, rows }| OverwriteTableInfo { table, rows })
+                    .collect(),
+            },
+        };
+        let flow_id = runtime.create_flow(pairing_id, phase.clone());
+        return Ok(PairingFlowResponse { flow_id, phase });
     }
 
     // 5. Bootstrap snapshot
     let bootstrap = snapshot::sync_bootstrap_snapshot_if_needed(handle, &context).await?;
-    if bootstrap.status == "requested" {
-        let phase = PairingFlowPhase::Syncing {
-            detail: "waiting_snapshot".to_string(),
-        };
+    if let Some(phase) = pairing_bootstrap_phase(&bootstrap)? {
         let flow_id = runtime.create_flow(pairing_id, phase.clone());
         return Ok(PairingFlowResponse { flow_id, phase });
     }
@@ -1620,8 +1709,12 @@ pub async fn get_pairing_flow_state(
     if let PairingFlowPhase::Syncing { ref detail } = phase {
         if detail == "waiting_snapshot" {
             match snapshot::sync_bootstrap_snapshot_if_needed(handle, &context).await {
-                Ok(bootstrap) => {
-                    if bootstrap.status != "requested" {
+                Ok(bootstrap) => match pairing_bootstrap_phase(&bootstrap) {
+                    Ok(Some(phase)) => {
+                        runtime.set_flow_phase(&flow_id, phase.clone());
+                        return Ok(PairingFlowResponse { flow_id, phase });
+                    }
+                    Ok(None) => {
                         // Bootstrap applied — run sync cycle + start engine
                         let _ = engine::run_sync_cycle(Arc::clone(&context), true).await;
                         let engine_context = Arc::clone(state.inner());
@@ -1643,7 +1736,17 @@ pub async fn get_pairing_flow_state(
                             phase: PairingFlowPhase::Success,
                         });
                     }
-                }
+                    Err(e) => {
+                        if let Some(pid) = runtime.get_flow_pairing_id(&flow_id) {
+                            clear_pairing_overwrite_approval(&pid);
+                        }
+                        runtime.remove_flow(&flow_id);
+                        return Ok(PairingFlowResponse {
+                            flow_id,
+                            phase: PairingFlowPhase::Error { message: e },
+                        });
+                    }
+                },
                 Err(e) => {
                     if let Some(pid) = runtime.get_flow_pairing_id(&flow_id) {
                         clear_pairing_overwrite_approval(&pid);
@@ -1696,10 +1799,17 @@ pub async fn approve_pairing_overwrite(
     // Run bootstrap
     match snapshot::sync_bootstrap_snapshot_if_needed(handle, &context).await {
         Ok(bootstrap) => {
-            if bootstrap.status == "requested" {
-                let phase = PairingFlowPhase::Syncing {
-                    detail: "waiting_snapshot".to_string(),
-                };
+            if let Some(phase) = match pairing_bootstrap_phase(&bootstrap) {
+                Ok(phase) => phase,
+                Err(e) => {
+                    clear_pairing_overwrite_approval(&pairing_id);
+                    runtime.remove_flow(&flow_id);
+                    return Ok(PairingFlowResponse {
+                        flow_id,
+                        phase: PairingFlowPhase::Error { message: e },
+                    });
+                }
+            } {
                 runtime.set_flow_phase(&flow_id, phase.clone());
                 return Ok(PairingFlowResponse { flow_id, phase });
             }
@@ -1740,7 +1850,7 @@ pub async fn cancel_pairing_flow(
     let runtime = context.device_sync_runtime();
 
     if let Some(pairing_id) = runtime.get_flow_pairing_id(&flow_id) {
-        clear_pairing_overwrite_approval(&pairing_id);
+        abort_pairing_flow_local_state(&context, &pairing_id).await;
     }
 
     runtime.remove_flow(&flow_id);

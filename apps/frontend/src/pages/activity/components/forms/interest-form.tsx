@@ -24,6 +24,7 @@ export const interestFormSchema = z.object({
   activityDate: z.date({ required_error: "Please select a date." }),
   // Optional symbol (e.g., for bond interest)
   symbol: z.string().optional().nullable(),
+  existingAssetId: z.string().nullable().optional(),
   exchangeMic: z.string().nullable().optional(),
   amount: z.coerce
     .number({
@@ -120,9 +121,11 @@ export function InterestForm({
               currencyName="currency"
               quoteCcyName="symbolQuoteCcy"
               instrumentTypeName="symbolInstrumentType"
+              existingAssetIdName="existingAssetId"
             />
             <input type="hidden" {...form.register("symbolQuoteCcy")} />
             <input type="hidden" {...form.register("symbolInstrumentType")} />
+            <input type="hidden" {...form.register("existingAssetId")} />
 
             {/* Date Picker */}
             <DatePicker name="activityDate" label="Date" />

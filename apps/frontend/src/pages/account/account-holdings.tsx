@@ -161,7 +161,7 @@ const AccountHoldings = ({
 
   return (
     <div>
-      <div className="flex items-center justify-between py-4">
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-lg font-bold">Holdings</h3>
         {canEditHoldingsDirectly && onAddHoldings && (
           <TooltipProvider>

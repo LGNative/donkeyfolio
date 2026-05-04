@@ -2,9 +2,11 @@
 // Main component that orchestrates the pairing flow (issuer and claimer)
 // =====================================================================
 
-import { useEffect, useRef, useCallback } from "react";
+import { backupDatabase, logger, openFileSaveDialog } from "@/adapters";
+import { Icons } from "@wealthfolio/ui";
+import { Button } from "@wealthfolio/ui/components/ui/button";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { usePairingIssuer, usePairingClaimer, useSyncStatus } from "../../hooks";
-import { logger } from "@/adapters";
 import { DisplayCode } from "./display-code";
 import { SASVerification } from "./sas-verification";
 import { WaitingState } from "./waiting-state";
@@ -165,7 +167,19 @@ function IssuerFlow({ onComplete, onCancel, title, description }: PairingFlowPro
 
 // Claimer Flow (untrusted device - enters code and receives keys)
 function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowProps) {
-  const { step, error, sas, submitCode, cancel, retry } = usePairingClaimer();
+  const {
+    step,
+    error,
+    sas,
+    overwriteInfo,
+    isApprovingOverwrite,
+    submitCode,
+    approveOverwrite,
+    cancel,
+    retry,
+  } = usePairingClaimer();
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
 
   const handleCancel = useCallback(async () => {
     await cancel();
@@ -175,6 +189,21 @@ function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowPr
   const handleDone = useCallback(() => {
     onComplete?.();
   }, [onComplete]);
+
+  const handleBackupThenApprove = useCallback(async () => {
+    setIsBackingUp(true);
+    setBackupError(null);
+    try {
+      const { filename, data } = await backupDatabase();
+      const saved = await openFileSaveDialog(data, filename);
+      if (!saved) return;
+      await approveOverwrite();
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : "Backup failed");
+    } finally {
+      setIsBackingUp(false);
+    }
+  }, [approveOverwrite]);
 
   switch (step) {
     case "enter_code":
@@ -198,6 +227,19 @@ function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowPr
         <WaitingState title="Syncing your data..." description="This may take a few seconds" />
       );
 
+    case "overwrite_required":
+      return (
+        <PairingOverwriteConsent
+          localRows={overwriteInfo?.localRows ?? 0}
+          error={backupError}
+          isBackingUp={isBackingUp}
+          isApproving={isApprovingOverwrite}
+          onCancel={handleCancel}
+          onBackupThenApprove={handleBackupThenApprove}
+          onApprove={approveOverwrite}
+        />
+      );
+
     case "success":
       return <PairingResult success onDone={handleDone} />;
 
@@ -207,6 +249,72 @@ function ClaimerFlow({ onComplete, onCancel, title, description }: PairingFlowPr
     default:
       return null;
   }
+}
+
+function PairingOverwriteConsent({
+  localRows,
+  error,
+  isBackingUp,
+  isApproving,
+  onCancel,
+  onBackupThenApprove,
+  onApprove,
+}: {
+  localRows: number;
+  error: string | null;
+  isBackingUp: boolean;
+  isApproving: boolean;
+  onCancel: () => void;
+  onBackupThenApprove: () => void;
+  onApprove: () => void;
+}) {
+  const isBusy = isBackingUp || isApproving;
+  const rowLabel = localRows === 1 ? "row" : "rows";
+
+  return (
+    <div className="flex flex-col items-center gap-6 px-4 py-2 text-center">
+      <div className="border-warning/30 bg-warning/10 dark:border-warning/20 dark:bg-warning/15 flex h-14 w-14 items-center justify-center rounded-full border">
+        <Icons.AlertTriangle className="h-6 w-6 text-amber-500" />
+      </div>
+      <div className="space-y-2">
+        <h2 className="text-xl font-semibold">Replace data on this device?</h2>
+        <p className="text-muted-foreground text-sm">
+          Your local data will be replaced with data from your other connected device.
+        </p>
+        {localRows > 0 && (
+          <p className="text-muted-foreground text-xs">
+            {localRows} local {rowLabel} will be replaced.
+          </p>
+        )}
+        {error && <p className="text-destructive text-sm">{error}</p>}
+      </div>
+      <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-center">
+        <Button variant="ghost" onClick={onCancel} disabled={isBusy}>
+          Not now
+        </Button>
+        <Button variant="outline" onClick={onBackupThenApprove} disabled={isBusy}>
+          {isBackingUp ? (
+            <>
+              <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+              Backing up...
+            </>
+          ) : (
+            "Back up first"
+          )}
+        </Button>
+        <Button onClick={onApprove} disabled={isBusy}>
+          {isApproving ? (
+            <>
+              <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+              Syncing...
+            </>
+          ) : (
+            "Replace & Sync"
+          )}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // Re-export sub-components for flexibility

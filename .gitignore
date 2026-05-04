@@ -111,6 +111,7 @@ Thumbs.db
 /playwright/.auth/
 /AI-POC-COPY
 # AI tools
+.codex/
 .ralph-tui/
 .kiro/
 .conductor/

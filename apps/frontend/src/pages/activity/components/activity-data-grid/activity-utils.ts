@@ -1,4 +1,5 @@
 import { isCashActivity, isCashTransfer, isIncomeActivity } from "@/lib/activity-utils";
+import { buildAssetResolutionInput, normalizeOptionalString } from "@/lib/asset-resolution-input";
 import { ACTIVITY_SUBTYPES, ActivityType } from "@/lib/constants";
 import type { Account } from "@/lib/types";
 import { normalizeDecimalString, parseLocalDateTime, toPayloadNumber } from "@/lib/utils";
@@ -44,12 +45,6 @@ function toDecimalString(value: unknown): string | null | undefined {
   if (typeof value === "string" && value.trim() === "") return null;
   const normalized = normalizeDecimalString(value);
   return normalized ?? undefined;
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed === "" ? undefined : trimmed;
 }
 
 /**
@@ -392,10 +387,9 @@ export function createCurrencyResolver(
  * Builds the save payload from dirty and deleted transactions.
  *
  * Asset identification strategy:
- * - For NEW activities: send symbol + exchangeMic, backend generates canonical ID
- *   (assetId is NOT sent for creates)
- * - For EDITING existing: send assetId (for backward compatibility)
- * - For CASH activities: don't send symbol/assetId, backend generates CASH:{currency}
+ * - For NEW activities: send asset identity, plus an existing id when selected from search
+ * - For EDITING existing: send id-only unless natural identity changed
+ * - For CASH activities: don't send asset, backend generates CASH:{currency}
  */
 export function buildSavePayload(
   localTransactions: LocalTransaction[],
@@ -481,15 +475,18 @@ export function buildSavePayload(
     }
 
     if (isNew) {
-      // Build CREATE payload - NO asset.id allowed, only asset.symbol + asset.exchangeMic
       const createPayload: ActivityCreatePayload = { ...basePayload };
+      const idempotencyKey = normalizeOptionalString(transaction.idempotencyKey);
+      if (idempotencyKey) {
+        createPayload.idempotencyKey = idempotencyKey;
+      }
 
       if (!isCash) {
-        // For NEW market activities: send asset with symbol + exchangeMic
-        // Backend will generate the canonical ID
+        // For NEW market activities: send asset identity for backend resolution.
         const symbol = (transaction.assetSymbol || "").trim().toUpperCase();
         if (symbol) {
-          const symbolInput = {
+          createPayload.asset = buildAssetResolutionInput({
+            id: transaction.pendingAssetId,
             symbol,
             exchangeMic: normalizeOptionalString(transaction.exchangeMic),
             kind: normalizeOptionalString(transaction.pendingAssetKind),
@@ -497,10 +494,7 @@ export function buildSavePayload(
             quoteMode: normalizeOptionalString(transaction.assetQuoteMode),
             quoteCcy: normalizeOptionalString(transaction.pendingQuoteCcy),
             instrumentType: normalizeOptionalString(transaction.pendingInstrumentType),
-          };
-          createPayload.symbol = {
-            ...symbolInput,
-          };
+          });
         }
       }
       // For cash activities: don't send asset - backend generates CASH:{currency}
@@ -513,30 +507,47 @@ export function buildSavePayload(
       if (!isCash) {
         const currentSymbol = (transaction.assetSymbol || "").trim().toUpperCase();
         const originalSymbol = (transaction._originalAssetSymbol || "").trim().toUpperCase();
+        const currentExchangeMic = (
+          normalizeOptionalString(transaction.exchangeMic) ?? ""
+        ).toUpperCase();
+        const originalExchangeMic = (
+          normalizeOptionalString(transaction._originalExchangeMic) ?? ""
+        ).toUpperCase();
+        const currentInstrumentType = (
+          normalizeOptionalString(transaction.instrumentType) ??
+          normalizeOptionalString(transaction.pendingInstrumentType) ??
+          ""
+        ).toUpperCase();
+        const originalInstrumentType = (
+          normalizeOptionalString(transaction._originalInstrumentType) ?? ""
+        ).toUpperCase();
         const symbolChanged = currentSymbol !== originalSymbol;
+        const exchangeChanged = currentExchangeMic !== originalExchangeMic;
+        const instrumentTypeChanged = currentInstrumentType !== originalInstrumentType;
+        const hasPendingQuoteCcy = !!normalizeOptionalString(transaction.pendingQuoteCcy);
+        const identityChanged =
+          symbolChanged || exchangeChanged || instrumentTypeChanged || hasPendingQuoteCcy;
 
-        if (symbolChanged && currentSymbol) {
-          // Symbol changed: send symbol + exchangeMic for backend to generate new canonical ID
-          const symbolInput = {
+        if (identityChanged && currentSymbol) {
+          // Asset identity changed: send id + natural identity for backend verification/re-resolution.
+          updatePayload.asset = buildAssetResolutionInput({
+            id: transaction.pendingAssetId ?? transaction._originalAssetId,
             symbol: currentSymbol,
             exchangeMic: normalizeOptionalString(transaction.exchangeMic),
             kind: normalizeOptionalString(transaction.pendingAssetKind),
             name: normalizeOptionalString(transaction.pendingAssetName),
             quoteMode: normalizeOptionalString(transaction.assetQuoteMode),
             quoteCcy: normalizeOptionalString(transaction.pendingQuoteCcy),
-            instrumentType: normalizeOptionalString(transaction.pendingInstrumentType),
-          };
-          updatePayload.symbol = {
-            ...symbolInput,
-          };
+            instrumentType:
+              normalizeOptionalString(transaction.pendingInstrumentType) ??
+              normalizeOptionalString(transaction.instrumentType),
+          });
         } else if (transaction._originalAssetId) {
-          // Symbol unchanged: send existing asset ID with quoteMode to allow mode updates
-          updatePayload.symbol = {
+          // Asset identity unchanged: send id-only, with quoteMode to allow mode updates.
+          updatePayload.asset = buildAssetResolutionInput({
             id: transaction._originalAssetId,
-            quoteMode: normalizeOptionalString(transaction.assetQuoteMode),
-            quoteCcy: normalizeOptionalString(transaction.pendingQuoteCcy),
-            instrumentType: normalizeOptionalString(transaction.pendingInstrumentType),
-          };
+            quoteMode: transaction.assetQuoteMode,
+          });
         }
       }
 

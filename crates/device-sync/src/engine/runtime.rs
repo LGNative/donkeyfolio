@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use super::{
@@ -51,19 +52,52 @@ pub struct PairingFlowResponse {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone)]
+pub struct DeviceSyncWakeHandle {
+    notify: Arc<Notify>,
+}
+
+impl DeviceSyncWakeHandle {
+    pub fn new() -> Self {
+        Self {
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    pub fn notify_work_available(&self) {
+        self.notify.notify_one();
+    }
+
+    pub async fn wait_for_work(&self) {
+        self.notify.notified().await;
+    }
+}
+
+impl Default for DeviceSyncWakeHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct DeviceSyncRuntimeState {
     cycle_mutex: Mutex<()>,
     background_task: Mutex<Option<JoinHandle<()>>>,
+    wake_handle: DeviceSyncWakeHandle,
     pub snapshot_upload_cancelled: AtomicBool,
     pairing_flows: std::sync::Mutex<HashMap<String, PairingFlowState>>,
 }
 
 impl DeviceSyncRuntimeState {
     pub fn new() -> Self {
+        Self::with_wake_handle(DeviceSyncWakeHandle::new())
+    }
+
+    pub fn with_wake_handle(wake_handle: DeviceSyncWakeHandle) -> Self {
         Self {
             cycle_mutex: Mutex::new(()),
             background_task: Mutex::new(None),
+            wake_handle,
             snapshot_upload_cancelled: AtomicBool::new(false),
             pairing_flows: std::sync::Mutex::new(HashMap::new()),
         }
@@ -77,7 +111,7 @@ impl Default for DeviceSyncRuntimeState {
 }
 
 impl DeviceSyncRuntimeState {
-    pub async fn run_cycle<P>(
+    pub async fn run_cycle_serialized<P>(
         &self,
         ports: &P,
         post_bootstrap: bool,
@@ -89,7 +123,26 @@ impl DeviceSyncRuntimeState {
         run_sync_cycle(ports, post_bootstrap).await
     }
 
-    pub async fn ensure_background_started<P>(&self, ports: Arc<P>)
+    pub async fn run_cycle<P>(
+        &self,
+        ports: &P,
+        post_bootstrap: bool,
+    ) -> Result<SyncCycleResult, String>
+    where
+        P: OutboxStore + ReplayStore + SyncTransport + CredentialStore + Send + Sync,
+    {
+        self.run_cycle_serialized(ports, post_bootstrap).await
+    }
+
+    pub fn notify_sync_work_available(&self) {
+        self.wake_handle.notify_work_available();
+    }
+
+    pub(crate) async fn wait_for_sync_work(&self) {
+        self.wake_handle.wait_for_work().await;
+    }
+
+    pub async fn ensure_background_started<P>(self: &Arc<Self>, ports: Arc<P>)
     where
         P: OutboxStore + ReplayStore + SyncTransport + CredentialStore + Send + Sync + 'static,
     {
@@ -101,8 +154,9 @@ impl DeviceSyncRuntimeState {
             guard.take();
         }
 
+        let runtime = Arc::clone(self);
         let handle = tokio::spawn(async move {
-            run_background_loop(ports).await;
+            run_background_loop(runtime, ports).await;
         });
         *guard = Some(handle);
     }

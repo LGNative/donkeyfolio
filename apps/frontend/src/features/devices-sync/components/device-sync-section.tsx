@@ -169,6 +169,9 @@ export function DeviceSyncSection() {
       if (result.status === "error") {
         throw new Error(result.message);
       }
+      if (result.status === "not_ready") {
+        throw new Error(result.message);
+      }
       setOverwriteRisk(null);
       setShowBootstrapOverwriteDialog(false);
     } catch (err) {
@@ -202,6 +205,9 @@ export function DeviceSyncSection() {
         }
 
         if (result.status === "error") {
+          throw new Error(result.message);
+        }
+        if (result.status === "not_ready") {
           throw new Error(result.message);
         }
 
@@ -447,7 +453,7 @@ export function DeviceSyncSection() {
         {/* Pairing Dialog */}
         <Dialog open={isPairingOpen} onOpenChange={setIsPairingOpen}>
           <DialogContent
-            className="max-w-[calc(100vw-2rem)] sm:max-w-sm"
+            className="md:max-w-lg"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}
@@ -501,7 +507,7 @@ export function DeviceSyncSection() {
         {/* Pairing Dialog */}
         <Dialog open={isPairingOpen} onOpenChange={setIsPairingOpen}>
           <DialogContent
-            className="max-w-[calc(100vw-2rem)] sm:max-w-sm"
+            className="md:max-w-lg"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}
@@ -745,7 +751,7 @@ export function DeviceSyncSection() {
           }}
         >
           <DialogContent
-            className="max-w-[calc(100vw-2rem)] sm:max-w-sm"
+            className="md:max-w-lg"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}

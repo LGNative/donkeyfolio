@@ -77,6 +77,8 @@ interface SymbolSearchProps<TFieldValues extends FieldValues = FieldValues> {
   quoteCcyName?: FieldPath<TFieldValues>;
   /** Field name for symbol instrument type hint (optional, e.g. "EQUITY") */
   instrumentTypeName?: FieldPath<TFieldValues>;
+  /** Field name for selected existing asset id from search (optional) */
+  existingAssetIdName?: FieldPath<TFieldValues>;
   /** Field name for assetMetadata (optional, to capture asset name for custom assets) */
   assetMetadataName?: FieldPath<TFieldValues>;
 }
@@ -91,6 +93,7 @@ export function SymbolSearch<TFieldValues extends FieldValues = FieldValues>({
   currencyName,
   quoteCcyName,
   instrumentTypeName,
+  existingAssetIdName,
   assetMetadataName,
 }: SymbolSearchProps<TFieldValues>) {
   const { control, setValue, watch, getValues } = useFormContext<TFieldValues>();
@@ -218,6 +221,13 @@ export function SymbolSearch<TFieldValues extends FieldValues = FieldValues>({
       setValue(instrumentTypeName, (searchResult?.quoteType ?? undefined) as any);
     }
 
+    if (existingAssetIdName) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setValue(existingAssetIdName, (searchResult?.existingAssetId ?? undefined) as any, {
+        shouldDirty: true,
+      });
+    }
+
     // Persist selected symbol name as a create hint for new assets.
     if (assetMetadataName) {
       const selectedName = searchResult?.longName?.trim() || searchResult?.shortName?.trim();
@@ -252,6 +262,7 @@ export function SymbolSearch<TFieldValues extends FieldValues = FieldValues>({
     if (currencyName) setValue(currencyName, "" as any);
     if (quoteCcyName) setValue(quoteCcyName, undefined as any);
     if (instrumentTypeName) setValue(instrumentTypeName, undefined as any);
+    if (existingAssetIdName) setValue(existingAssetIdName, undefined as any);
     if (assetMetadataName) {
       setValue(`${assetMetadataName}.name` as any, undefined as any);
       setValue(`${assetMetadataName}.kind` as any, undefined as any);

@@ -273,14 +273,19 @@ export interface ActivitySearchResponse {
   };
 }
 
-export interface SymbolInput {
+export interface AssetResolutionInput {
   id?: string;
   symbol?: string;
   exchangeMic?: string;
   kind?: string;
   name?: string;
   quoteMode?: QuoteMode;
+  quoteCcy?: string;
+  instrumentType?: string;
 }
+
+/** @deprecated Use AssetResolutionInput. */
+export type SymbolInput = AssetResolutionInput;
 
 export interface ActivityCreate {
   id?: string;
@@ -289,7 +294,9 @@ export interface ActivityCreate {
   subtype?: string | null;
   activityDate: string | Date;
   sourceGroupId?: string;
-  symbol?: SymbolInput;
+  asset?: AssetResolutionInput;
+  /** @deprecated Use asset. */
+  symbol?: AssetResolutionInput;
   quantity?: string | number | null;
   unitPrice?: string | number | null;
   amount?: string | number | null;
@@ -307,7 +314,9 @@ export interface ActivityUpdate {
   subtype?: string | null;
   activityDate: string | Date;
   sourceGroupId?: string;
-  symbol?: SymbolInput;
+  asset?: AssetResolutionInput;
+  /** @deprecated Use asset. */
+  symbol?: AssetResolutionInput;
   quantity?: string | number | null;
   unitPrice?: string | number | null;
   amount?: string | number | null;
@@ -351,6 +360,7 @@ export interface ActivityImport {
   subtype?: string;
   date?: Date | string;
   symbol?: string;
+  assetId?: string;
   amount?: number | string | null;
   quantity?: number | string | null;
   unitPrice?: number | string | null;
@@ -373,6 +383,7 @@ export interface ActivityImport {
   isValid: boolean;
   lineNumber?: number;
   isDraft: boolean;
+  forceImport?: boolean;
   comment?: string;
 }
 
@@ -636,12 +647,36 @@ export interface Settings {
   syncEnabled: boolean;
 }
 
+export type GoalType =
+  | 'retirement'
+  | 'education'
+  | 'wedding'
+  | 'home'
+  | 'car'
+  | 'custom_save_up';
+export type GoalLifecycle = 'active' | 'achieved' | 'archived';
+export type GoalHealth = 'on_track' | 'at_risk' | 'off_track' | 'not_applicable';
+
 export interface Goal {
   id: string;
+  goalType?: GoalType;
   title: string;
   description?: string;
   targetAmount: number;
-  isAchieved?: boolean;
+  statusLifecycle?: GoalLifecycle;
+  statusHealth?: GoalHealth;
+  priority?: number;
+  coverImageKey?: string;
+  currency?: string;
+  startDate?: string;
+  targetDate?: string;
+  summaryCurrentValue?: number;
+  summaryProgress?: number;
+  projectedCompletionDate?: string;
+  projectedValueAtTargetDate?: number;
+  summaryTargetAmount?: number;
+  createdAt?: string;
+  updatedAt?: string;
   allocations?: GoalAllocation[];
 }
 
@@ -649,15 +684,19 @@ export interface GoalAllocation {
   id: string;
   goalId: string;
   accountId: string;
-  percentAllocation: number;
+  sharePercent: number;
+  taxBucket?: string;
 }
 
 export interface GoalProgress {
+  goalId: string;
   name: string;
   targetValue: number;
   currentValue: number;
   progress: number;
   currency: string;
+  statusHealth?: GoalHealth;
+  targetDate?: string;
 }
 
 export interface IncomeByAsset {

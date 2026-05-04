@@ -12,7 +12,7 @@ use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 
 use super::models::AccountUniversalActivity;
-use wealthfolio_core::activities::{self, NewActivity, SymbolInput};
+use wealthfolio_core::activities::{self, AssetResolutionInput, NewActivity};
 use wealthfolio_core::assets::parse_symbol_with_exchange_suffix;
 use wealthfolio_core::fx::currency::{get_normalization_rule, normalize_amount, resolve_currency};
 
@@ -247,9 +247,9 @@ pub fn is_broker_crypto(code: Option<&str>) -> bool {
     )
 }
 
-/// Maps a broker API activity into a `NewActivity` with unresolved `SymbolInput`.
+/// Maps a broker API activity into a `NewActivity` with unresolved `AssetResolutionInput`.
 ///
-/// The returned `NewActivity` has `SymbolInput { symbol, exchange_mic, kind }` set
+/// The returned `NewActivity` has `AssetResolutionInput { symbol, exchange_mic, kind }` set
 /// so that `prepare_activities_for_sync()` can handle asset creation and dedup via `instrument_key`.
 ///
 /// Returns `None` if the activity should be skipped (e.g. no id).
@@ -389,7 +389,7 @@ pub fn map_broker_activity(
     };
 
     // Never-asset types are always pure cash, even if brokers send a symbol.
-    let symbol_input = if is_never_asset_type {
+    let asset_resolution_input = if is_never_asset_type {
         None
     } else if is_cash_like && display_symbol.is_none() && option_symbol.is_none() {
         // Cash activity without symbol - no asset needed
@@ -415,7 +415,7 @@ pub fn map_broker_activity(
                         .and_then(|u| u.description.clone())
                         .filter(|d| !d.trim().is_empty())
                 });
-            SymbolInput {
+            AssetResolutionInput {
                 id: None, // Let sync preparation resolve via instrument_key
                 symbol: Some(sym),
                 exchange_mic: exchange_mic.clone(),
@@ -474,7 +474,7 @@ pub fn map_broker_activity(
     Some(NewActivity {
         id: Some(activity_id),
         account_id: account_id.to_string(),
-        symbol: symbol_input,
+        asset: asset_resolution_input,
         activity_type,
         subtype,
         activity_date,
@@ -604,7 +604,7 @@ mod tests {
 
         let mapped = map_broker_activity(&activity, "acct-1", Some("USD"), Some("USD")).unwrap();
         let symbol = mapped
-            .symbol
+            .asset
             .expect("option activities should produce symbol");
 
         assert_eq!(symbol.kind.as_deref(), Some("OPTION"));
@@ -627,9 +627,7 @@ mod tests {
         };
 
         let mapped = map_broker_activity(&activity, "acct-1", Some("USD"), Some("USD")).unwrap();
-        let symbol = mapped
-            .symbol
-            .expect("equity activity should produce symbol");
+        let symbol = mapped.asset.expect("equity activity should produce symbol");
 
         assert_eq!(symbol.symbol.as_deref(), Some("AAPL"));
         assert_ne!(symbol.kind.as_deref(), Some("OPTION"));
@@ -652,8 +650,8 @@ mod tests {
             let mapped =
                 map_broker_activity(&activity, "acct-1", Some("USD"), Some("USD")).unwrap();
             assert!(
-                mapped.symbol.is_none(),
-                "expected no symbol for never-asset type {}",
+                mapped.asset.is_none(),
+                "expected no asset for never-asset type {}",
                 activity_type
             );
         }
@@ -674,7 +672,7 @@ mod tests {
 
         let mapped = map_broker_activity(&activity, "acct-1", Some("USD"), Some("USD")).unwrap();
         assert_eq!(
-            mapped.symbol.and_then(|s| s.symbol),
+            mapped.asset.and_then(|s| s.symbol),
             Some("AAPL".to_string())
         );
     }

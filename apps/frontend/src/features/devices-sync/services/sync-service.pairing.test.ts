@@ -208,4 +208,28 @@ describe("syncService pairing", () => {
       message: "Waiting for a fresh snapshot",
     });
   });
+
+  it("does not treat skipped_not_ready reconcile as applied", async () => {
+    adapterMocks.deviceSyncReconcileReadyState.mockResolvedValue({
+      status: "skipped_not_ready",
+      message: "Device is not in READY state",
+      bootstrapAction: "NO_BOOTSTRAP",
+      bootstrapStatus: "not_attempted",
+      bootstrapMessage: null,
+      bootstrapSnapshotId: null,
+      cycleStatus: null,
+      cycleNeedsBootstrap: false,
+      retryAttempted: false,
+      retryCycleStatus: null,
+      backgroundStatus: "skipped",
+    });
+
+    const result = await syncService.bootstrapWithOverwriteCheck(true);
+
+    expect(adapterMocks.deviceSyncReconcileReadyState).toHaveBeenCalledWith(true);
+    expect(result).toEqual({
+      status: "not_ready",
+      message: "Device is not in READY state",
+    });
+  });
 });

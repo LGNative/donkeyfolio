@@ -45,6 +45,10 @@ jobs:
             ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' ||
             '' }}
 
+      - name: Install macOS Rust targets
+        if: contains(matrix.platform, 'macos')
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       - name: pnpm Setup
         run: npm install -g pnpm
 

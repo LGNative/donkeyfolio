@@ -272,7 +272,7 @@ export interface BackendSyncReconcileReadyResult {
   };
   status: "ok" | "skipped_not_ready" | "error";
   message: string;
-  bootstrapStatus: "applied" | "skipped" | "requested" | "not_attempted";
+  bootstrapStatus: "applied" | "skipped" | "skipped_not_ready" | "requested" | "not_attempted";
   bootstrapMessage: string | null;
   bootstrapSnapshotId: string | null;
   cycleStatus: string | null;

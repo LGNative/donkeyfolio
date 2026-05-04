@@ -10,6 +10,7 @@ use wealthfolio_connect::{BrokerSyncServiceTrait, TokenLifecycleState};
 use wealthfolio_core::{
     assets::AssetServiceTrait,
     events::{DomainEvent, DomainEventSink},
+    goals::GoalServiceTrait,
     secrets::SecretStore,
 };
 
@@ -68,6 +69,7 @@ impl WebDomainEventSink {
             dyn wealthfolio_core::portfolio::valuation::ValuationServiceTrait + Send + Sync,
         >,
         account_service: Arc<wealthfolio_core::accounts::AccountService>,
+        goal_service: Arc<dyn GoalServiceTrait + Send + Sync>,
         fx_service: Arc<dyn wealthfolio_core::fx::FxServiceTrait + Send + Sync>,
         timezone: Arc<RwLock<String>>,
         secret_store: Arc<dyn SecretStore>,
@@ -89,6 +91,7 @@ impl WebDomainEventSink {
             quote_service,
             valuation_service,
             account_service,
+            goal_service,
             fx_service,
             timezone,
             secret_store,
@@ -133,8 +136,8 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
-    #[test]
-    fn test_sink_sends_events() {
+    #[tokio::test]
+    async fn test_sink_sends_events() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let sink = WebDomainEventSink::with_sender(tx);
 
@@ -149,10 +152,12 @@ mod tests {
             }
             _ => panic!("Expected AssetsCreated event"),
         }
+
+        assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn test_sink_batch_sends_all_events() {
+    #[tokio::test]
+    async fn test_sink_batch_sends_all_events() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let sink = WebDomainEventSink::with_sender(tx);
 
@@ -170,5 +175,20 @@ mod tests {
 
         assert!(matches!(event1, DomainEvent::AssetsCreated { .. }));
         assert!(matches!(event2, DomainEvent::AssetsCreated { .. }));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn pull_complete_is_sent_to_queue() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sink = WebDomainEventSink::with_sender(tx);
+
+        sink.emit(DomainEvent::device_sync_pull_complete());
+
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            DomainEvent::DeviceSyncPullComplete
+        ));
+        assert!(rx.try_recv().is_err());
     }
 }

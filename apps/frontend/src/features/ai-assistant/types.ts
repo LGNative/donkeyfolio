@@ -498,6 +498,7 @@ export interface RecordActivitiesResolvedAsset {
   currency: string;
   exchange?: string;
   exchangeMic?: string;
+  instrumentType?: string;
 }
 
 export interface RecordActivitiesSubtypeOption {

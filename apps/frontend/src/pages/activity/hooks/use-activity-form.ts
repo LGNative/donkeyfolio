@@ -1,7 +1,8 @@
 import { logger } from "@/adapters";
+import { buildAssetResolutionInput } from "@/lib/asset-resolution-input";
 import { ActivityType } from "@/lib/constants";
 import { generateId } from "@/lib/id";
-import type { ActivityCreate, ActivityDetails, SymbolInput } from "@/lib/types";
+import type { ActivityCreate, ActivityDetails } from "@/lib/types";
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import type { AccountSelectOption } from "../components/forms/fields";
@@ -105,6 +106,7 @@ export function useActivityForm({
             // Extract symbol-related and fxRate fields from payload
             const {
               assetId,
+              existingAssetId,
               fxRate,
               exchangeMic,
               quoteMode,
@@ -116,23 +118,25 @@ export function useActivityForm({
               assetId?: string;
               fxRate?: number;
               exchangeMic?: string;
+              existingAssetId?: string;
               quoteMode?: string;
               symbolQuoteCcy?: string;
               symbolInstrumentType?: string;
               assetMetadata?: { name?: string; kind?: string; exchangeMic?: string };
             } & Record<string, unknown>;
 
-            // Build the nested symbol object with all metadata
-            const symbolInput: ActivityCreate["symbol"] = assetId
-              ? {
+            // Build the nested asset object with all metadata
+            const assetInput: ActivityCreate["asset"] = assetId
+              ? buildAssetResolutionInput({
+                  id: existingAssetId,
                   symbol: assetId,
                   exchangeMic,
-                  quoteMode: quoteMode as SymbolInput["quoteMode"],
+                  quoteMode,
                   quoteCcy: symbolQuoteCcy,
                   instrumentType: symbolInstrumentType,
                   name: assetMetadata?.name,
                   kind: assetMetadata?.kind,
-                }
+                })
               : undefined;
 
             // Create TRANSFER_OUT on source account (no fxRate - activity currency = account currency)
@@ -142,7 +146,7 @@ export function useActivityForm({
               activityType: ActivityType.TRANSFER_OUT,
               currency: fromAccount?.currency,
               sourceGroupId,
-              symbol: symbolInput,
+              asset: assetInput,
             } as ActivityCreate;
 
             // Create TRANSFER_IN on destination account (fxRate applies if currencies differ)
@@ -152,7 +156,7 @@ export function useActivityForm({
               activityType: ActivityType.TRANSFER_IN,
               currency: toAccount?.currency,
               sourceGroupId,
-              symbol: symbolInput,
+              asset: assetInput,
               fxRate,
             } as ActivityCreate;
 
@@ -181,9 +185,9 @@ export function useActivityForm({
           if (isEditing && activity?.id) {
             await updateActivityMutation.mutateAsync({
               id: activity.id,
-              existingAssetId: activity.assetId,
+              currentAssetId: activity.assetId,
               ...submitData,
-            } as NewActivityFormValues & { id: string; existingAssetId?: string });
+            } as NewActivityFormValues & { id: string; currentAssetId?: string });
           } else {
             await addActivityMutation.mutateAsync(submitData);
           }
@@ -209,9 +213,9 @@ export function useActivityForm({
         if (isEditing && activity?.id) {
           await updateActivityMutation.mutateAsync({
             id: activity.id,
-            existingAssetId: activity.assetId,
+            currentAssetId: activity.assetId,
             ...submitData,
-          } as NewActivityFormValues & { id: string; existingAssetId?: string });
+          } as NewActivityFormValues & { id: string; currentAssetId?: string });
         } else {
           await addActivityMutation.mutateAsync(submitData);
         }

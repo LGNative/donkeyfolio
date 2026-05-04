@@ -38,7 +38,7 @@ use wealthfolio_storage_sqlite::sync::SqliteSyncEngineDbPorts;
 
 use super::{
     create_client, decrypt_sync_payload, encrypt_sync_payload, get_sync_identity_from_store,
-    persist_device_config_from_identity, SyncCycleResult,
+    persist_device_config_from_identity, sync_identity_can_run_background, SyncCycleResult,
 };
 
 struct TauriEnginePorts {
@@ -152,6 +152,14 @@ impl ReplayStore for TauriEnginePorts {
 
     async fn mark_engine_error(&self, message: String) -> Result<(), String> {
         self.db.mark_engine_error(message).await
+    }
+
+    async fn prune_sync_outbox(
+        &self,
+        sent_before: chrono::DateTime<chrono::Utc>,
+        dead_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, String> {
+        self.db.prune_sync_outbox(sent_before, dead_before).await
     }
 
     async fn prune_applied_events_up_to_seq(&self, seq: i64) -> Result<(), String> {
@@ -318,7 +326,10 @@ pub(super) async fn run_sync_cycle(
 }
 
 pub async fn ensure_background_engine_started(context: Arc<ServiceContext>) -> Result<(), String> {
-    if get_sync_identity_from_store().is_none() {
+    let Some(identity) = get_sync_identity_from_store() else {
+        return Ok(());
+    };
+    if !sync_identity_can_run_background(&identity) {
         return Ok(());
     }
 

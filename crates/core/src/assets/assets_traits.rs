@@ -204,7 +204,7 @@ pub trait AssetRepositoryTrait: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::Error;
+    use crate::errors::{DatabaseError, Error};
 
     struct TestAssetService;
 
@@ -215,7 +215,9 @@ mod tests {
         }
 
         fn get_asset_by_id(&self, _asset_id: &str) -> Result<Asset> {
-            Err(Error::Unexpected("Asset not found".to_string()))
+            Err(Error::Database(DatabaseError::NotFound(
+                "Asset not found".to_string(),
+            )))
         }
 
         async fn delete_asset(&self, _asset_id: &str) -> Result<()> {

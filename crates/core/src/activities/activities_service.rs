@@ -21,10 +21,11 @@ use crate::activities::{
     ImportRun, ImportRunMode, ImportRunRepositoryTrait, ImportRunSummary, ImportRunType, ReviewMode,
 };
 use crate::assets::{
-    normalize_quote_ccy_code, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix,
-    resolve_quote_ccy_precedence, symbol_resolution_candidates, AssetKind, AssetServiceTrait,
-    InstrumentType, QuoteCcyResolutionSource, QuoteMode,
+    canonicalize_market_identity, normalize_quote_ccy_code, parse_crypto_pair_symbol,
+    parse_symbol_with_exchange_suffix, resolve_quote_ccy_precedence, symbol_resolution_candidates,
+    AssetKind, AssetServiceTrait, InstrumentType, QuoteCcyResolutionSource, QuoteMode,
 };
+use crate::errors::{DatabaseError, Error};
 use crate::events::{DomainEvent, DomainEventSink, NoOpDomainEventSink};
 use crate::fx::currency::{get_normalization_rule, normalize_amount, resolve_currency};
 use crate::fx::FxServiceTrait;
@@ -1044,6 +1045,127 @@ impl ActivityService {
         (AssetKind::Investment, Some(InstrumentType::Equity))
     }
 
+    fn is_asset_not_found_error(err: &Error) -> bool {
+        matches!(err, Error::Database(DatabaseError::NotFound(_)))
+    }
+
+    fn has_submitted_asset_identity(
+        submitted_symbol: Option<&str>,
+        submitted_exchange_mic: Option<&str>,
+        submitted_instrument_type: Option<&InstrumentType>,
+        submitted_quote_ccy: Option<&str>,
+    ) -> bool {
+        submitted_symbol
+            .map(str::trim)
+            .filter(|symbol| !symbol.is_empty())
+            .is_some()
+            || submitted_exchange_mic
+                .map(str::trim)
+                .filter(|mic| !mic.is_empty())
+                .is_some()
+            || submitted_instrument_type.is_some()
+            || submitted_quote_ccy
+                .map(str::trim)
+                .filter(|ccy| !ccy.is_empty())
+                .is_some()
+    }
+
+    fn asset_matches_submitted_identity(
+        existing_asset: &crate::assets::Asset,
+        submitted_symbol: Option<&str>,
+        submitted_exchange_mic: Option<&str>,
+        submitted_instrument_type: Option<&InstrumentType>,
+        submitted_quote_ccy: Option<&str>,
+    ) -> bool {
+        let submitted_identity = canonicalize_market_identity(
+            submitted_instrument_type.cloned(),
+            submitted_symbol,
+            submitted_exchange_mic,
+            submitted_quote_ccy,
+        );
+        let existing_identity = canonicalize_market_identity(
+            existing_asset.instrument_type.clone(),
+            existing_asset
+                .instrument_symbol
+                .as_deref()
+                .or(existing_asset.display_code.as_deref()),
+            existing_asset.instrument_exchange_mic.as_deref(),
+            Some(existing_asset.quote_ccy.as_str()),
+        );
+
+        if let Some(submitted_type) = submitted_instrument_type {
+            if existing_asset.instrument_type.as_ref() != Some(submitted_type) {
+                return false;
+            }
+        }
+
+        if let Some(submitted_symbol) = submitted_identity.instrument_symbol.as_deref() {
+            if Some(submitted_symbol) != existing_identity.instrument_symbol.as_deref() {
+                return false;
+            }
+        }
+
+        match submitted_instrument_type.or(existing_asset.instrument_type.as_ref()) {
+            Some(InstrumentType::Crypto | InstrumentType::Fx) => {
+                if let Some(submitted_quote_ccy) = submitted_identity.quote_ccy.as_deref() {
+                    return Some(submitted_quote_ccy) == existing_identity.quote_ccy.as_deref();
+                }
+                true
+            }
+            Some(InstrumentType::Option) => true,
+            _ => {
+                if let Some(submitted_mic) = submitted_identity.instrument_exchange_mic.as_deref() {
+                    return Some(submitted_mic)
+                        == existing_identity.instrument_exchange_mic.as_deref();
+                }
+                true
+            }
+        }
+    }
+
+    fn resolved_submitted_asset_id(
+        &self,
+        submitted_asset_id: Option<&str>,
+        submitted_symbol: Option<&str>,
+        submitted_exchange_mic: Option<&str>,
+        submitted_instrument_type: Option<&InstrumentType>,
+        submitted_quote_ccy: Option<&str>,
+    ) -> Result<Option<String>> {
+        let Some(asset_id) = submitted_asset_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            return Ok(None);
+        };
+
+        let has_identity = Self::has_submitted_asset_identity(
+            submitted_symbol,
+            submitted_exchange_mic,
+            submitted_instrument_type,
+            submitted_quote_ccy,
+        );
+
+        match self.asset_service.get_asset_by_id(asset_id) {
+            Ok(existing_asset) => {
+                if has_identity
+                    && !Self::asset_matches_submitted_identity(
+                        &existing_asset,
+                        submitted_symbol,
+                        submitted_exchange_mic,
+                        submitted_instrument_type,
+                        submitted_quote_ccy,
+                    )
+                {
+                    Ok(None)
+                } else {
+                    Ok(Some(asset_id.to_string()))
+                }
+            }
+            Err(err) if has_identity && Self::is_asset_not_found_error(&err) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
     /// Finds an existing asset by instrument fields, searching all assets.
     fn find_existing_asset_id(
         &self,
@@ -1225,6 +1347,16 @@ impl ActivityService {
         } else {
             Some(base_symbol.to_string())
         };
+        let submitted_asset_id = self.resolved_submitted_asset_id(
+            activity.get_symbol_id(),
+            normalized_symbol_for_lookup.as_deref(),
+            exchange_mic.as_deref(),
+            effective_instrument_type.as_ref(),
+            quote_ccy_input.as_deref(),
+        )?;
+        if let Some(asset_input) = activity.asset.as_mut() {
+            asset_input.id = submitted_asset_id.clone();
+        }
 
         match symbol.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(raw_symbol) => {
@@ -1240,7 +1372,7 @@ impl ActivityService {
                     normalized_symbol_for_lookup
                         .as_deref()
                         .unwrap_or(raw_symbol),
-                    activity.get_symbol_id(),
+                    submitted_asset_id.as_deref(),
                     exchange_mic.as_deref(),
                     effective_instrument_type.as_ref(),
                     parsed_quote_mode,
@@ -1280,9 +1412,7 @@ impl ActivityService {
             quote_ccy_input.clone().unwrap_or(currency.clone())
         } else {
             let existing_asset_quote_ccy = self
-                .existing_asset_quote_ccy_by_id(
-                    activity.get_symbol_id().filter(|id| !id.trim().is_empty()),
-                )
+                .existing_asset_quote_ccy_by_id(submitted_asset_id.as_deref())
                 .or_else(|| {
                     normalized_symbol_for_lookup
                         .as_deref()
@@ -1320,12 +1450,14 @@ impl ActivityService {
         // 3. Cash activities: no asset
         let resolved_asset_id = if let Some(ref normalized_symbol) = normalized_symbol_for_lookup {
             // Look up existing asset by instrument fields
-            let existing_id = self.find_existing_asset_id(
-                normalized_symbol,
-                exchange_mic.as_deref(),
-                effective_instrument_type.as_ref(),
-                Some(&asset_currency),
-            );
+            let existing_id = self
+                .find_existing_asset_id(
+                    normalized_symbol,
+                    exchange_mic.as_deref(),
+                    effective_instrument_type.as_ref(),
+                    Some(&asset_currency),
+                )
+                .or_else(|| submitted_asset_id.clone());
 
             if let Some(id) = existing_id {
                 Some(id)
@@ -1365,7 +1497,7 @@ impl ActivityService {
                     .await?;
                 Some(new_id)
             }
-        } else if let Some(asset_id) = activity.get_symbol_id().filter(|s| !s.is_empty()) {
+        } else if let Some(asset_id) = submitted_asset_id.as_deref() {
             // Existing asset_id provided (UUID from frontend)
             Some(asset_id.to_string())
         } else if !Self::requires_asset_identity(
@@ -1382,10 +1514,10 @@ impl ActivityService {
 
         // Update activity's asset with resolved asset_id
         if let Some(ref resolved_id) = resolved_asset_id {
-            match activity.symbol.as_mut() {
+            match activity.asset.as_mut() {
                 Some(asset) => asset.id = Some(resolved_id.clone()),
                 None => {
-                    activity.symbol = Some(SymbolInput {
+                    activity.asset = Some(AssetResolutionInput {
                         id: Some(resolved_id.clone()),
                         ..Default::default()
                     });
@@ -1406,22 +1538,26 @@ impl ActivityService {
                 requested_quote_ccy: quote_ccy_for_asset.clone(),
                 asset_metadata: None,
             };
-            let asset = self
-                .asset_service
-                .get_or_create_minimal_asset(
-                    asset_id,
-                    Some(asset_currency.clone()),
-                    Some(metadata),
-                    quote_mode.clone(),
-                )
-                .await?;
+            let mut asset = if normalized_symbol_for_lookup.is_none() {
+                self.asset_service.get_asset_by_id(asset_id)?
+            } else {
+                self.asset_service
+                    .get_or_create_minimal_asset(
+                        asset_id,
+                        Some(asset_currency.clone()),
+                        Some(metadata),
+                        quote_mode.clone(),
+                    )
+                    .await?
+            };
 
             // Update asset quote mode if specified (for existing assets that need mode change)
             if let Some(ref mode) = quote_mode {
                 let requested_mode = mode.to_uppercase();
                 let current_mode = asset.quote_mode.as_db_str();
                 if requested_mode != current_mode {
-                    self.asset_service
+                    asset = self
+                        .asset_service
                         .update_quote_mode_silent(&asset.id, &requested_mode)
                         .await?;
                 }
@@ -1632,6 +1768,16 @@ impl ActivityService {
         } else {
             Some(base_symbol.to_string())
         };
+        let submitted_asset_id = self.resolved_submitted_asset_id(
+            activity.get_symbol_id(),
+            normalized_symbol_for_lookup.as_deref(),
+            exchange_mic.as_deref(),
+            effective_instrument_type.as_ref(),
+            quote_ccy_input.as_deref(),
+        )?;
+        if let Some(asset_input) = activity.asset.as_mut() {
+            asset_input.id = submitted_asset_id.clone();
+        }
 
         match symbol.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(raw_symbol) => {
@@ -1647,7 +1793,7 @@ impl ActivityService {
                     normalized_symbol_for_lookup
                         .as_deref()
                         .unwrap_or(raw_symbol),
-                    activity.get_symbol_id(),
+                    submitted_asset_id.as_deref(),
                     exchange_mic.as_deref(),
                     effective_instrument_type.as_ref(),
                     parsed_quote_mode,
@@ -1684,9 +1830,7 @@ impl ActivityService {
             quote_ccy_input.clone().unwrap_or(currency.clone())
         } else {
             let existing_asset_quote_ccy = self
-                .existing_asset_quote_ccy_by_id(
-                    activity.get_symbol_id().filter(|id| !id.trim().is_empty()),
-                )
+                .existing_asset_quote_ccy_by_id(submitted_asset_id.as_deref())
                 .or_else(|| {
                     normalized_symbol_for_lookup
                         .as_deref()
@@ -1720,12 +1864,14 @@ impl ActivityService {
 
         // Resolve asset_id (same logic as prepare_new_activity)
         let resolved_asset_id = if let Some(ref normalized_symbol) = normalized_symbol_for_lookup {
-            let existing_id = self.find_existing_asset_id(
-                normalized_symbol,
-                exchange_mic.as_deref(),
-                effective_instrument_type.as_ref(),
-                Some(&asset_currency),
-            );
+            let existing_id = self
+                .find_existing_asset_id(
+                    normalized_symbol,
+                    exchange_mic.as_deref(),
+                    effective_instrument_type.as_ref(),
+                    Some(&asset_currency),
+                )
+                .or_else(|| submitted_asset_id.clone());
 
             if let Some(id) = existing_id {
                 Some(id)
@@ -1761,7 +1907,7 @@ impl ActivityService {
                     .await?;
                 Some(new_id)
             }
-        } else if let Some(asset_id) = activity.get_symbol_id().filter(|s| !s.is_empty()) {
+        } else if let Some(asset_id) = submitted_asset_id.as_deref() {
             Some(asset_id.to_string())
         } else if !Self::requires_asset_identity(
             &activity.activity_type,
@@ -1777,10 +1923,10 @@ impl ActivityService {
 
         // Update activity's asset with resolved asset_id
         if let Some(ref resolved_id) = resolved_asset_id {
-            match activity.symbol.as_mut() {
+            match activity.asset.as_mut() {
                 Some(asset) => asset.id = Some(resolved_id.clone()),
                 None => {
-                    activity.symbol = Some(SymbolInput {
+                    activity.asset = Some(AssetResolutionInput {
                         id: Some(resolved_id.clone()),
                         ..Default::default()
                     });
@@ -1801,22 +1947,26 @@ impl ActivityService {
                 requested_quote_ccy: quote_ccy_for_asset.clone(),
                 asset_metadata: None,
             };
-            let asset = self
-                .asset_service
-                .get_or_create_minimal_asset(
-                    asset_id,
-                    Some(asset_currency.clone()),
-                    Some(metadata),
-                    quote_mode.clone(),
-                )
-                .await?;
+            let mut asset = if normalized_symbol_for_lookup.is_none() {
+                self.asset_service.get_asset_by_id(asset_id)?
+            } else {
+                self.asset_service
+                    .get_or_create_minimal_asset(
+                        asset_id,
+                        Some(asset_currency.clone()),
+                        Some(metadata),
+                        quote_mode.clone(),
+                    )
+                    .await?
+            };
 
             // Update asset quote mode if specified
             if let Some(ref mode) = quote_mode {
                 let requested_mode = mode.to_uppercase();
                 let current_mode = asset.quote_mode.as_db_str();
                 if requested_mode != current_mode {
-                    self.asset_service
+                    asset = self
+                        .asset_service
                         .update_quote_mode_silent(&asset.id, &requested_mode)
                         .await?;
                 }
@@ -1935,7 +2085,22 @@ impl ActivityService {
                 // No symbol provided - check if we have an asset_id directly (UUID)
                 if let Some(asset_id) = activity.get_symbol_id() {
                     if !asset_id.is_empty() {
-                        // asset_id is a UUID; look up the existing asset to build spec
+                        let asset_id = self
+                            .resolved_submitted_asset_id(
+                                Some(asset_id),
+                                None,
+                                None,
+                                None,
+                                quote_ccy_input.as_deref(),
+                            )?
+                            .ok_or_else(|| {
+                                ActivityError::InvalidData(
+                                    "Asset-backed activity needs symbol or asset_id".to_string(),
+                                )
+                            })?;
+                        let existing_asset = self.asset_service.get_asset_by_id(&asset_id)?;
+
+                        // asset_id is a UUID; use the existing asset to build the spec
                         let currency = Self::normalize_quote_ccy(activity.get_quote_ccy())
                             .or_else(|| {
                                 if !activity.currency.is_empty() {
@@ -1944,7 +2109,7 @@ impl ActivityService {
                                     None
                                 }
                             })
-                            .unwrap_or_else(|| account_currency.clone());
+                            .unwrap_or(existing_asset.quote_ccy);
 
                         let quote_mode = activity.get_quote_mode().and_then(|s| {
                             match s.to_uppercase().as_str() {
@@ -1955,7 +2120,7 @@ impl ActivityService {
                         });
 
                         return Ok(Some(AssetSpec {
-                            id: Some(asset_id.to_string()),
+                            id: Some(asset_id),
                             display_code: None,
                             instrument_symbol: None,
                             instrument_exchange_mic: None,
@@ -2057,12 +2222,19 @@ impl ActivityService {
         } else {
             base_symbol.to_string()
         };
+        let submitted_asset_id = self.resolved_submitted_asset_id(
+            activity.get_symbol_id(),
+            Some(normalized_symbol.as_str()),
+            exchange_mic.as_deref(),
+            instrument_type.as_ref(),
+            quote_ccy_input.as_deref(),
+        )?;
         let quote_lookup_symbol = normalized_symbol.clone();
 
         if !allow_live_resolution {
             self.asset_service.validate_persisted_symbol_metadata(
                 normalized_symbol.as_str(),
-                activity.get_symbol_id(),
+                submitted_asset_id.as_deref(),
                 exchange_mic.as_deref(),
                 instrument_type.as_ref(),
                 quote_mode,
@@ -2079,9 +2251,7 @@ impl ActivityService {
                 .unwrap_or_else(|| currency.clone())
         } else {
             let existing_asset_quote_ccy = self
-                .existing_asset_quote_ccy_by_id(
-                    activity.get_symbol_id().filter(|id| !id.trim().is_empty()),
-                )
+                .existing_asset_quote_ccy_by_id(submitted_asset_id.as_deref())
                 .or_else(|| {
                     self.asset_service.existing_quote_ccy_by_symbol(
                         normalized_symbol.as_str(),
@@ -2127,12 +2297,14 @@ impl ActivityService {
         };
 
         // Look up existing asset by instrument fields to get its UUID
-        let existing_id = self.find_existing_asset_id(
-            &normalized_symbol,
-            exchange_mic.as_deref(),
-            instrument_type.as_ref(),
-            Some(&asset_currency),
-        );
+        let existing_id = self
+            .find_existing_asset_id(
+                &normalized_symbol,
+                exchange_mic.as_deref(),
+                instrument_type.as_ref(),
+                Some(&asset_currency),
+            )
+            .or(submitted_asset_id);
 
         Ok(Some(AssetSpec {
             id: existing_id,
@@ -2759,6 +2931,68 @@ impl ActivityServiceTrait for ActivityService {
         );
 
         Ok(deleted)
+    }
+
+    async fn link_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)> {
+        let (transfer_in, transfer_out) = self
+            .activity_repository
+            .link_transfer_activities(activity_a_id, activity_b_id)
+            .await?;
+
+        let mut account_ids: HashSet<String> = HashSet::new();
+        let mut asset_ids: HashSet<String> = HashSet::new();
+        let mut currencies: HashSet<String> = HashSet::new();
+        for activity in [&transfer_in, &transfer_out] {
+            account_ids.insert(activity.account_id.clone());
+            if let Some(ref asset_id) = activity.asset_id {
+                asset_ids.insert(asset_id.clone());
+            }
+            currencies.insert(activity.currency.clone());
+        }
+        let earliest_at = transfer_in.activity_date.min(transfer_out.activity_date);
+        self.emit_activities_changed(
+            account_ids.into_iter().collect(),
+            asset_ids.into_iter().collect(),
+            currencies.into_iter().collect(),
+            Some(earliest_at),
+        );
+
+        Ok((transfer_in, transfer_out))
+    }
+
+    async fn unlink_transfer_activities(
+        &self,
+        activity_a_id: String,
+        activity_b_id: String,
+    ) -> Result<(Activity, Activity)> {
+        let (transfer_in, transfer_out) = self
+            .activity_repository
+            .unlink_transfer_activities(activity_a_id, activity_b_id)
+            .await?;
+
+        let mut account_ids: HashSet<String> = HashSet::new();
+        let mut asset_ids: HashSet<String> = HashSet::new();
+        let mut currencies: HashSet<String> = HashSet::new();
+        for activity in [&transfer_in, &transfer_out] {
+            account_ids.insert(activity.account_id.clone());
+            if let Some(ref asset_id) = activity.asset_id {
+                asset_ids.insert(asset_id.clone());
+            }
+            currencies.insert(activity.currency.clone());
+        }
+        let earliest_at = transfer_in.activity_date.min(transfer_out.activity_date);
+        self.emit_activities_changed(
+            account_ids.into_iter().collect(),
+            asset_ids.into_iter().collect(),
+            currencies.into_iter().collect(),
+            Some(earliest_at),
+        );
+
+        Ok((transfer_in, transfer_out))
     }
 
     async fn bulk_mutate_activities(
@@ -4111,10 +4345,10 @@ impl ActivityService {
 
             // Update activity's asset with resolved asset_id
             if let Some(ref asset_id) = resolved_asset_id {
-                match activity.symbol.as_mut() {
+                match activity.asset.as_mut() {
                     Some(asset) => asset.id = Some(asset_id.clone()),
                     None => {
-                        activity.symbol = Some(SymbolInput {
+                        activity.asset = Some(AssetResolutionInput {
                             id: Some(asset_id.clone()),
                             ..Default::default()
                         });

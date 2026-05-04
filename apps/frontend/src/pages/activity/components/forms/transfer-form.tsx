@@ -1,4 +1,5 @@
 import { useSettings } from "@/hooks/use-settings";
+import { isSecuritiesTransfer } from "@/lib/activity-utils";
 import { ActivityType, QuoteMode } from "@/lib/constants";
 import { formatAmount } from "@/lib/utils";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -55,6 +56,7 @@ export const transferFormSchema = z
       .nullable(),
     // Fields for security transfers
     assetId: z.string().optional().nullable(),
+    existingAssetId: z.string().nullable().optional(),
     quantity: z.coerce
       .number({
         invalid_type_error: "Quantity must be a number.",
@@ -231,13 +233,22 @@ export function TransferForm({
   const initialCurrency =
     defaultValues?.currency?.trim() || assetCurrency?.trim() || initialAccount?.currency;
 
-  // Determine initial transfer mode from defaults
-  const initialTransferMode: TransferMode =
-    defaultValues?.transferMode ?? (defaultValues?.assetId ? "securities" : "cash");
-
   // Determine initial external state
   const initialIsExternal = defaultValues?.isExternal ?? false;
   const initialDirection: TransferDirection = defaultValues?.direction ?? "in";
+  const initialActivityType =
+    initialDirection === "in" ? ActivityType.TRANSFER_IN : ActivityType.TRANSFER_OUT;
+
+  // Determine initial transfer mode from defaults
+  const initialTransferMode: TransferMode =
+    defaultValues?.transferMode ??
+    (isSecuritiesTransfer(
+      initialActivityType,
+      defaultValues?.assetId ?? undefined,
+      defaultValues?.assetId ?? undefined,
+    )
+      ? "securities"
+      : "cash");
 
   const form = useForm<TransferFormValues>({
     resolver: zodResolver(transferFormSchema) as Resolver<TransferFormValues>,
@@ -297,6 +308,11 @@ export function TransferForm({
     // Clear irrelevant fields when switching modes
     if (mode === "cash") {
       setValue("assetId", null);
+      setValue("existingAssetId", undefined);
+      setValue("exchangeMic", undefined);
+      setValue("symbolQuoteCcy", undefined);
+      setValue("symbolInstrumentType", undefined);
+      setValue("assetMetadata", undefined);
       setValue("quantity", null);
       setValue("unitPrice", null);
     } else {
@@ -461,6 +477,7 @@ export function TransferForm({
                   currencyName="currency"
                   quoteCcyName="symbolQuoteCcy"
                   instrumentTypeName="symbolInstrumentType"
+                  existingAssetIdName="existingAssetId"
                   assetMetadataName="assetMetadata"
                 />
                 {/* Hidden fields to register assetMetadata for react-hook-form */}
@@ -468,6 +485,7 @@ export function TransferForm({
                 <input type="hidden" {...form.register("assetMetadata.kind")} />
                 <input type="hidden" {...form.register("symbolQuoteCcy")} />
                 <input type="hidden" {...form.register("symbolInstrumentType")} />
+                <input type="hidden" {...form.register("existingAssetId")} />
                 <QuantityInput name="quantity" label="Quantity" />
                 {/* Cost basis only needed for external transfer in - backend calculates for transfer out */}
                 {isExternal && direction === "in" && (

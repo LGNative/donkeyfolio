@@ -23,6 +23,7 @@ import {
 export const dividendFormSchema = z.object({
   accountId: z.string().min(1, { message: "Please select an account." }),
   symbol: z.string().min(1, { message: "Please enter a symbol." }),
+  existingAssetId: z.string().nullable().optional(),
   exchangeMic: z.string().nullable().optional(),
   activityDate: z.date({ required_error: "Please select a date." }),
   amount: z.coerce
@@ -143,9 +144,11 @@ export function DividendForm({
               currencyName="currency"
               quoteCcyName="symbolQuoteCcy"
               instrumentTypeName="symbolInstrumentType"
+              existingAssetIdName="existingAssetId"
             />
             <input type="hidden" {...form.register("symbolQuoteCcy")} />
             <input type="hidden" {...form.register("symbolInstrumentType")} />
+            <input type="hidden" {...form.register("existingAssetId")} />
 
             {/* Date Picker */}
             <DatePicker name="activityDate" label="Date" />
