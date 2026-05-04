@@ -382,6 +382,40 @@ function classifyCash(typ: string, desc: string = ""): keyof CashflowBucket | nu
  * from the cache hash so it's safe).
  */
 export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapshot {
+  // (v3.3.3) Per-year accumulator declared FIRST so the cash loop can
+  // attribute earnings/interest by year without hitting a TDZ on the
+  // forward reference. Trades loop also uses it.
+  type YearAcc = {
+    buyOrders: number;
+    sellOrders: number;
+    buyFees: number;
+    sellFees: number;
+    invested: number;
+    divested: number;
+    realizedPnlEur: number;
+    earnings: number;
+    interestIn: number;
+  };
+  const perYearMap = new Map<string, YearAcc>();
+  const ensureYear = (yyyy: string): YearAcc => {
+    let y = perYearMap.get(yyyy);
+    if (!y) {
+      y = {
+        buyOrders: 0,
+        sellOrders: 0,
+        buyFees: 0,
+        sellFees: 0,
+        invested: 0,
+        divested: 0,
+        realizedPnlEur: 0,
+        earnings: 0,
+        interestIn: 0,
+      };
+      perYearMap.set(yyyy, y);
+    }
+    return y;
+  };
+
   // ─── Cashflow buckets ───────────────────────────────────────────────
   const cashflow: CashflowBucket = {
     deposits: 0,
@@ -513,37 +547,8 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
   // The previous per-row sum overcounted fees on partial fills (the very
   // bug v3.2.3 fixed in the activity emitter).
   const seenOrderKeys = new Set<string>();
-  // (v3.2.5 / v3.3.0) Per-year breakdown for fiscal cross-check.
-  type YearAcc = {
-    buyOrders: number;
-    sellOrders: number;
-    buyFees: number;
-    sellFees: number;
-    invested: number;
-    divested: number;
-    realizedPnlEur: number;
-    earnings: number;
-    interestIn: number;
-  };
-  const perYearMap = new Map<string, YearAcc>();
-  const ensureYear = (yyyy: string): YearAcc => {
-    let y = perYearMap.get(yyyy);
-    if (!y) {
-      y = {
-        buyOrders: 0,
-        sellOrders: 0,
-        buyFees: 0,
-        sellFees: 0,
-        invested: 0,
-        divested: 0,
-        realizedPnlEur: 0,
-        earnings: 0,
-        interestIn: 0,
-      };
-      perYearMap.set(yyyy, y);
-    }
-    return y;
-  };
+  // (v3.3.3) perYearMap and ensureYear hoisted to the top of the function
+  // — see early declaration above.
   for (const t of input.trades) {
     const cash = Math.abs(t.amount);
     const orderKey = `${t.date}|${t.isin}|${t.isBuy ? "B" : "S"}|${t.isSavingsPlan ? "SP" : "M"}`;

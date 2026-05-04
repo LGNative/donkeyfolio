@@ -2292,18 +2292,14 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         </>
       )}
 
-      {/* Footer credit */}
+      {/* Footer credit. The PDF text-extraction core was originally
+          vendored from @jcmpagel's TR converter; everything else
+          (locale-aware parsing, partial-fill aggregation, FX, crypto
+          resolver, cashflow panel, snapshot validation, etc.) is the
+          Donkeyfolio addon. Kept the attribution because the upstream
+          parser still does the initial PDF→rows extraction. */}
       <div className="text-muted-foreground border-t pt-4 text-xs">
-        Built on{" "}
-        <a
-          href="https://kontoauszug.jonathanpagel.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:text-foreground underline"
-        >
-          kontoauszug.jonathanpagel.com
-        </a>{" "}
-        by{" "}
+        TR PDF Converter · TR text extraction adapted from{" "}
         <a
           href="https://github.com/jcmpagel/Trade-Republic-CSV-Excel"
           target="_blank"
@@ -2312,7 +2308,8 @@ export default function TrConverterPage({ ctx }: TrConverterPageProps) {
         >
           @jcmpagel
         </a>
-        .
+        ; locale parsing, FX, crypto resolver, partial-fill aggregation, cashflow panel, fiscal
+        cross-check by Donkeyfolio.
       </div>
     </div>
   );
