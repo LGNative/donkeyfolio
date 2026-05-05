@@ -36,7 +36,7 @@ import type {
 } from "../lib/tr-parser";
 
 const SECRET_KEY_API = "anthropic_api_key";
-const ADDON_VERSION = "3.3.7";
+const ADDON_VERSION = "3.8.0";
 
 interface AiWizardPanelProps {
   ctx: AddonContext;
@@ -330,6 +330,33 @@ export default function AiWizardPanel({
                     <span>Earnings: €{y.earnings.toLocaleString("pt-PT")}</span>
                     <span>Juros: €{y.interestIn.toLocaleString("pt-PT")}</span>
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {snapshot.realizedPerIsin2024 && snapshot.realizedPerIsin2024.length > 0 && (
+          <div className="mt-2 border-t pt-2">
+            <div className="text-muted-foreground mb-1 text-[10px] font-medium uppercase tracking-wider">
+              Top 5 ISINs por Realized 2024 (debug)
+            </div>
+            <div className="space-y-0.5 font-mono text-[10px]">
+              {snapshot.realizedPerIsin2024.slice(0, 5).map((r) => (
+                <div key={r.isin} className="flex flex-wrap gap-x-3">
+                  <span className="text-foreground w-32">{r.isin}</span>
+                  <span
+                    className={
+                      r.realizedEur >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-red-600 dark:text-red-400"
+                    }
+                  >
+                    {r.realizedEur >= 0 ? "+" : ""}€{r.realizedEur.toLocaleString("pt-PT")}
+                  </span>
+                  <span className="text-muted-foreground">
+                    sells €{r.sellsEur.toLocaleString("pt-PT")} − cost €
+                    {r.costEur.toLocaleString("pt-PT")} ({r.sellCount} sells)
+                  </span>
                 </div>
               ))}
             </div>

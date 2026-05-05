@@ -206,6 +206,16 @@ export interface ValidationSnapshot {
   perIsin: PerIsinFigure[];
   perCurrency: PerCurrencyFigure[];
   unresolved: UnresolvedRow[];
+  /** (v3.3.8) Top per-ISIN contributors to 2024 Realized P&L, sorted by
+   *  absolute |realizedEur| descending. Used to spot the outlier(s)
+   *  responsible for the −€10K phantom cost basis the user reported. */
+  realizedPerIsin2024: Array<{
+    isin: string;
+    realizedEur: number;
+    sellsEur: number;
+    costEur: number;
+    sellCount: number;
+  }>;
 }
 
 /** Inputs the snapshot builder needs. Mirrors what the page already has post-parse. */
@@ -497,6 +507,12 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
     arr.push(t);
     tradesByIsin.set(t.isin, arr);
   }
+  // (v3.3.8) Capture per-ISIN realized contribution for 2024 to find
+  // the outlier(s) responsible for the -€10K phantom cost basis.
+  const realizedPerIsin2024 = new Map<
+    string,
+    { isin: string; realizedEur: number; sellsEur: number; costEur: number; sellCount: number }
+  >();
   for (const [, isinTrades] of tradesByIsin) {
     isinTrades.sort((a, b) => {
       const ai = toIsoCompare(a.date);
@@ -528,7 +544,22 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
           }
         }
         const sellYear = toIsoCompare(t.date).slice(0, 4) || "unknown";
-        ensureYear(sellYear).realizedPnlEur += grossEur - costOfSold;
+        const realized = grossEur - costOfSold;
+        ensureYear(sellYear).realizedPnlEur += realized;
+        if (sellYear === "2024") {
+          const e = realizedPerIsin2024.get(t.isin) ?? {
+            isin: t.isin,
+            realizedEur: 0,
+            sellsEur: 0,
+            costEur: 0,
+            sellCount: 0,
+          };
+          e.realizedEur += realized;
+          e.sellsEur += grossEur;
+          e.costEur += costOfSold;
+          e.sellCount += 1;
+          realizedPerIsin2024.set(t.isin, e);
+        }
       }
     }
   }
@@ -741,6 +772,15 @@ export function buildValidationSnapshot(input: SnapshotInputs): ValidationSnapsh
         interestIn: r2(y.interestIn),
       }))
       .sort((a, b) => (a.year < b.year ? -1 : 1)),
+    realizedPerIsin2024: Array.from(realizedPerIsin2024.values())
+      .map((e) => ({
+        isin: e.isin,
+        realizedEur: r2(e.realizedEur),
+        sellsEur: r2(e.sellsEur),
+        costEur: r2(e.costEur),
+        sellCount: e.sellCount,
+      }))
+      .sort((a, b) => Math.abs(b.realizedEur) - Math.abs(a.realizedEur)),
   };
 }
 
