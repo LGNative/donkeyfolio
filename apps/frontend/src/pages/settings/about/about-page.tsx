@@ -105,16 +105,6 @@ export default function AboutSettingsPage() {
                 Website
               </Button>
               <Button
-                variant="outline"
-                size="sm"
-                className="inline-flex items-center gap-2"
-                disabled
-                title="Coming soon"
-              >
-                <Icons.FileText className="h-4 w-4" />
-                Docs
-              </Button>
-              <Button
                 asChild
                 variant="outline"
                 size="sm"
