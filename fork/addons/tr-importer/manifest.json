@@ -1,7 +1,7 @@
 {
   "id": "tr-importer-addon",
   "name": "TR Importer",
-  "version": "5.1.2",
+  "version": "5.2.0",
   "description": "Trade Republic CSV importer. Drop the 'Extrato de transações.csv' export from the TR app, get every trade, dividend, interest, deposit, withdrawal, staking reward, and corporate action mapped to native Wealthfolio activities — with cost basis, FX, and withholding tax preserved. Incremental imports via transaction_id dedup. Replaces tr-pdf-converter v3.x.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",

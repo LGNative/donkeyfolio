@@ -64,7 +64,12 @@ import { WizardStepper, type WizardStep } from "../components/wizard-stepper";
  * tabs preserves state inside each tab. The Import tab holds the wizard
  * (with its own state machine); other tabs are tools.
  */
-type TabId = "import" | "holdings" | "diagnostics" | "expert" | "sdk-test";
+// v5.2.0: simplified to 3 user-facing tabs. The "holdings" tab now also
+// hosts the diagnostics report below the EUR table, and the "expert" tab
+// hosts the SDK-test panel below the AI panel. The old IDs are kept as
+// internal section anchors so the rest of the state machine doesn't have
+// to change.
+type TabId = "import" | "holdings" | "expert";
 
 interface Props {
   ctx: AddonContext;
@@ -597,14 +602,14 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
         setState({ kind: "empty" });
       }
     }
-    // Auto-trigger loaders for tools that need data fetched on entry.
-    if (tab === "diagnostics") {
+    // v5.2.0: Análise tab loads holdings + auto-runs diagnostics (was its
+    // own tab). Avançado tab opens the Expert (AI) panel and also exposes
+    // the SDK-test panel via a button further down.
+    if (tab === "holdings") {
       handleDiagnose();
     } else if (tab === "expert") {
       setState({ kind: "expert" });
     }
-    // sdk-test is launched by a button inside its tab, not on entry.
-    // holdings (eur view) loads its own data on mount.
   };
 
   return (
@@ -616,26 +621,27 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
           onValueChange={(v) => requestTabChange(v as TabId)}
           className="w-full"
         >
-          <TabsList className="mb-4 grid w-full max-w-2xl grid-cols-5">
+          {/*
+           * v5.2.0 UX simplification: collapsed 5 tabs into 3 so the user
+           * isn't bombarded with developer-flavoured tabs (SDK Test) and
+           * overlapping analysis screens (Holdings + Diagnostics).
+           *
+           *   Importar  — CSV upload + review wizard (unchanged)
+           *   Análise   — EUR holdings table + diagnostics (merged)
+           *   Avançado  — Expert (AI) + SDK Test (dev), one click away
+           */}
+          <TabsList className="mb-4 grid w-full max-w-md grid-cols-3">
             <TabsTrigger value="import" className="gap-1.5">
               <Icons.Upload className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Import</span>
+              <span className="hidden sm:inline">Importar</span>
             </TabsTrigger>
             <TabsTrigger value="holdings" className="gap-1.5">
               <Icons.Globe className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Holdings</span>
-            </TabsTrigger>
-            <TabsTrigger value="diagnostics" className="gap-1.5">
-              <Icons.AlertCircle className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Diagnostics</span>
+              <span className="hidden sm:inline">Análise</span>
             </TabsTrigger>
             <TabsTrigger value="expert" className="gap-1.5">
               <Icons.Sparkles className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Expert</span>
-            </TabsTrigger>
-            <TabsTrigger value="sdk-test" className="gap-1.5">
-              <Icons.CheckCircle className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">SDK Test</span>
+              <span className="hidden sm:inline">Avançado</span>
             </TabsTrigger>
           </TabsList>
 
@@ -656,37 +662,19 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
             />
           )}
 
-          {/* TAB: HOLDINGS — base-currency holdings view */}
+          {/* TAB: ANÁLISE — holdings em EUR + diagnostics inline */}
           {currentTab === "holdings" && (
-            <EurHoldingsView ctx={ctx} onClose={() => setCurrentTab("import")} />
-          )}
+            <div className="space-y-6">
+              <EurHoldingsView ctx={ctx} onClose={() => setCurrentTab("import")} />
 
-          {/* TAB: DIAGNOSTICS */}
-          {currentTab === "diagnostics" && (
-            <>
+              {/* Diagnostics section (was its own tab in <=v5.1.x) */}
               {state.kind === "diagnosing" && (
                 <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-16">
-                    <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
-                    <p className="text-sm font-medium">Reading activities from the TR account…</p>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Icons.Spinner className="text-muted-foreground mb-4 h-8 w-8 animate-spin" />
+                    <p className="text-sm font-medium">A ler atividades da conta TR…</p>
                   </CardContent>
                 </Card>
-              )}
-              {state.kind === "diagnosed" && state.report.totalActivities === 0 && (
-                <EmptyState
-                  icon={<Icons.AlertCircle className="text-muted-foreground h-8 w-8" />}
-                  title="No activities found"
-                  description="The Trade Republic account is empty. Import your CSV first to see diagnostics here."
-                  primaryAction={{
-                    label: "Go to Import",
-                    icon: <Icons.Upload className="h-4 w-4" />,
-                    onClick: () => switchTabImmediate("import"),
-                  }}
-                  secondaryAction={{
-                    label: "Refresh",
-                    onClick: handleDiagnose,
-                  }}
-                />
               )}
               {state.kind === "diagnosed" && state.report.totalActivities > 0 && (
                 <DiagnosticsView
@@ -700,21 +688,21 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
               {state.kind === "error" && state.error.origin === "import" && (
                 <ErrorView error={state.error} onRetry={handleDiagnose} />
               )}
-            </>
+            </div>
           )}
 
-          {/* TAB: EXPERT */}
+          {/* TAB: AVANÇADO — AI Expert (top) + SDK contract test (collapsed) */}
           {currentTab === "expert" && (
-            <ExpertPanel
-              secrets={ctx.api.secrets}
-              context={undefined}
-              onClose={() => setCurrentTab("import")}
-            />
-          )}
+            <div className="space-y-6">
+              <ExpertPanel
+                secrets={ctx.api.secrets}
+                context={undefined}
+                onClose={() => setCurrentTab("import")}
+              />
 
-          {/* TAB: SDK TEST */}
-          {currentTab === "sdk-test" && (
-            <>
+              {/* SDK contract test (was a separate top-level tab in <=v5.1.x).
+                  Moved here so developer-flavoured tools don't dominate the
+                  main nav, but still discoverable for diagnostics. */}
               {state.kind === "sdk_testing" && (
                 <Card>
                   <CardHeader>
@@ -744,16 +732,16 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
               {state.kind !== "sdk_testing" && state.kind !== "sdk_tested" && (
                 <EmptyState
                   icon={<Icons.CheckCircle className="text-muted-foreground h-8 w-8" />}
-                  title="SDK contract test"
-                  description="Inserts one activity of each type via the addon SDK and deletes them immediately. Useful for verifying the addon-host bridge after Wealthfolio updates."
+                  title="Teste de contrato SDK"
+                  description="Insere uma atividade de cada tipo via o SDK do addon e apaga-as logo em seguida. Útil para verificar a ponte addon ↔ Donkeyfolio depois de atualizações."
                   primaryAction={{
-                    label: "Run test",
+                    label: "Correr teste",
                     icon: <Icons.CheckCircle className="h-4 w-4" />,
                     onClick: handleSdkTest,
                   }}
                 />
               )}
-            </>
+            </div>
           )}
         </Tabs>
 
@@ -973,34 +961,28 @@ function renderStepper(state: State): React.JSX.Element | null {
 }
 
 function pageSubtitle(state: State, currentTab: TabId): string {
-  // Tab-level subtitles take precedence (most informative for navigation).
+  // v5.2.0: subtitles match the new 3-tab IA (Importar / Análise / Avançado).
   if (currentTab === "holdings") {
-    return "Holdings table with every monetary column converted to your base currency via Wealthfolio FX rates.";
-  }
-  if (currentTab === "diagnostics") {
-    return "Compare imported activities against the parsed CSV and surface duplicates.";
+    return "Posições em EUR + diagnóstico das atividades importadas.";
   }
   if (currentTab === "expert") {
-    return "Ask a Claude assistant trained on Wealthfolio internals + addon source.";
-  }
-  if (currentTab === "sdk-test") {
-    return "Verify the addon SDK contracts after every Wealthfolio update.";
+    return "Ferramentas avançadas: assistente AI e teste do SDK.";
   }
 
   // Import tab — subtitle reflects wizard step.
   switch (state.kind) {
     case "parsed":
-      return `${state.data.summary.totalRows.toLocaleString("en-US")} transactions in ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} new to import.`;
+      return `${state.data.summary.totalRows.toLocaleString("en-US")} transações em ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} novas para importar.`;
     case "reviewing_assets":
-      return `Review ${state.data.mapping.activities.length.toLocaleString("en-US")} activities · adjust per-asset quoteCcy before import.`;
+      return `Rever ${state.data.mapping.activities.length.toLocaleString("en-US")} atividades · ajustar quoteCcy por ativo antes de importar.`;
     case "importing":
-      return `Importing ${state.current.toLocaleString("en-US")} of ${state.total.toLocaleString("en-US")} activities…`;
+      return `A importar ${state.current.toLocaleString("en-US")} de ${state.total.toLocaleString("en-US")} atividades…`;
     case "imported":
-      return `Imported ${state.activitiesCount.toLocaleString("en-US")} activities in ${(state.durationMs / 1000).toFixed(1)}s.`;
+      return `Importadas ${state.activitiesCount.toLocaleString("en-US")} atividades em ${(state.durationMs / 1000).toFixed(1)}s.`;
     case "error":
       return state.error.title;
     default:
-      return "Import every Trade Republic transaction into Wealthfolio.";
+      return "Importa todas as transações da Trade Republic para o Donkeyfolio.";
   }
 }
 

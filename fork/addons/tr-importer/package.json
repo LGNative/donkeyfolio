@@ -1,6 +1,6 @@
 {
   "name": "tr-importer",
-  "version": "5.1.2",
+  "version": "5.2.0",
   "description": "Trade Republic CSV importer for Wealthfolio",
   "type": "module",
   "main": "dist/addon.js",

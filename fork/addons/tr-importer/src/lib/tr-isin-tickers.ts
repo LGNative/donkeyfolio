@@ -336,7 +336,6 @@ const EQUITIES: Record<string, TickerMapping> = {
   US74624M1027: { symbol: "PSTG", quoteCcy: "USD", instrumentType: "EQUITY" }, // Pure Storage
   US76655K1034: { symbol: "RGTI", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rigetti Computing
   US91332U1016: { symbol: "U", quoteCcy: "USD", instrumentType: "EQUITY" }, // Unity Software
-  US83443Q1031: { symbol: "SOLS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice (Honeywell spin-off)
   US88080T1043: { symbol: "WULF", quoteCcy: "USD", instrumentType: "EQUITY" }, // TeraWulf
   US4824801009: { symbol: "KLAC", quoteCcy: "USD", instrumentType: "EQUITY" }, // KLA
   US9581021055: { symbol: "WDC", quoteCcy: "USD", instrumentType: "EQUITY" }, // Western Digital
