@@ -55,6 +55,51 @@ impl SnapshotRepository {
                     .map_err(StorageError::from)?;
                 Ok(())
             })
+            .await?;
+
+        // Donkeyfolio fork addition: prune old calculated snapshots after every batch save.
+        // The upstream schema stores the full positions+lots JSON per (account_id, date).
+        // For a TR savings-plan user that grows to ~500 KB/row × ~400 days × ~25 accounts =
+        // 4-6 GB of redundant blobs that the app rebuilds on every recalculate. We keep the
+        // most recent 30 days as daily rows plus the latest snapshot of each prior month
+        // (enough for the historical performance chart) and discard the rest. Only rows
+        // with source = 'CALCULATED' are touched — manual checkpoints stay forever.
+        if let Err(e) = self.prune_old_calculated_snapshots().await {
+            warn!("prune_old_calculated_snapshots after save_snapshots failed: {e}");
+        }
+        Ok(())
+    }
+
+    /// Donkeyfolio fork addition. See note in `save_snapshots`.
+    /// Keeps: rows with source != 'CALCULATED', rows from the last 30 days, and the latest
+    /// row of each (account_id, year-month) before that window. Returns the number of rows
+    /// deleted so callers can log / surface metrics if they want.
+    pub async fn prune_old_calculated_snapshots(&self) -> Result<usize> {
+        self.writer
+            .exec(move |conn| {
+                let deleted = diesel::sql_query(
+                    "DELETE FROM holdings_snapshots \
+                     WHERE source = 'CALCULATED' \
+                       AND snapshot_date < date('now', '-30 days') \
+                       AND id NOT IN ( \
+                           SELECT id FROM holdings_snapshots h1 \
+                           WHERE source = 'CALCULATED' \
+                             AND snapshot_date = ( \
+                                 SELECT MAX(h2.snapshot_date) \
+                                 FROM holdings_snapshots h2 \
+                                 WHERE h2.account_id = h1.account_id \
+                                   AND h2.source = 'CALCULATED' \
+                                   AND strftime('%Y-%m', h2.snapshot_date) = strftime('%Y-%m', h1.snapshot_date) \
+                             ) \
+                       )",
+                )
+                .execute(conn)
+                .map_err(StorageError::from)?;
+                if deleted > 0 {
+                    debug!("Pruned {} old calculated holdings_snapshots", deleted);
+                }
+                Ok(deleted)
+            })
             .await
     }
 
