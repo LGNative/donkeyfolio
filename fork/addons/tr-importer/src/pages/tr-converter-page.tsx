@@ -918,11 +918,18 @@ function renderStepper(state: State): React.JSX.Element | null {
   if (state.kind === "imported") return null;
   if (state.kind === "error") return null;
 
+  // v5.3.0: 5-step stepper mirrors Donkeyfolio's built-in import wizard
+  // (Upload → Mapping → Review Assets → Review Activities → Import). The
+  // "Mapping" step is a no-op for us because we auto-detect the TR CSV
+  // shape, but showing it in the stepper keeps the addon visually
+  // consistent with the rest of the app — the same experience the user
+  // already knows from the activity wizard.
   const stateOrder: Record<string, number> = {
-    parsing: 1,
-    parsed: 1,
-    reviewing_assets: 2,
-    importing: 3,
+    parsing: 1, // running through mapper heuristics
+    parsed: 2, // summary cards visible, equivalent to "Review Assets" landing
+    reviewing_assets: 3, // per-row drill-down
+    importing: 4,
+    imported: 4,
   };
   const currentIdx = stateOrder[state.kind] ?? 0;
 
@@ -933,22 +940,27 @@ function renderStepper(state: State): React.JSX.Element | null {
       state: currentIdx > 0 ? "done" : "current",
     },
     {
-      id: "review",
-      label: "Review assets",
+      id: "mapping",
+      label: "Mapping",
       state: currentIdx > 1 ? "done" : currentIdx === 1 ? "current" : "future",
+    },
+    {
+      id: "review-assets",
+      label: "Review Assets",
+      state: currentIdx > 2 ? "done" : currentIdx === 2 ? "current" : "future",
+    },
+    {
+      id: "review-activities",
+      label: "Review Activities",
+      state: currentIdx > 3 ? "done" : currentIdx === 3 ? "current" : "future",
     },
     {
       id: "import",
       label: "Import",
-      state: currentIdx > 2 ? "done" : currentIdx === 2 ? "current" : "future",
-    },
-    {
-      id: "done",
-      label: "Done",
-      state: currentIdx === 3 ? "current" : "future",
+      state: currentIdx === 4 ? "current" : "future",
     },
   ];
-  // First step (upload) is always done once we're past empty.
+  // The drop step is always behind us once a file was read.
   steps[0].state = "done";
 
   return (
