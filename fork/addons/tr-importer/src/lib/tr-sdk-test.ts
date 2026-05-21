@@ -235,7 +235,13 @@ export function buildSamples(accountId: string): SdkTestSample[] {
         activityDate: today,
         symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
         quantity: 0.001,
+        // Wealthfolio v3.4.0 hardened validation: asset-backed income
+        // (DIVIDEND_IN_KIND, SPIN_OFF, etc.) now requires `unitPrice`
+        // (FMV per unit) so the back-end can value the granted shares.
+        // Real TR imports already carry it; this synthetic test row
+        // needs the same to pass the SDK contract.
         amount: 0,
+        unitPrice: 1,
         currency: "EUR",
         comment: "TR Importer SDK test — DIVIDEND_IN_KIND",
         metadata: meta({ tr_kind: "test_dividend_in_kind" }),
