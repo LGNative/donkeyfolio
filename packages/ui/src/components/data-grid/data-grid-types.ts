@@ -13,6 +13,14 @@ export interface CellSelectOption {
 
 export interface SymbolSearchResult {
   symbol: string;
+  /** Canonical asset symbol used for persistence (e.g., "SHOP" for "SHOP.TO") */
+  canonicalSymbol?: string;
+  /** Canonical exchange MIC used for persistence */
+  canonicalExchangeMic?: string;
+  /** Market data provider that returned or resolved this symbol */
+  providerId?: string;
+  /** Provider-native symbol/code (e.g., Yahoo "BRK-B") */
+  providerSymbol?: string;
   shortName?: string;
   longName?: string;
   exchange?: string;
@@ -26,6 +34,7 @@ export interface SymbolSearchResult {
   quoteType?: string;
   score: number;
   dataSource?: string;
+  quoteMode?: "MARKET" | "MANUAL";
   /** Asset kind for custom assets (e.g., "SECURITY", "CRYPTO", "OTHER") */
   assetKind?: string;
   /** True when this result maps to an existing persisted asset. */
@@ -53,7 +62,11 @@ export type CellOpts =
       /** Static options or function to get options dynamically based on row data */
       options: CellSelectOption[] | ((rowData: unknown) => CellSelectOption[]);
       /** Custom renderer for the selected value in display mode */
-      valueRenderer?: (value: string, option?: CellSelectOption) => React.ReactNode;
+      valueRenderer?: (
+        value: string,
+        option?: CellSelectOption,
+        rowData?: unknown,
+      ) => React.ReactNode;
       /** Whether to allow clearing the selection (adds empty option) */
       allowEmpty?: boolean;
       /** Label for the empty option (default: "None") */
@@ -116,6 +129,7 @@ declare module "@tanstack/react-table" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData extends RowData, TValue> {
     label?: string;
+    helpText?: string;
     cell?: CellOpts;
   }
 

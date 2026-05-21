@@ -357,6 +357,20 @@ mod tests {
     }
 
     #[test]
+    fn test_canonicalize_market_identity_uses_tase_minor_unit_as_fallback() {
+        let canonical = canonicalize_market_identity(
+            Some(InstrumentType::Equity),
+            Some("1159029"),
+            Some("XTAE"),
+            None,
+        );
+
+        assert_eq!(canonical.instrument_symbol.as_deref(), Some("1159029"));
+        assert_eq!(canonical.instrument_exchange_mic.as_deref(), Some("XTAE"));
+        assert_eq!(canonical.quote_ccy.as_deref(), Some("ILA"));
+    }
+
+    #[test]
     fn test_resolve_quote_ccy_precedence_prefers_explicit_quote_ccy() {
         let resolved = resolve_quote_ccy_precedence(
             Some("GBp"),
@@ -429,6 +443,46 @@ mod tests {
                 assert_eq!(code.as_ref(), "XAU");
             }
             _ => panic!("expected InstrumentId::Metal"),
+        }
+    }
+
+    #[test]
+    fn test_bond_to_instrument_id_prefers_metadata_isin() {
+        let asset = Asset {
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some("BBG00VM3B640".to_string()),
+            metadata: Some(json!({
+                "identifiers": {
+                    "isin": "IT0005415291"
+                }
+            })),
+            ..create_test_asset(AssetKind::Investment)
+        };
+
+        let id = asset.to_instrument_id().unwrap();
+        match id {
+            crate::assets::InstrumentId::Bond { ref isin } => {
+                assert_eq!(isin.as_ref(), "IT0005415291");
+            }
+            _ => panic!("expected InstrumentId::Bond"),
+        }
+    }
+
+    #[test]
+    fn test_bond_to_instrument_id_falls_back_to_symbol() {
+        let asset = Asset {
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some("US912797NQ65".to_string()),
+            metadata: Some(json!({ "identifiers": {} })),
+            ..create_test_asset(AssetKind::Investment)
+        };
+
+        let id = asset.to_instrument_id().unwrap();
+        match id {
+            crate::assets::InstrumentId::Bond { ref isin } => {
+                assert_eq!(isin.as_ref(), "US912797NQ65");
+            }
+            _ => panic!("expected InstrumentId::Bond"),
         }
     }
 

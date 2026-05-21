@@ -23,9 +23,58 @@ use wealthfolio_core::{
         CashBalanceInput, ManualHoldingInput, ManualSnapshotRequest, ManualSnapshotService,
         SnapshotSource,
     },
+    portfolios::{AccountScope, ResolvedAccountScope},
     quotes::MarketSyncMode,
     valuation::DailyAccountValuation,
 };
+
+// ============================================================================
+// AccountScope IPC boundary struct
+// ============================================================================
+
+/// Flat struct that mirrors the TypeScript `AccountScope` discriminated union.
+/// Used only at the Tauri IPC boundary because serde internally-tagged enums
+/// fail deserialization in Tauri v2 (all variant fields are required simultaneously).
+/// The frontend sends `{ type: "account", accountId: "X" }` unchanged — this struct
+/// deserializes that format and converts to the internal `AccountScope` enum.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountScopeInput {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub account_id: Option<String>,
+    pub portfolio_id: Option<String>,
+    pub account_ids: Option<Vec<String>>,
+}
+
+impl AccountScopeInput {
+    fn into_account_filter(self) -> Result<AccountScope, String> {
+        match self.kind.as_str() {
+            "all" => Ok(AccountScope::All),
+            "account" => {
+                let id = self
+                    .account_id
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| "accountId required for filter type 'account'".to_string())?;
+                Ok(AccountScope::Account { account_id: id })
+            }
+            "portfolio" => {
+                let id = self.portfolio_id.filter(|s| !s.is_empty()).ok_or_else(|| {
+                    "portfolioId required for filter type 'portfolio'".to_string()
+                })?;
+                Ok(AccountScope::Portfolio { portfolio_id: id })
+            }
+            "adHoc" | "accounts" => {
+                let ids = self.account_ids.filter(|v| !v.is_empty()).ok_or_else(|| {
+                    "accountIds required and must be non-empty for filter type 'accounts'"
+                        .to_string()
+                })?;
+                Ok(AccountScope::Accounts { account_ids: ids })
+            }
+            other => Err(format!("unknown filter type: '{other}'")),
+        }
+    }
+}
 
 // ============================================================================
 // Snapshot Info Types
@@ -72,18 +121,45 @@ pub async fn update_portfolio(handle: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves an `AccountScope` to a `ResolvedAccountScope`.
+/// `All` → `TotalSnapshot` (fast precomputed path, no TOTAL string leak).
+/// `Account` → `Account(id)`.
+/// `Portfolio`/`Accounts` → `Accounts(ids)` via membership resolution.
+async fn resolve_scope(
+    filter: &AccountScope,
+    state: &ServiceContext,
+) -> Result<ResolvedAccountScope, String> {
+    state
+        .portfolio_service()
+        .resolve_account_scope(filter)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn get_holdings(
     state: State<'_, Arc<ServiceContext>>,
-    account_id: String,
+    filter: AccountScopeInput,
 ) -> Result<Vec<Holding>, String> {
     debug!("Get holdings...");
     let base_currency = state.get_base_currency();
-    state
-        .holdings_service()
-        .get_holdings(&account_id, &base_currency)
-        .await
-        .map_err(|e| e.to_string())
+    let filter = filter.into_account_filter()?;
+    match resolve_scope(&filter, &state).await? {
+        ResolvedAccountScope::TotalSnapshot => state
+            .holdings_service()
+            .get_holdings("TOTAL", &base_currency)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Account(id) => state
+            .holdings_service()
+            .get_holdings(&id, &base_currency)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Accounts(ids) => state
+            .holdings_service()
+            .get_holdings_for_accounts(&ids, &base_currency, "")
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -132,34 +208,61 @@ pub async fn get_asset_holdings(
 #[tauri::command]
 pub async fn get_portfolio_allocations(
     state: State<'_, Arc<ServiceContext>>,
-    account_id: String,
+    filter: AccountScopeInput,
 ) -> Result<PortfolioAllocations, String> {
-    debug!("Get portfolio allocations for account: {}", account_id);
     let base_currency = state.get_base_currency();
-    state
-        .allocation_service()
-        .get_portfolio_allocations(&account_id, &base_currency)
-        .await
-        .map_err(|e| e.to_string())
+    let filter = filter.into_account_filter()?;
+    match resolve_scope(&filter, &state).await? {
+        ResolvedAccountScope::TotalSnapshot => state
+            .allocation_service()
+            .get_portfolio_allocations("TOTAL", &base_currency)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Account(id) => state
+            .allocation_service()
+            .get_portfolio_allocations(&id, &base_currency)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Accounts(ids) => state
+            .allocation_service()
+            .get_portfolio_allocations_for_accounts(&ids, &base_currency, "")
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
 pub async fn get_holdings_by_allocation(
     state: State<'_, Arc<ServiceContext>>,
-    account_id: String,
+    filter: AccountScopeInput,
     taxonomy_id: String,
     category_id: String,
 ) -> Result<AllocationHoldings, String> {
-    debug!(
-        "Get holdings for category {} in taxonomy {} for account {}",
-        category_id, taxonomy_id, account_id
-    );
     let base_currency = state.get_base_currency();
-    state
-        .allocation_service()
-        .get_holdings_by_allocation(&account_id, &base_currency, &taxonomy_id, &category_id)
-        .await
-        .map_err(|e| e.to_string())
+    let filter = filter.into_account_filter()?;
+    match resolve_scope(&filter, &state).await? {
+        ResolvedAccountScope::TotalSnapshot => state
+            .allocation_service()
+            .get_holdings_by_allocation("TOTAL", &base_currency, &taxonomy_id, &category_id)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Account(id) => state
+            .allocation_service()
+            .get_holdings_by_allocation(&id, &base_currency, &taxonomy_id, &category_id)
+            .await
+            .map_err(|e| e.to_string()),
+        ResolvedAccountScope::Accounts(ids) => state
+            .allocation_service()
+            .get_holdings_by_allocation_for_accounts(
+                &ids,
+                &base_currency,
+                &taxonomy_id,
+                &category_id,
+                "",
+            )
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -224,12 +327,22 @@ pub async fn get_latest_valuations(
 #[tauri::command]
 pub async fn get_income_summary(
     state: State<'_, Arc<ServiceContext>>,
-    account_id: Option<String>,
+    filter: Option<AccountScopeInput>,
 ) -> Result<Vec<IncomeSummary>, String> {
     debug!("Fetching income summary...");
+    let account_ids: Option<Vec<String>> = if let Some(input) = filter {
+        let af = input.into_account_filter()?;
+        match resolve_scope(&af, &state).await? {
+            ResolvedAccountScope::TotalSnapshot => None,
+            ResolvedAccountScope::Account(id) => Some(vec![id]),
+            ResolvedAccountScope::Accounts(ids) => Some(ids),
+        }
+    } else {
+        None
+    };
     state
         .income_service()
-        .get_income_summary(account_id.as_deref())
+        .get_income_summary(account_ids.as_deref())
         .map_err(|e| e.to_string())
 }
 
@@ -383,6 +496,14 @@ pub struct HoldingInput {
     pub average_cost: Option<String>,
     /// Exchange MIC code for new holdings (e.g., "XNAS", "XTSE"). Used when asset_id is not provided.
     pub exchange_mic: Option<String>,
+    /// Quote currency resolved during search/review (e.g., GBp)
+    pub quote_ccy: Option<String>,
+    /// Instrument type resolved during search/review (e.g., EQUITY, CRYPTO)
+    pub instrument_type: Option<String>,
+    /// Market data provider that resolved this holding, if selected.
+    pub provider_id: Option<String>,
+    /// Provider-native symbol/code selected by search/import.
+    pub provider_symbol: Option<String>,
     /// Asset name for new custom assets
     pub name: Option<String>,
     /// Data source (e.g., "MANUAL" for custom assets) — sets quote mode to manual
@@ -451,6 +572,10 @@ pub async fn save_manual_holdings(
             name: holding.name,
             data_source: holding.data_source,
             asset_kind: holding.asset_kind,
+            quote_ccy: holding.quote_ccy,
+            instrument_type: holding.instrument_type,
+            provider_id: holding.provider_id,
+            provider_symbol: holding.provider_symbol,
         });
     }
 
@@ -658,6 +783,14 @@ pub struct HoldingsPositionInput {
     pub currency: String,
     /// Exchange MIC code (e.g., "XNAS", "XTSE") resolved during check step
     pub exchange_mic: Option<String>,
+    /// Quote currency resolved during asset review/search
+    pub quote_ccy: Option<String>,
+    /// Instrument type resolved during asset review/search
+    pub instrument_type: Option<String>,
+    /// Market data provider that resolved this position, if selected.
+    pub provider_id: Option<String>,
+    /// Provider-native symbol/code selected by search/import.
+    pub provider_symbol: Option<String>,
     /// Resolved asset ID from asset review step
     pub asset_id: Option<String>,
 }
@@ -824,6 +957,10 @@ async fn import_single_snapshot(
             name: None,
             data_source: None,
             asset_kind: None,
+            quote_ccy: pos_input.quote_ccy.clone(),
+            instrument_type: pos_input.instrument_type.clone(),
+            provider_id: pos_input.provider_id.clone(),
+            provider_symbol: pos_input.provider_symbol.clone(),
         });
     }
 
@@ -1053,6 +1190,7 @@ pub async fn get_snapshot_by_date(
             weight: Decimal::ZERO,
             as_of_date: target_date,
             metadata: asset.metadata.clone(),
+            source_account_ids: Vec::new(),
         };
         holdings.push(holding);
     }
@@ -1098,6 +1236,7 @@ pub async fn get_snapshot_by_date(
             weight: Decimal::ZERO,
             as_of_date: target_date,
             metadata: None,
+            source_account_ids: Vec::new(),
         };
         holdings.push(holding);
     }

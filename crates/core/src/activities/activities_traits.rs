@@ -96,7 +96,8 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     ) -> Result<()>;
     // Add other repository methods if necessary, e.g., calculate_average_cost, get_deposit_activities
     fn calculate_average_cost(&self, account_id: &str, asset_id: &str) -> Result<Decimal>;
-    fn get_income_activities_data(&self, account_id: Option<&str>) -> Result<Vec<IncomeData>>;
+    fn get_income_activities_data(&self, account_ids: Option<&[String]>)
+        -> Result<Vec<IncomeData>>;
     fn get_first_activity_date_overall(&self) -> Result<DateTime<Utc>>;
 
     /// Gets the first and last activity dates for each asset in the provided list.
@@ -110,6 +111,17 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     /// Both dates may be None if no activities exist for the asset.
     #[allow(clippy::type_complexity)]
     fn get_activity_bounds_for_assets(
+        &self,
+        asset_ids: &[String],
+    ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>>;
+
+    /// Gets the first and last non-archived holdings snapshot dates where each
+    /// asset appears.
+    ///
+    /// Holdings-mode assets can have historical valuation exposure without any
+    /// activity rows, so quote planning must include these bounds too.
+    #[allow(clippy::type_complexity)]
+    fn get_holdings_snapshot_bounds_for_assets(
         &self,
         asset_ids: &[String],
     ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>>;

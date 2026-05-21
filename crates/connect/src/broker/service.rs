@@ -23,10 +23,10 @@ use std::collections::{HashMap, HashSet};
 use wealthfolio_core::accounts::{Account, AccountServiceTrait, NewAccount, TrackingMode};
 use wealthfolio_core::activities::{
     compute_idempotency_key, ActivityRepositoryTrait, ActivityServiceTrait, ActivityUpsert,
-    NewActivity,
+    NewActivity, ACTIVITY_TYPE_BUY, ACTIVITY_TYPE_SELL,
 };
 use wealthfolio_core::assets::{
-    build_option_metadata, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix, AssetKind,
+    build_option_metadata, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix,
     AssetServiceTrait, AssetSpec, InstrumentType,
 };
 use wealthfolio_core::errors::Result;
@@ -376,7 +376,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
                 .unwrap_or_else(|_| Utc::now());
 
             // Collect quote data from BUY/SELL activities with a resolved asset and non-zero price
-            if matches!(act.activity_type.as_str(), "BUY" | "SELL") {
+            if act.activity_type == ACTIVITY_TYPE_BUY || act.activity_type == ACTIVITY_TYPE_SELL {
                 if let (Some(ref aid), Some(price)) = (&asset_id, act.unit_price) {
                     if price > Decimal::ZERO {
                         quote_data.push((
@@ -711,17 +711,14 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
             let asset_name = symbol_info.and_then(|s| s.name.clone().or(s.description.clone()));
 
             let spec = AssetSpec {
-                id: None, // Let ensure_assets resolve via instrument_key
-                display_code: Some(symbol.clone()),
-                instrument_symbol: Some(symbol.clone()),
-                instrument_exchange_mic: exchange_mic,
-                instrument_type: Some(instrument_type),
-                quote_ccy: currency.clone(),
-                requested_quote_ccy: Some(currency.clone()),
-                kind: AssetKind::Investment,
-                quote_mode: None,
                 name: asset_name,
-                metadata: None,
+                ..AssetSpec::market_instrument(
+                    symbol.clone(),
+                    symbol.clone(),
+                    exchange_mic,
+                    instrument_type,
+                    currency.clone(),
+                )
             };
 
             let spec_key = spec.instrument_key().unwrap_or_else(|| {
@@ -805,17 +802,15 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
                 .and_then(|u| u.description.clone());
 
             let spec = AssetSpec {
-                id: None,
-                display_code: Some(normalized_ticker.clone()),
-                instrument_symbol: Some(normalized_ticker.clone()),
-                instrument_exchange_mic: None, // OCC symbols are globally unique
-                instrument_type: Some(InstrumentType::Option),
-                quote_ccy: currency.clone(),
-                requested_quote_ccy: Some(currency.clone()),
-                kind: AssetKind::Investment,
-                quote_mode: None,
                 name: asset_name,
                 metadata,
+                ..AssetSpec::market_instrument(
+                    normalized_ticker.clone(),
+                    normalized_ticker.clone(),
+                    None, // OCC symbols are globally unique
+                    InstrumentType::Option,
+                    currency.clone(),
+                )
             };
 
             let spec_key = spec

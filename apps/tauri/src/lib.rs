@@ -203,6 +203,14 @@ mod mobile {
                     // The frontend will trigger the initial portfolio update after it's mounted
                     emit_app_ready(&handle);
 
+                    // Trigger startup broker sync (async, non-blocking).
+                    // After this, user manually triggers sync via button.
+                    let startup_handle = handle.clone();
+                    let startup_context = Arc::clone(&context);
+                    tauri::async_runtime::spawn(async move {
+                        scheduler::run_startup_sync(&startup_handle, &startup_context).await;
+                    });
+
                     // Start background device sync while the mobile app is active.
                     // The loop self-skips when identity is not configured, and frontend lifecycle
                     // triggers still cover resume/online cases after iOS suspends the process.
@@ -377,6 +385,12 @@ pub fn run() {
             commands::goal::get_retirement_overview,
             commands::goal::get_save_up_overview,
             commands::goal::preview_save_up_overview,
+            // Portfolios (saved reporting scopes)
+            commands::portfolios::get_portfolios,
+            commands::portfolios::get_portfolio,
+            commands::portfolios::create_portfolio,
+            commands::portfolios::update_portfolio_entry,
+            commands::portfolios::delete_portfolio_entry,
             // Portfolio commands
             commands::portfolio::get_holdings,
             commands::portfolio::get_holding,
@@ -404,10 +418,17 @@ pub fn run() {
             commands::limits::delete_contribution_limit,
             commands::limits::calculate_deposits_for_contribution_limit,
             // Utility commands
+            commands::utilities::save_text_file_with_dialog,
+            commands::utilities::save_file_with_dialog,
+            commands::utilities::write_pending_export_text_file,
+            commands::utilities::write_pending_export_file,
+            commands::utilities::export_data_file,
+            commands::utilities::open_external_url,
             commands::utilities::get_app_info,
             commands::utilities::check_for_updates,
             commands::utilities::install_app_update,
             commands::utilities::backup_database,
+            commands::utilities::backup_database_to_pending_export,
             commands::utilities::backup_database_to_path,
             commands::utilities::restore_database,
             // Asset commands
@@ -430,6 +451,7 @@ pub fn run() {
             // Market data commands
             commands::market_data::search_symbol,
             commands::market_data::resolve_symbol_quote,
+            commands::market_data::synch_quotes,
             commands::market_data::sync_market_data,
             commands::market_data::update_quote,
             commands::market_data::delete_quote,

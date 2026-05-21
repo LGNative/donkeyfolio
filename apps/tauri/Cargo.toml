@@ -5,7 +5,7 @@ edition.workspace = true
 description = "Portfolio tracker"
 authors = ["Luis Goncalves"]
 license = "AGPL-3.0"
-repository = ""
+repository = "https://github.com/wealthfolio/wealthfolio"
 
 [build-dependencies]
 tauri-build = { version = "2.5", features = [] }
@@ -21,7 +21,7 @@ wealthfolio-ai = { workspace = true }
 
 # Tauri
 tauri = { version = "2.10", features = [] }
-tauri-plugin-fs = "2"
+tauri-plugin-fs = "2.5"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-log = "2"

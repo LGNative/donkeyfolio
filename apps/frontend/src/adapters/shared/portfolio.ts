@@ -1,5 +1,6 @@
 // Portfolio Commands
 import type {
+  AccountScope,
   Holding,
   AllocationHoldings,
   IncomeSummary,
@@ -23,12 +24,12 @@ export const recalculatePortfolio = async (): Promise<void> => {
   return invoke<void>("recalculate_portfolio");
 };
 
-export const getHoldings = async (accountId: string): Promise<Holding[]> => {
-  return invoke<Holding[]>("get_holdings", { accountId });
+export const getHoldings = async (filter: AccountScope): Promise<Holding[]> => {
+  return invoke<Holding[]>("get_holdings", { filter });
 };
 
-export const getIncomeSummary = async (accountId?: string): Promise<IncomeSummary[]> => {
-  return invoke<IncomeSummary[]>("get_income_summary", { accountId });
+export const getIncomeSummary = async (filter?: AccountScope): Promise<IncomeSummary[]> => {
+  return invoke<IncomeSummary[]>("get_income_summary", { filter });
 };
 
 export const getHistoricalValuations = async (
@@ -130,8 +131,10 @@ export const getAssetHoldings = async (assetId: string): Promise<Holding[]> => {
   return invoke<Holding[]>("get_asset_holdings", { assetId });
 };
 
-export const getPortfolioAllocations = async (accountId: string): Promise<PortfolioAllocations> => {
-  return invoke<PortfolioAllocations>("get_portfolio_allocations", { accountId });
+export const getPortfolioAllocations = async (
+  filter: AccountScope,
+): Promise<PortfolioAllocations> => {
+  return invoke<PortfolioAllocations>("get_portfolio_allocations", { filter });
 };
 
 /**
@@ -140,12 +143,12 @@ export const getPortfolioAllocations = async (accountId: string): Promise<Portfo
  * Returns full category metadata along with the holdings.
  */
 export const getHoldingsByAllocation = async (
-  accountId: string,
+  filter: AccountScope,
   taxonomyId: string,
   categoryId: string,
 ): Promise<AllocationHoldings> => {
   return invoke<AllocationHoldings>("get_holdings_by_allocation", {
-    accountId,
+    filter,
     taxonomyId,
     categoryId,
   });
@@ -167,6 +170,14 @@ export interface HoldingInput {
   averageCost?: string;
   /** Exchange MIC code for new holdings (e.g., "XNAS", "XTSE"). Required for symbols without Yahoo suffixes. */
   exchangeMic?: string;
+  /** Quote currency resolved from search/provider (e.g., GBp). */
+  quoteCcy?: string;
+  /** Instrument type resolved from search/provider (e.g., EQUITY, CRYPTO). */
+  instrumentType?: string;
+  /** Market data provider that resolved this holding, if selected. */
+  providerId?: string;
+  /** Provider-native symbol/code selected by search/import. */
+  providerSymbol?: string;
   /** Asset name for new custom assets */
   name?: string;
   /** Data source (e.g., "MANUAL" for custom assets) — sets quote mode to manual */

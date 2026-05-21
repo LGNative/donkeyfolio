@@ -1,5 +1,5 @@
 import { expect, Page, test } from "@playwright/test";
-import { BASE_URL, loginIfNeeded } from "./helpers";
+import { BASE_URL, TEST_PASSWORD, completeOnboardingIfNeeded, waitForSyncToast } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
@@ -15,7 +15,10 @@ test.describe("Symbol Mapping Validation", () => {
   });
 
   test.afterAll(async () => {
-    await page.close();
+    if (!page.isClosed()) {
+      await resetTestAssetToManual().catch(() => {});
+      await page.close();
+    }
   });
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -30,9 +33,7 @@ test.describe("Symbol Mapping Validation", () => {
     const resetBtn = page.getByRole("button", { name: "Reset" });
     if (await resetBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await resetBtn.click();
-      await expect(resetBtn)
-        .not.toBeVisible({ timeout: 3000 })
-        .catch(() => {});
+      await page.waitForTimeout(500);
     }
 
     // Skip creation if asset already exists
@@ -53,9 +54,7 @@ test.describe("Symbol Mapping Validation", () => {
     const resetBtn2 = page.getByRole("button", { name: "Reset" });
     if (await resetBtn2.isVisible({ timeout: 2000 }).catch(() => false)) {
       await resetBtn2.click();
-      await expect(resetBtn2)
-        .not.toBeVisible({ timeout: 3000 })
-        .catch(() => {});
+      await page.waitForTimeout(500);
     }
 
     await expect(page.getByRole("row").filter({ hasText: ASSET_SYMBOL }).first()).toBeVisible({
@@ -73,42 +72,30 @@ test.describe("Symbol Mapping Validation", () => {
     const resetBtn = page.getByRole("button", { name: "Reset" });
     if (await resetBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await resetBtn.click();
-      await expect(resetBtn)
-        .not.toBeVisible({ timeout: 3000 })
-        .catch(() => {});
+      await page.waitForTimeout(500);
     }
 
-    const assetRow = page.getByRole("row").filter({ hasText: ASSET_SYMBOL }).first();
-    await expect(assetRow).toBeVisible({ timeout: 10000 });
+    await waitForSyncToast(page, 60_000);
 
-    const actionsBtn = assetRow.getByRole("button", { name: "Open actions" });
-
-    // Retry loop: Radix UI dropdown may close during animation before the click lands.
-    // The table can re-render (quote updates) causing the button to detach — we retry.
-    let editClicked = false;
-    for (let attempt = 0; attempt < 5 && !editClicked; attempt++) {
-      try {
-        await actionsBtn.click({ timeout: 5000 });
-        const editItem = page.getByRole("menuitem", { name: "Edit" });
-        await expect(editItem).toBeVisible({ timeout: 3000 });
-        await editItem.click({ force: true });
-        editClicked = true;
-      } catch {
-        // button detached or menu closed before click landed — retry
-        // Brief pause before retry is unavoidable here (no observable DOM state).
-        await page.waitForTimeout(100);
-      }
-    }
-    if (!editClicked) throw new Error("Could not click Edit menu item after 5 attempts");
+    // The table can re-render (quote updates) causing the dropdown to close before the click lands.
+    // Retry opening the menu and clicking Edit as one atomic sequence so the menuitem cannot detach
+    // between a visibility assertion and a later click.
+    await expect(async () => {
+      const assetRow = page.getByRole("row").filter({ hasText: ASSET_SYMBOL }).first();
+      await expect(assetRow).toBeVisible({ timeout: 3000 });
+      const actionsBtn = assetRow.getByRole("button", { name: "Open actions" });
+      await actionsBtn.click();
+      const editItem = page.getByRole("menuitem", { name: "Edit" });
+      await expect(editItem).toBeVisible({ timeout: 2000 });
+      await editItem.click();
+      await expect(page.getByRole("dialog").first()).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 30_000 });
 
     const editSheet = page.getByRole("dialog").first();
     await expect(editSheet).toBeVisible({ timeout: 5000 });
 
     // Click the Market Data tab
     await page.getByRole("tab", { name: "Market Data" }).click();
-    await expect(page.getByRole("switch"))
-      .toBeVisible({ timeout: 3000 })
-      .catch(() => {});
 
     // Symbol Mapping section is only visible when pricing is Automatic.
     // If the asset is in Manual mode, enable Automatic pricing first.
@@ -143,17 +130,61 @@ test.describe("Symbol Mapping Validation", () => {
     const mappingTable = page.locator("table").filter({
       has: page.getByRole("columnheader", { name: "Provider" }),
     });
-    // Remove rows one at a time until none remain
-    while (true) {
+    const MAX_ROWS = 20;
+    for (let i = 0; i < MAX_ROWS; i++) {
       const rows = mappingTable.locator("tbody tr");
       if ((await rows.count()) === 0) break;
+      if (i === MAX_ROWS - 1)
+        throw new Error("clearAllMappings: too many rows, possible infinite loop");
       const rowCountBefore = await rows.count();
-      const deleteBtn = rows.first().locator("button").last();
-      await deleteBtn.click();
+      await rows.first().locator("button").last().click();
       await expect(mappingTable.locator("tbody tr")).not.toHaveCount(rowCountBefore, {
         timeout: 3000,
       });
     }
+  }
+
+  async function findTestAssetId() {
+    const response = await page.request.get(`${BASE_URL}/api/v1/assets`);
+    if (!response.ok()) {
+      throw new Error(`Failed to load assets for cleanup: ${response.status()}`);
+    }
+
+    const assets = (await response.json()) as Array<{
+      id: string;
+      displayCode?: string | null;
+      instrumentSymbol?: string | null;
+    }>;
+
+    return assets.find(
+      (asset) => asset.displayCode === ASSET_SYMBOL || asset.instrumentSymbol === ASSET_SYMBOL,
+    )?.id;
+  }
+
+  async function resetTestAssetToManual() {
+    const assetId = await findTestAssetId();
+    if (!assetId) return;
+
+    const response = await page.request.put(`${BASE_URL}/api/v1/assets/pricing-mode/${assetId}`, {
+      data: { quoteMode: "MANUAL" },
+    });
+    if (!response.ok()) {
+      throw new Error(`Failed to reset ${ASSET_SYMBOL} to manual pricing: ${response.status()}`);
+    }
+  }
+
+  async function setOpenSheetToManualPricing() {
+    const editSheet = page.getByRole("dialog").first();
+    const pricingSwitch = editSheet.getByRole("switch").first();
+    if (!(await pricingSwitch.isVisible({ timeout: 2000 }).catch(() => false))) return;
+
+    const isAutomatic = (await pricingSwitch.getAttribute("aria-checked")) === "true";
+    if (!isAutomatic) return;
+
+    await pricingSwitch.click();
+    const confirmBtn = page.getByRole("button", { name: "Confirm" });
+    await expect(confirmBtn).toBeVisible({ timeout: 3000 });
+    await confirmBtn.click();
   }
 
   async function addMappingRow(provider: string, symbol: string) {
@@ -230,15 +261,38 @@ test.describe("Symbol Mapping Validation", () => {
     }
     if (!found) throw new Error(`Mapping row for symbol "${symbol}" not found`);
 
-    // Save the removal
+    await setOpenSheetToManualPricing();
+
+    // Save the removal and manual pricing change together so the asset is not synced unmapped.
     await saveChanges();
+    await resetTestAssetToManual();
   }
 
   // ── setup ─────────────────────────────────────────────────────────────────
 
   test("0. Setup: login and create test asset", async () => {
     test.setTimeout(180000);
-    await loginIfNeeded(page);
+
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+
+    const loginInput = page.getByPlaceholder("Enter your password");
+    const continueButton = page.getByRole("button", { name: "Continue" });
+    const dashboardHeading = page.getByRole("heading", { name: "Dashboard" });
+    const accountsHeading = page.getByRole("heading", { name: "Accounts" });
+
+    await expect(
+      loginInput.or(continueButton).or(dashboardHeading).or(accountsHeading),
+    ).toBeVisible({ timeout: 120000 });
+
+    if (await loginInput.isVisible()) {
+      await loginInput.fill(TEST_PASSWORD);
+      await page.getByRole("button", { name: "Sign In" }).click();
+      await expect(continueButton.or(dashboardHeading).or(accountsHeading)).toBeVisible({
+        timeout: 30000,
+      });
+    }
+
+    await completeOnboardingIfNeeded(page);
     await ensureAssetExists();
   });
 

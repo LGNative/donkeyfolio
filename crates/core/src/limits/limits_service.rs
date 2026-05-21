@@ -432,13 +432,22 @@ mod tests {
         fn calculate_average_cost(&self, _: &str, _: &str) -> Result<Decimal> {
             unimplemented!()
         }
-        fn get_income_activities_data(&self, _account_id: Option<&str>) -> Result<Vec<IncomeData>> {
+        fn get_income_activities_data(
+            &self,
+            _account_ids: Option<&[String]>,
+        ) -> Result<Vec<IncomeData>> {
             unimplemented!()
         }
         fn get_first_activity_date_overall(&self) -> Result<DateTime<Utc>> {
             unimplemented!()
         }
         fn get_activity_bounds_for_assets(
+            &self,
+            _: &[String],
+        ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {
+            unimplemented!()
+        }
+        fn get_holdings_snapshot_bounds_for_assets(
             &self,
             _: &[String],
         ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {

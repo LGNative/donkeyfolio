@@ -505,6 +505,15 @@ pub mod test_env {
             Ok(self.holdings.clone())
         }
 
+        async fn get_holdings_for_accounts(
+            &self,
+            _account_ids: &[String],
+            _base_currency: &str,
+            _aggregated_account_id: &str,
+        ) -> CoreResult<Vec<Holding>> {
+            Ok(self.holdings.clone())
+        }
+
         async fn get_holding(
             &self,
             _account_id: &str,
@@ -889,6 +898,14 @@ pub mod test_env {
             Ok(HashMap::new())
         }
 
+        fn get_latest_quotes_as_of(
+            &self,
+            _symbols: &[String],
+            _as_of: chrono::NaiveDate,
+        ) -> CoreResult<HashMap<String, Quote>> {
+            Ok(HashMap::new())
+        }
+
         fn get_latest_quotes_snapshot(
             &self,
             asset_ids: &[String],
@@ -902,10 +919,11 @@ pub mod test_env {
                     (
                         asset_id,
                         LatestQuoteSnapshot {
-                            quote,
+                            quote: Some(quote),
                             is_stale: quote_day < today,
                             effective_market_date: today.to_string(),
-                            quote_date: quote_day.to_string(),
+                            quote_date: Some(quote_day.to_string()),
+                            no_quote_reason: None,
                         },
                     )
                 })
@@ -1074,6 +1092,10 @@ pub mod test_env {
             Ok(())
         }
 
+        async fn reset_sync_state_for_profile_change(&self, _asset_id: &str) -> CoreResult<()> {
+            Ok(())
+        }
+
         async fn get_providers_info(&self) -> CoreResult<Vec<ProviderInfo>> {
             Ok(Vec::new())
         }
@@ -1118,12 +1140,41 @@ pub mod test_env {
             Ok(PortfolioAllocations::default())
         }
 
+        async fn get_portfolio_allocations_for_accounts(
+            &self,
+            _account_ids: &[String],
+            _base_currency: &str,
+            _aggregated_account_id: &str,
+        ) -> CoreResult<PortfolioAllocations> {
+            Ok(PortfolioAllocations::default())
+        }
+
         async fn get_holdings_by_allocation(
             &self,
             _account_id: &str,
             base_currency: &str,
             taxonomy_id: &str,
             category_id: &str,
+        ) -> CoreResult<AllocationHoldings> {
+            Ok(AllocationHoldings {
+                taxonomy_id: taxonomy_id.to_string(),
+                taxonomy_name: "Mock Taxonomy".to_string(),
+                category_id: category_id.to_string(),
+                category_name: "Mock Category".to_string(),
+                color: "#808080".to_string(),
+                holdings: Vec::new(),
+                total_value: rust_decimal::Decimal::ZERO,
+                currency: base_currency.to_string(),
+            })
+        }
+
+        async fn get_holdings_by_allocation_for_accounts(
+            &self,
+            _account_ids: &[String],
+            base_currency: &str,
+            taxonomy_id: &str,
+            category_id: &str,
+            _aggregated_account_id: &str,
         ) -> CoreResult<AllocationHoldings> {
             Ok(AllocationHoldings {
                 taxonomy_id: taxonomy_id.to_string(),
@@ -1143,7 +1194,10 @@ pub mod test_env {
     pub struct MockIncomeService;
 
     impl IncomeServiceTrait for MockIncomeService {
-        fn get_income_summary(&self, _account_id: Option<&str>) -> CoreResult<Vec<IncomeSummary>> {
+        fn get_income_summary(
+            &self,
+            _account_ids: Option<&[String]>,
+        ) -> CoreResult<Vec<IncomeSummary>> {
             Ok(vec![
                 IncomeSummary::new("TOTAL", "USD".to_string()),
                 IncomeSummary::new("YTD", "USD".to_string()),

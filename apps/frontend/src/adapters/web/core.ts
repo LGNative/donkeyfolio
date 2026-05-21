@@ -31,20 +31,25 @@ export const COMMANDS: CommandMap = {
   create_account: { method: "POST", path: "/accounts" },
   update_account: { method: "PUT", path: "/accounts" },
   delete_account: { method: "DELETE", path: "/accounts" },
+  get_portfolios: { method: "GET", path: "/portfolios" },
+  create_portfolio: { method: "POST", path: "/portfolios" },
+  update_portfolio_entry: { method: "PUT", path: "/portfolios" },
+  delete_portfolio_entry: { method: "DELETE", path: "/portfolios" },
   get_settings: { method: "GET", path: "/settings" },
   update_settings: { method: "PUT", path: "/settings" },
   is_auto_update_check_enabled: { method: "GET", path: "/settings/auto-update-enabled" },
   get_app_info: { method: "GET", path: "/app/info" },
   check_update: { method: "GET", path: "/app/check-update" },
   backup_database: { method: "POST", path: "/utilities/database/backup" },
-  backup_database_to_path: { method: "POST", path: "/utilities/database/backup-to-path" },
-  restore_database: { method: "POST", path: "/utilities/database/restore" },
-  get_holdings: { method: "GET", path: "/holdings" },
+  list_database_backups: { method: "GET", path: "/utilities/database/backups" },
+  delete_database_backup: { method: "DELETE", path: "/utilities/database/backups" },
+  get_holdings: { method: "POST", path: "/holdings/query" },
   get_holding: { method: "GET", path: "/holdings/item" },
   get_asset_holdings: { method: "GET", path: "/holdings/by-asset" },
   get_historical_valuations: { method: "GET", path: "/valuations/history" },
   get_latest_valuations: { method: "GET", path: "/valuations/latest" },
-  get_portfolio_allocations: { method: "GET", path: "/allocations" },
+  get_portfolio_allocations: { method: "POST", path: "/allocations/query" },
+  get_holdings_by_allocation: { method: "POST", path: "/allocations/holdings/query" },
   // Snapshot management
   get_snapshots: { method: "GET", path: "/snapshots" },
   get_snapshot_by_date: { method: "GET", path: "/snapshots/holdings" },
@@ -58,7 +63,7 @@ export const COMMANDS: CommandMap = {
   calculate_accounts_simple_performance: { method: "POST", path: "/performance/accounts/simple" },
   calculate_performance_history: { method: "POST", path: "/performance/history" },
   calculate_performance_summary: { method: "POST", path: "/performance/summary" },
-  get_income_summary: { method: "GET", path: "/income/summary" },
+  get_income_summary: { method: "POST", path: "/income/summary/query" },
   // Goals
   get_goals: { method: "GET", path: "/goals" },
   get_goal: { method: "GET", path: "/goals" },
@@ -140,6 +145,7 @@ export const COMMANDS: CommandMap = {
   search_symbol: { method: "GET", path: "/market-data/search" },
   resolve_symbol_quote: { method: "GET", path: "/market-data/resolve-currency" },
   get_quote_history: { method: "GET", path: "/market-data/quotes/history" },
+  fetch_yahoo_dividends: { method: "GET", path: "/market-data/yahoo/dividends" },
   get_latest_quotes: { method: "POST", path: "/market-data/quotes/latest" },
   update_quote: { method: "PUT", path: "/market-data/quotes" },
   delete_quote: { method: "DELETE", path: "/market-data/quotes/id" },
@@ -348,24 +354,13 @@ export function toBase64(data: Uint8Array | number[]): string {
 }
 
 /**
- * Convert base64 string to Uint8Array
- */
-export function fromBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-/**
  * Invoke a command via REST API (internal - use typed adapter functions instead)
  */
 export const invoke = async <T>(command: string, payload?: Record<string, unknown>): Promise<T> => {
   const config = COMMANDS[command];
   if (!config) throw new Error(`Unsupported command ${command}`);
   let url = `${API_PREFIX}${config.path}`;
+  let method = config.method;
   let body: BodyInit | undefined;
 
   switch (command) {
@@ -385,14 +380,25 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(data.account);
       break;
     }
-    case "backup_database_to_path": {
-      const { backupDir } = payload as { backupDir: string };
-      body = JSON.stringify({ backupDir });
+    case "create_portfolio": {
+      const { portfolio } = payload as { portfolio: Record<string, unknown> };
+      body = JSON.stringify(portfolio);
       break;
     }
-    case "restore_database": {
-      const { backupFilePath } = payload as { backupFilePath: string };
-      body = JSON.stringify({ backupFilePath });
+    case "update_portfolio_entry": {
+      const { portfolio } = payload as { portfolio: { id: string } & Record<string, unknown> };
+      url += `/${encodeURIComponent(portfolio.id)}`;
+      body = JSON.stringify(portfolio);
+      break;
+    }
+    case "delete_portfolio_entry": {
+      const { portfolioId } = payload as { portfolioId: string };
+      url += `/${encodeURIComponent(portfolioId)}`;
+      break;
+    }
+    case "delete_database_backup": {
+      const { filename } = payload as { filename: string };
+      url += `/${encodeURIComponent(filename)}`;
       break;
     }
     case "update_settings": {
@@ -401,8 +407,13 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "get_holdings": {
-      const p = payload as { accountId: string };
-      url += `?accountId=${encodeURIComponent(p.accountId)}`;
+      const p = payload as { filter: { type: string; accountId?: string } };
+      if (p.filter?.type === "account" && p.filter.accountId) {
+        url = `${API_PREFIX}/holdings?accountId=${encodeURIComponent(p.filter.accountId)}`;
+        method = "GET";
+      } else {
+        body = JSON.stringify({ filter: p.filter });
+      }
       break;
     }
     case "get_holding": {
@@ -439,10 +450,35 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "get_portfolio_allocations": {
-      const { accountId } = payload as { accountId: string };
-      const params = new URLSearchParams();
-      params.set("accountId", accountId);
-      url += `?${params.toString()}`;
+      const p = payload as { filter: { type: string; accountId?: string } };
+      if (p.filter?.type === "account" && p.filter.accountId) {
+        url = `${API_PREFIX}/allocations?accountId=${encodeURIComponent(p.filter.accountId)}`;
+        method = "GET";
+      } else {
+        body = JSON.stringify({ filter: p.filter });
+      }
+      break;
+    }
+    case "get_holdings_by_allocation": {
+      const p = payload as {
+        filter: { type: string; accountId?: string };
+        taxonomyId: string;
+        categoryId: string;
+      };
+      if (p.filter?.type === "account" && p.filter.accountId) {
+        const params = new URLSearchParams();
+        params.set("accountId", p.filter.accountId);
+        params.set("taxonomyId", p.taxonomyId);
+        params.set("categoryId", p.categoryId);
+        url = `${API_PREFIX}/allocations/holdings?${params.toString()}`;
+        method = "GET";
+      } else {
+        body = JSON.stringify({
+          filter: p.filter,
+          taxonomyId: p.taxonomyId,
+          categoryId: p.categoryId,
+        });
+      }
       break;
     }
     // Snapshot management
@@ -547,9 +583,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "get_income_summary": {
-      const { accountId: incomeAccountId } = payload as { accountId?: string };
-      if (incomeAccountId) {
-        url += `?accountId=${encodeURIComponent(incomeAccountId)}`;
+      const p = payload as { filter?: { type: string; accountId?: string } };
+      if (p?.filter?.type === "account" && p.filter.accountId) {
+        url = `${API_PREFIX}/income/summary?accountId=${encodeURIComponent(p.filter.accountId)}`;
+        method = "GET";
+      } else {
+        body = JSON.stringify({ filter: p?.filter ?? null });
       }
       break;
     }
@@ -826,6 +865,13 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "get_quote_history": {
+      const { symbol } = payload as { symbol: string };
+      const params = new URLSearchParams();
+      params.set("symbol", symbol);
+      url += `?${params.toString()}`;
+      break;
+    }
+    case "fetch_yahoo_dividends": {
       const { symbol } = payload as { symbol: string };
       const params = new URLSearchParams();
       params.set("symbol", symbol);
@@ -1446,7 +1492,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
   }
 
   const res = await fetch(url, {
-    method: config.method,
+    method,
     headers,
     body,
     credentials: "same-origin",
@@ -1468,17 +1514,6 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     }
     console.error(`[Invoke] Command "${command}" failed: ${msg}`);
     throw new Error(msg);
-  }
-  if (command === "backup_database") {
-    const parsed = (await res.json()) as { filename: string; dataB64: string };
-    return {
-      filename: parsed.filename,
-      data: fromBase64(parsed.dataB64),
-    } as T;
-  }
-  if (command === "backup_database_to_path") {
-    const parsed = (await res.json()) as { path: string };
-    return parsed.path as T;
   }
   // Handle responses with no body (204 No Content, 202 Accepted, or empty 200)
   if (res.status === 204 || res.status === 202) {

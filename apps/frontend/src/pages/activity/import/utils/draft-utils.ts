@@ -1,9 +1,4 @@
-import {
-  ACTIVITY_SUBTYPES,
-  ActivityType,
-  ImportFormat,
-  SUBTYPES_BY_ACTIVITY_TYPE,
-} from "@/lib/constants";
+import { ACTIVITY_SUBTYPES, ActivityType, ImportFormat } from "@/lib/constants";
 import type { ActivityImport } from "@/lib/types";
 import { tryParseDate } from "@/lib/utils";
 import { isValid, parse, parseISO } from "date-fns";
@@ -13,7 +8,6 @@ import { normalizeInstrumentType, splitInstrumentPrefixedSymbol } from "./instru
 import { buildImportAssetCandidateKey } from "./asset-review-utils";
 import {
   parseNumericValue,
-  toNumber,
   hasPositiveValue,
   hasNonZeroValue,
   resolveCashActivityFields,
@@ -136,6 +130,8 @@ export function mapSymbol(
       quoteCcy?: string;
       instrumentType?: string;
       quoteMode?: string;
+      providerId?: string;
+      providerSymbol?: string;
     }
   >,
 ): {
@@ -145,6 +141,8 @@ export function mapSymbol(
   quoteCcy?: string;
   instrumentType?: string;
   quoteMode?: string;
+  providerId?: string;
+  providerSymbol?: string;
 } {
   if (!csvSymbol) return { symbol: undefined };
 
@@ -158,6 +156,8 @@ export function mapSymbol(
     quoteCcy: meta?.quoteCcy,
     instrumentType: meta?.instrumentType,
     quoteMode: meta?.quoteMode,
+    providerId: meta?.providerId,
+    providerSymbol: meta?.providerSymbol,
   };
 }
 
@@ -173,7 +173,7 @@ export function validateDraft(draft: Partial<DraftActivity>): {
   const warnings: Record<string, string[]> = {};
 
   const activityType = draft.activityType?.toUpperCase();
-  const subtype = draft.subtype?.toUpperCase();
+  const subtype = draft.subtype?.trim().toUpperCase();
 
   // Required field validation
   if (!draft.activityDate) {
@@ -195,15 +195,6 @@ export function validateDraft(draft: Partial<DraftActivity>): {
     errors.accountId = ["Account is required"];
   }
 
-  // Validate subtype is allowed for this activity type.
-  // Skip when subtype mirrors the activity type itself — brokers often export this as a no-op label.
-  if (subtype && activityType && subtype !== activityType) {
-    const allowedSubtypes = SUBTYPES_BY_ACTIVITY_TYPE[activityType] || [];
-    if (allowedSubtypes.length > 0 && !allowedSubtypes.includes(subtype)) {
-      warnings.subtype = [`'${subtype}' is not a recognized subtype for ${activityType}`];
-    }
-  }
-
   // Trade activities (BUY/SELL)
   if (activityType === ActivityType.BUY || activityType === ActivityType.SELL) {
     if (!draft.symbol) {
@@ -221,31 +212,27 @@ export function validateDraft(draft: Partial<DraftActivity>): {
   if (activityType === ActivityType.DIVIDEND) {
     if (subtype === ACTIVITY_SUBTYPES.DRIP) {
       // DRIP: cash dividend → reinvested as BUY of same ticker
-      // Needs: quantity (shares received), unit price (reinvest price)
-      // Amount is optional (dividend cash amount)
+      // Needs: symbol, quantity, and either amount or unit price.
       if (!draft.symbol) {
         errors.symbol = ["Symbol is required for DRIP dividends"];
       }
       if (!hasPositiveValue(draft.quantity)) {
         errors.quantity = ["Quantity is required for DRIP (shares received)"];
       }
-      if (!hasPositiveValue(draft.unitPrice)) {
-        errors.unitPrice = ["Unit price is required for DRIP (reinvestment price)"];
+      if (!hasNonZeroValue(draft.amount) && !hasPositiveValue(draft.unitPrice)) {
+        errors.unitPrice = ["Either amount or unit price is required for DRIP dividends"];
       }
     } else if (subtype === ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND) {
-      // DIVIDEND_IN_KIND: dividend paid in asset (not cash)
-      // Needs: symbol (received asset), quantity, unit price (FMV), amount (value)
+      // DIVIDEND_IN_KIND: dividend paid as additional units of the same asset
+      // Needs: symbol, quantity, and either amount or unit price.
       if (!draft.symbol) {
         errors.symbol = ["Symbol is required for dividend in kind activities"];
       }
       if (!hasPositiveValue(draft.quantity)) {
         errors.quantity = ["Quantity is required for dividend in kind (shares received)"];
       }
-      if (!hasPositiveValue(draft.unitPrice)) {
-        errors.unitPrice = ["Unit price is required for dividend in kind (FMV at receipt)"];
-      }
-      if (!hasNonZeroValue(draft.amount)) {
-        errors.amount = ["Amount is required for dividend in kind (value of shares)"];
+      if (!hasNonZeroValue(draft.amount) && !hasPositiveValue(draft.unitPrice)) {
+        errors.unitPrice = ["Either amount or unit price is required for dividend in kind"];
       }
     } else {
       // Regular cash dividend - amount is required
@@ -265,9 +252,8 @@ export function validateDraft(draft: Partial<DraftActivity>): {
       if (!hasPositiveValue(draft.quantity)) {
         errors.quantity = ["Quantity is required for staking rewards (tokens received)"];
       }
-      // Amount is optional for staking - can be calculated from quantity * price
       if (!hasNonZeroValue(draft.amount) && !hasPositiveValue(draft.unitPrice)) {
-        warnings.amount = ["Either amount or unit price is recommended for staking rewards"];
+        errors.unitPrice = ["Either amount or unit price is required for staking rewards"];
       }
     } else {
       // Regular interest - amount is required
@@ -316,8 +302,8 @@ export function validateDraft(draft: Partial<DraftActivity>): {
     if (!draft.symbol) {
       errors.symbol = ["Symbol is required for split activities"];
     }
-    if (toNumber(draft.amount) === undefined) {
-      errors.amount = ["Amount (split ratio) is required for split activities"];
+    if (!hasPositiveValue(draft.amount)) {
+      errors.amount = ["Amount (split ratio) must be greater than 0"];
     }
   }
 
@@ -354,7 +340,15 @@ export function createDraftActivities(
     accountMappings: Record<string, string>;
     symbolMappingMeta?: Record<
       string,
-      { exchangeMic?: string; symbolName?: string; quoteCcy?: string; instrumentType?: string }
+      {
+        exchangeMic?: string;
+        symbolName?: string;
+        quoteCcy?: string;
+        instrumentType?: string;
+        quoteMode?: string;
+        providerId?: string;
+        providerSymbol?: string;
+      }
     >;
   },
   parseConfig: {
@@ -428,6 +422,8 @@ export function createDraftActivities(
       quoteCcy: mappedQuoteCcy,
       instrumentType: mappedInstrumentType,
       quoteMode: mappedQuoteMode,
+      providerId: mappedProviderId,
+      providerSymbol: mappedProviderSymbol,
     } = mapSymbol(rawSymbol, symbolMappings, symbolMappingMeta);
 
     // Parse typed symbol prefixes (e.g., "bond:US037833DU14")
@@ -446,7 +442,9 @@ export function createDraftActivities(
     const fee = parseNumericValue(rawFee, decimalSeparator, thousandsSeparator);
     const comment = rawComment?.trim();
     const fxRate = parseNumericValue(rawFxRate, decimalSeparator, thousandsSeparator);
-    const subtype = rawSubtype?.trim().toUpperCase() || undefined;
+    const normalizedSubtype = rawSubtype?.trim().toUpperCase();
+    const subtype =
+      normalizedSubtype && normalizedSubtype !== activityType ? normalizedSubtype : undefined;
 
     // Resolve account ID: use CSV account mapping, or fall back to default
     let accountId = accountMappings[""] || defaultAccountId;
@@ -463,7 +461,7 @@ export function createDraftActivities(
 
     // For cash-like activities, some brokers (e.g. Schwab) put the dollar value
     // in the Quantity column instead of Amount.
-    const resolved = resolveCashActivityFields(activityType, quantity, amount, unitPrice);
+    const resolved = resolveCashActivityFields(activityType, quantity, amount, unitPrice, subtype);
 
     // Infer isExternal for transfers: external unless the raw CSV label says "INTERNAL"
     const isTransfer =
@@ -483,6 +481,8 @@ export function createDraftActivities(
       quoteCcy: mappedQuoteCcy,
       instrumentType: resolvedInstrumentType,
       quoteMode: mappedQuoteMode,
+      providerId: mappedProviderId,
+      providerSymbol: mappedProviderSymbol,
       assetCandidateKey:
         symbol && activityType
           ? buildImportAssetCandidateKey({
@@ -523,6 +523,11 @@ export function createDraftActivities(
 }
 
 export function draftToActivityImport(draft: DraftActivity): ActivityImport {
+  const activityType = draft.activityType?.trim().toUpperCase();
+  const subtype = draft.subtype?.trim().toUpperCase();
+  const isTransfer =
+    activityType === ActivityType.TRANSFER_IN || activityType === ActivityType.TRANSFER_OUT;
+
   return {
     id: undefined,
     accountId: draft.accountId,
@@ -537,11 +542,13 @@ export function draftToActivityImport(draft: DraftActivity): ActivityImport {
     unitPrice: draft.unitPrice,
     fee: draft.fee,
     fxRate: draft.fxRate,
-    subtype: draft.subtype,
+    subtype: subtype && subtype !== activityType ? subtype : undefined,
     exchangeMic: draft.exchangeMic,
     quoteCcy: draft.quoteCcy,
     instrumentType: draft.instrumentType,
     quoteMode: draft.quoteMode as ActivityImport["quoteMode"],
+    providerId: draft.providerId,
+    providerSymbol: draft.providerSymbol,
     errors: draft.errors,
     isValid:
       draft.status === "valid" ||
@@ -551,5 +558,6 @@ export function draftToActivityImport(draft: DraftActivity): ActivityImport {
     isDraft: false,
     comment: draft.comment,
     forceImport: draft.forceImport ?? false,
+    isExternal: isTransfer ? draft.isExternal : undefined,
   };
 }

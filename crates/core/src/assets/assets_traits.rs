@@ -2,6 +2,7 @@ use super::assets_model::{
     normalize_quote_ccy_code, Asset, AssetMetadata, AssetSpec, EnsureAssetsResult, InstrumentType,
     NewAsset, QuoteMode, UpdateAssetProfile,
 };
+use super::{AssetResolutionInput, AssetResolutionOutput};
 use crate::errors::Result;
 
 /// Trait defining the contract for Asset service operations.
@@ -75,6 +76,12 @@ pub trait AssetServiceTrait: Send + Sync {
         specs: Vec<AssetSpec>,
         activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
     ) -> Result<EnsureAssetsResult>;
+
+    /// Resolves import-time asset candidates into canonical asset identity and drafts.
+    async fn resolve_import_asset_inputs(
+        &self,
+        inputs: Vec<AssetResolutionInput>,
+    ) -> Result<Vec<AssetResolutionOutput>>;
 
     /// Finds an existing asset quote currency by market identity.
     /// Uses symbol + optional MIC/type and returns normalized quote currency when found.
@@ -192,6 +199,14 @@ pub trait AssetRepositoryTrait: Send + Sync {
     /// Used when new activities reference a previously deactivated asset.
     async fn reactivate(&self, asset_id: &str) -> Result<()>;
 
+    /// Reactivates multiple assets.
+    async fn reactivate_batch(&self, asset_ids: &[String]) -> Result<()> {
+        for asset_id in asset_ids {
+            self.reactivate(asset_id).await?;
+        }
+        Ok(())
+    }
+
     /// Copies user-editable fields from source asset to target asset.
     /// Used during UNKNOWN asset merge to preserve user customizations.
     async fn copy_user_metadata(&self, source_id: &str, target_id: &str) -> Result<()>;
@@ -280,6 +295,13 @@ mod tests {
             _specs: Vec<AssetSpec>,
             _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
         ) -> Result<EnsureAssetsResult> {
+            unimplemented!()
+        }
+
+        async fn resolve_import_asset_inputs(
+            &self,
+            _inputs: Vec<AssetResolutionInput>,
+        ) -> Result<Vec<AssetResolutionOutput>> {
             unimplemented!()
         }
     }

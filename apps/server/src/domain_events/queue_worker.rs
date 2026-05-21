@@ -272,6 +272,7 @@ async fn run_portfolio_job(
     use serde_json::json;
     use wealthfolio_core::accounts::AccountServiceTrait;
     use wealthfolio_core::constants::PORTFOLIO_TOTAL_ACCOUNT_ID;
+    use wealthfolio_core::portfolio::snapshot::reconcile_quote_sync_from_latest_total_snapshot;
 
     let event_bus = deps.event_bus.clone();
     let snapshot_mode = config
@@ -285,6 +286,18 @@ async fn run_portfolio_job(
 
     // Only perform market sync if the mode requires it
     if config.market_sync_mode.requires_sync() {
+        if let Err(e) = reconcile_quote_sync_from_latest_total_snapshot(
+            deps.snapshot_service.as_ref(),
+            deps.quote_service.as_ref(),
+        )
+        .await
+        {
+            tracing::warn!(
+                "Failed to reconcile quote sync state from latest holdings: {}. Quote sync planning may be affected.",
+                e
+            );
+        }
+
         event_bus.publish(ServerEvent::new(MARKET_SYNC_START));
 
         let sync_start = std::time::Instant::now();
@@ -300,9 +313,17 @@ async fn run_portfolio_job(
 
         match sync_result {
             Ok(result) => {
+                let skipped_reasons: Vec<(String, String)> = result
+                    .skipped_reasons
+                    .into_iter()
+                    .map(|(asset_id, reason)| (asset_id, reason.to_string()))
+                    .collect();
                 event_bus.publish(ServerEvent::with_payload(
                     MARKET_SYNC_COMPLETE,
-                    json!({ "failed_syncs": result.failed }),
+                    json!({
+                        "failed_syncs": result.failures,
+                        "skipped_reasons": skipped_reasons,
+                    }),
                 ));
                 tracing::info!("Market data sync completed in {:?}", sync_start.elapsed());
                 deps.health_service.clear_cache().await;
@@ -384,28 +405,17 @@ async fn run_portfolio_job(
         return;
     }
 
-    // Update position status from TOTAL snapshot
-    if let Ok(Some(total_snapshot)) = deps
-        .snapshot_service
-        .get_latest_holdings_snapshot(PORTFOLIO_TOTAL_ACCOUNT_ID)
+    // Update position status from TOTAL snapshot for quote sync planning.
+    if let Err(e) = reconcile_quote_sync_from_latest_total_snapshot(
+        deps.snapshot_service.as_ref(),
+        deps.quote_service.as_ref(),
+    )
+    .await
     {
-        let current_holdings: std::collections::HashMap<String, rust_decimal::Decimal> =
-            total_snapshot
-                .positions
-                .iter()
-                .map(|(asset_id, position)| (asset_id.clone(), position.quantity))
-                .collect();
-
-        if let Err(e) = deps
-            .quote_service
-            .update_position_status_from_holdings(&current_holdings)
-            .await
-        {
-            tracing::warn!(
-                "Failed to update position status from holdings: {}. Quote sync planning may be affected.",
-                e
-            );
-        }
+        tracing::warn!(
+            "Failed to update position status from holdings: {}. Quote sync planning may be affected.",
+            e
+        );
     }
 
     if !account_ids

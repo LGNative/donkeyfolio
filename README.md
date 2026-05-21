@@ -1,26 +1,51 @@
 <div align="center">
-  <img src="apps/frontend/public/logo.png" alt="Logo" width="80" height="80">
+  <a href="https://github.com/wealthfolio/wealthfolio">
+    <img src="apps/frontend/public/logo.svg" alt="Logo" width="80" height="80">
+  </a>
 
-  <h3 align="center">Donkeyfolio</h3>
+  <h3 align="center">Wealthfolio</h3>
 
   <p align="center">
-    A Beautiful Desktop Investment Tracker
+    A Beautiful Personal Finance Tracker — investments, net worth, spending, and simulations
     <br />
     <br />
-    <a href="https://github.com/LGNative/donkeyfolio/releases">Releases</a>
+    <a href="https://wealthfolio.app">Website</a>
+    ·
+    <a href="https://discord.gg/WDMCY6aPWK">Discord</a>
+    ·
+    <a href="https://x.com/intent/follow?screen_name=WealthfolioApp">Twitter</a>
+    ·
+    <a href="https://github.com/wealthfolio/wealthfolio/releases">Releases</a>
   </p>
+</div>
+<div align="center">
+
+[<img src="./apps/frontend/public/button-buy-me-a-coffee.png" width="180" alt="Buy me a coffee button"/>](https://www.buymeacoffee.com/afadil)
+
+</div>
+
+<div align="center">
+<a href="https://news.ycombinator.com/item?id=41465735">
+  <img
+    alt="Featured on Hacker News"
+    src="https://hackerbadge.now.sh/api?id=41465735"
+    style="width: 250px; height: 55px;" width="250" height="55"
+  />
+</a>
+  <a href="https://www.producthunt.com/posts/wealthfolio?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_souce=badge-wealthfolio" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=461640&amp;theme=light" alt="Wealthfolio - A beautiful, local-first personal finance tracker | Product Hunt" class="h-[55px] w-[250px]" width="250" height="55"></a>
+
+  <a href="https://trendshift.io/repositories/11701" target="_blank">
+  <img src="https://trendshift.io/api/badge/repositories/11701" alt="wealthfolio%2Fwealthfolio | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
 </div>
 
 ## Introduction
 
-**Donkeyfolio** is a personal finance and investment portfolio tracker with
-local data storage. No subscriptions, no cloud.
+**Wealthfolio App** is a Beautiful Personal Finance Tracker — investments, net
+worth, spending, and simulations — with local data storage. No subscriptions, no
+cloud.
 
-> Donkeyfolio is a rebranded fork of
-> [Wealthfolio](https://github.com/afadil/wealthfolio) (AGPL-3.0). All core
-> functionality comes from the excellent upstream project. This fork adds
-> personal branding, a curated community addon store, and experimental Trade
-> Republic integration.
+Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
 
 ![Screenshot](apps/frontend/public/screenshot.webp)
 
@@ -41,8 +66,8 @@ local data storage. No subscriptions, no cloud.
 
 ### 🧩 Addon System
 
-Donkeyfolio features a powerful addon system (inherited from Wealthfolio) that
-allows developers to extend functionality:
+Wealthfolio features a powerful addon system that allows developers to extend
+functionality:
 
 - **🔌 Easy Development** - TypeScript SDK with full type safety and hot reload
 - **🔒 Secure** - Comprehensive permission system with user consent
@@ -91,7 +116,10 @@ See [ROADMAP.md](./ROADMAP.md).
 
 ### Quick Links
 
-- 💡 **[Example Addons](addons/)** - Browse sample addons in the repository
+- 💡 **Official Addons** - Browse maintained addon examples in the
+  [official addon repository](https://github.com/wealthfolio/wealthfolio-addons/tree/main/official)
+- 🧩 **Community Addons** - Browse addons shared by the community in the
+  [community addon directory](https://github.com/wealthfolio/wealthfolio-addons/tree/main/community)
 - 🛠️ **[Development Tools](packages/addon-dev-tools/)** - CLI tools for addon
   development
 
@@ -111,8 +139,8 @@ Ensure you have the following installed on your machine:
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/LGNative/donkeyfolio.git
-   cd donkeyfolio
+   git clone https://github.com/wealthfolio/wealthfolio.git
+   cd wealthfolio
    ```
 
 2. **Install dependencies using pnpm**:
@@ -318,11 +346,15 @@ You can either pull the official Docker image or build it yourself locally.
 The latest server build is published to Docker Hub.
 
 ```bash
-docker pull afadil/wealthfolio:latest
+docker pull wealthfolio/wealthfolio:latest
 ```
 
-After pulling, use `afadil/wealthfolio:latest` in the run commands below. If you
-build the image locally, swap the image name back to `wealthfolio`.
+After pulling, use `wealthfolio/wealthfolio:latest` in the run commands below.
+If you build the image locally, swap the image name back to `wealthfolio`.
+
+> **Legacy image:** the same build is also mirrored to `afadil/wealthfolio` so
+> existing `compose.yml` files keep working. New deployments should prefer
+> `wealthfolio/wealthfolio`.
 
 ### Building the Image
 
@@ -377,8 +409,8 @@ See examples below for inline configuration.
 
 ### Running the Container
 
-All examples below use the published image (`afadil/wealthfolio:latest`). If you
-built locally, substitute your local tag (e.g., `wealthfolio`).
+All examples below use the published image (`wealthfolio/wealthfolio:latest`).
+If you built locally, substitute your local tag (e.g., `wealthfolio`).
 
 **Using environment file** (recommended):
 
@@ -387,8 +419,8 @@ docker run --rm -d \
   --name wealthfolio \
   --env-file .env.docker \
   -p 8088:8088 \
-  -v "$(pwd)/wealthfolio-data:/data" \
-  afadil/wealthfolio:latest
+  -v wealthfolio-data:/data \
+  wealthfolio/wealthfolio:latest
 ```
 
 **Basic usage** (inline environment variables):
@@ -399,8 +431,8 @@ docker run --rm -d \
   -e WF_LISTEN_ADDR=0.0.0.0:8088 \
   -e WF_DB_PATH=/data/wealthfolio.db \
   -p 8088:8088 \
-  -v "$(pwd)/wealthfolio-data:/data" \
-  afadil/wealthfolio:latest
+  -v wealthfolio-data:/data \
+  wealthfolio/wealthfolio:latest
 ```
 
 **Development mode** (with CORS for local Vite dev server):
@@ -412,8 +444,8 @@ docker run --rm -it \
   -e WF_DB_PATH=/data/wealthfolio.db \
   -e WF_CORS_ALLOW_ORIGINS=http://localhost:1420 \
   -p 8088:8088 \
-  -v "$(pwd)/wealthfolio-data:/data" \
-  afadil/wealthfolio:latest
+  -v wealthfolio-data:/data \
+  wealthfolio/wealthfolio:latest
 ```
 
 **Production with encryption** (recommended):
@@ -425,8 +457,8 @@ docker run --rm -d \
   -e WF_DB_PATH=/data/wealthfolio.db \
   -e WF_SECRET_KEY=$(openssl rand -base64 32) \
   -p 8088:8088 \
-  -v "$(pwd)/wealthfolio-data:/data" \
-  afadil/wealthfolio:latest
+  -v wealthfolio-data:/data \
+  wealthfolio/wealthfolio:latest
 ```
 
 ### Environment Variables
@@ -483,8 +515,8 @@ steps and provides an isolated environment with all necessary dependencies.
 
 1. **Clone the repository** (if you haven't already):
    ```bash
-   git clone https://github.com/LGNative/donkeyfolio.git
-   cd donkeyfolio
+   git clone https://github.com/wealthfolio/wealthfolio.git
+   cd wealthfolio
    ```
 2. **Open in VS Code**:
    - Open VS Code
@@ -541,12 +573,15 @@ Your addon will be automatically discovered and loaded with hot reload support!
 - **⚡ Hot Reload**: Seamless development experience
 - **🔒 Permission System**: Transparent security with user consent
 
-### Example Addons
+### Official Addons
 
-Check out the [addons/](addons/) directory for sample addons including:
+Check out the
+[official addon repository](https://github.com/wealthfolio/wealthfolio-addons/tree/main/official)
+for maintained addon examples including:
 
 - **Goal Progress Tracker**: Visual goal tracking with calendar like interface
 - **Investment Fees Tracker**: Track and analyze investment fees
+- **Swingfolio**: Track swing trading performance and open positions
 
 ### Resources
 
@@ -619,10 +654,6 @@ wealthfolio/
 │   ├── market-data/             # Market data providers
 │   ├── connect/                 # External service integrations
 │   └── device-sync/             # Device sync functionality
-├── addons/                      # Example addons
-│   ├── goal-progress-tracker/   # Goal tracking addon
-│   ├── investment-fees-tracker/ # Fees tracking addon
-│   └── swingfolio/              # Trading addon
 ├── packages/                    # Shared TypeScript packages
 │   ├── addon-sdk/               # Addon SDK for developers
 │   ├── addon-dev-tools/         # CLI and dev server for addons
@@ -638,6 +669,10 @@ wealthfolio/
 ├── pnpm-workspace.yaml          # pnpm workspace config
 └── tsconfig.json                # TypeScript config
 ```
+
+Official and community addon source lives in the separate
+[wealthfolio-addons](https://github.com/wealthfolio/wealthfolio-addons)
+repository.
 
 ### Security & Data Storage
 
@@ -694,4 +729,8 @@ Brand assets in `assets/brand/` are trademarks; see
 Wealthfolio and the Wealthfolio logo are trademarks of Teymz Inc. The code is
 licensed under AGPL-3.0; trademarks are not granted under that license.
 
-Enjoy managing your wealth with **Donkeyfolio**! 🚀
+## 🌟 Star History
+
+## [![Star History Chart](https://api.star-history.com/svg?repos=wealthfolio/wealthfolio&type=Timeline)](https://star-history.com/#wealthfolio/wealthfolio&Date)
+
+Enjoy managing your wealth with **Wealthfolio**! 🚀

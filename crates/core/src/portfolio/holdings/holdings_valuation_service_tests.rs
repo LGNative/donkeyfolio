@@ -176,6 +176,14 @@ mod tests {
             unimplemented!()
         }
 
+        fn get_latest_quotes_as_of(
+            &self,
+            _symbols: &[String],
+            _as_of: chrono::NaiveDate,
+        ) -> Result<HashMap<String, Quote>> {
+            Ok(HashMap::new())
+        }
+
         fn get_latest_quotes_snapshot(
             &self,
             asset_ids: &[String],
@@ -189,10 +197,11 @@ mod tests {
                     (
                         asset_id,
                         LatestQuoteSnapshot {
-                            quote,
+                            quote: Some(quote),
                             is_stale: quote_day < today,
                             effective_market_date: today.to_string(),
-                            quote_date: quote_day.to_string(),
+                            quote_date: Some(quote_day.to_string()),
+                            no_quote_reason: None,
                         },
                     )
                 })
@@ -379,6 +388,10 @@ mod tests {
             Ok(())
         }
 
+        async fn reset_sync_state_for_profile_change(&self, _asset_id: &str) -> Result<()> {
+            Ok(())
+        }
+
         // =========================================================================
         // Provider Settings
         // =========================================================================
@@ -501,6 +514,7 @@ mod tests {
             realized_gain_pct: None,   // To be calculated
             total_gain: None,          // To be calculated
             total_gain_pct: None,      // To be calculated
+            source_account_ids: vec![],
             metadata: None,
         }
     }

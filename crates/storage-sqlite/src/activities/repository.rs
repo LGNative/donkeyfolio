@@ -2,6 +2,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use diesel::expression_methods::ExpressionMethods;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
+use diesel::sql_query;
+use diesel::sql_types::{Nullable, Text};
+use diesel::sqlite::Sqlite;
 use diesel::sqlite::SqliteConnection;
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
@@ -333,6 +336,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
         self.writer
             .exec_tx(move |tx| -> Result<Activity> {
                 let mut activity_to_update = activity_db_owned;
+                let subtype_patch = activity_update_owned.subtype.clone();
                 let existing = activities::table
                     .select(ActivityDB::as_select())
                     .find(&activity_id_owned)
@@ -393,9 +397,11 @@ impl ActivityRepositoryTrait for ActivityRepository {
                 if activity_to_update.source_type.is_none() {
                     activity_to_update.source_type = source_type;
                 }
-                if activity_to_update.subtype.is_none() {
-                    activity_to_update.subtype = subtype;
-                }
+                activity_to_update.subtype = match subtype_patch {
+                    Some(value) if value.trim().is_empty() => None,
+                    Some(value) => Some(value),
+                    None => subtype,
+                };
                 if activity_to_update.settlement_date.is_none() {
                     activity_to_update.settlement_date = settlement_date;
                 }
@@ -638,6 +644,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                 for update in updates {
                     update.validate()?;
                     let update_owned = update.clone();
+                    let subtype_patch = update_owned.subtype.clone();
                     let mut activity_db: ActivityDB = update.into();
                     let existing = activities::table
                         .select(ActivityDB::as_select())
@@ -694,9 +701,11 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     if activity_db.source_type.is_none() {
                         activity_db.source_type = source_type;
                     }
-                    if activity_db.subtype.is_none() {
-                        activity_db.subtype = subtype;
-                    }
+                    activity_db.subtype = match subtype_patch {
+                        Some(value) if value.trim().is_empty() => None,
+                        Some(value) => Some(value),
+                        None => subtype,
+                    };
                     if activity_db.settlement_date.is_none() {
                         activity_db.settlement_date = settlement_date;
                     }
@@ -1317,17 +1326,28 @@ impl ActivityRepositoryTrait for ActivityRepository {
         Ok(activities)
     }
 
-    fn get_income_activities_data(&self, account_id: Option<&str>) -> Result<Vec<IncomeData>> {
+    fn get_income_activities_data(
+        &self,
+        account_ids: Option<&[String]>,
+    ) -> Result<Vec<IncomeData>> {
         let mut conn = get_connection(&self.pool)?;
 
         // For income reporting, we need to handle different subtypes:
         // - Regular DIVIDEND/INTEREST: use the `amount` field directly
-        // - STAKING_REWARD/DRIP/DIVIDEND_IN_KIND subtypes: if amount is 0, calculate from:
+        // - Valid asset-backed income pairs: if amount is 0, calculate from:
         //   1. quantity * unit_price (if unit_price is available)
         //   2. quantity * market_price from quotes table (fallback)
-        let account_filter = match account_id {
-            Some(_) => "AND a.account_id = ?",
-            None => "",
+        // IDs are internal UUIDs — safe to interpolate directly; escape single quotes defensively.
+        let account_filter = match account_ids {
+            Some(ids) if !ids.is_empty() => {
+                let escaped = ids
+                    .iter()
+                    .map(|id| format!("'{}'", id.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("AND a.account_id IN ({escaped})")
+            }
+            _ => String::new(),
         };
 
         let query = format!(
@@ -1341,7 +1361,10 @@ impl ActivityRepositoryTrait for ActivityRepository {
              a.account_id,
              acc.name as account_name,
              CASE
-                 WHEN a.subtype IN ('STAKING_REWARD', 'DRIP', 'DIVIDEND_IN_KIND')
+                 WHEN (
+                       (a.activity_type = 'INTEREST' AND UPPER(a.subtype) = 'STAKING_REWARD')
+                       OR (a.activity_type = 'DIVIDEND' AND UPPER(a.subtype) IN ('DRIP', 'DIVIDEND_IN_KIND'))
+                      )
                       AND (a.amount IS NULL OR CAST(a.amount AS REAL) = 0)
                  THEN CASE
                      WHEN a.unit_price IS NOT NULL AND CAST(a.unit_price AS REAL) > 0
@@ -1388,16 +1411,9 @@ impl ActivityRepositoryTrait for ActivityRepository {
             pub amount: String,
         }
 
-        let raw_results = if let Some(id) = account_id {
-            diesel::sql_query(&query)
-                .bind::<diesel::sql_types::Text, _>(id)
-                .load::<RawIncomeData>(&mut conn)
-                .map_err(ActivityError::from)?
-        } else {
-            diesel::sql_query(&query)
-                .load::<RawIncomeData>(&mut conn)
-                .map_err(ActivityError::from)?
-        };
+        let raw_results = diesel::sql_query(&query)
+            .load::<RawIncomeData>(&mut conn)
+            .map_err(ActivityError::from)?;
 
         // Transform raw results into IncomeData
         let results = raw_results
@@ -1517,6 +1533,68 @@ impl ActivityRepositoryTrait for ActivityRepository {
                 });
 
                 result_map.insert(asset_id, (first_date, last_date));
+            }
+        }
+
+        Ok(result_map)
+    }
+
+    fn get_holdings_snapshot_bounds_for_assets(
+        &self,
+        asset_ids: &[String],
+    ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {
+        if asset_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        #[derive(QueryableByName)]
+        struct HoldingsBoundsRow {
+            #[diesel(sql_type = Text)]
+            asset_id: String,
+            #[diesel(sql_type = Nullable<Text>)]
+            min_date: Option<String>,
+            #[diesel(sql_type = Nullable<Text>)]
+            max_date: Option<String>,
+        }
+
+        let mut conn = get_connection(&self.pool)?;
+        let mut result_map: HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)> =
+            HashMap::new();
+
+        for chunk in chunk_for_sqlite(asset_ids) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            let sql = format!(
+                "SELECT position.key AS asset_id, \
+                        MIN(snapshot.snapshot_date) AS min_date, \
+                        MAX(snapshot.snapshot_date) AS max_date \
+                 FROM holdings_snapshots snapshot \
+                 JOIN accounts account ON account.id = snapshot.account_id \
+                 JOIN json_each(snapshot.positions) position \
+                 WHERE account.is_archived = 0 \
+                   AND position.key IN ({}) \
+                   AND CAST(COALESCE(json_extract(position.value, '$.quantity'), '0') AS REAL) <> 0 \
+                 GROUP BY position.key",
+                placeholders
+            );
+
+            let mut query_builder = Box::new(sql_query(sql)).into_boxed::<Sqlite>();
+            for asset_id in chunk {
+                query_builder = query_builder.bind::<Text, _>(asset_id);
+            }
+
+            let rows: Vec<HoldingsBoundsRow> = query_builder
+                .load::<HoldingsBoundsRow>(&mut conn)
+                .map_err(StorageError::from)?;
+
+            for row in rows {
+                let first_date = row
+                    .min_date
+                    .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok());
+                let last_date = row
+                    .max_date
+                    .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok());
+
+                result_map.insert(row.asset_id, (first_date, last_date));
             }
         }
 
@@ -1943,15 +2021,42 @@ mod tests {
     }
 
     fn insert_account(conn: &mut SqliteConnection, account_id: &str) {
+        insert_account_with_archived(conn, account_id, false);
+    }
+
+    fn insert_account_with_archived(conn: &mut SqliteConnection, account_id: &str, archived: bool) {
         diesel::sql_query(format!(
             "INSERT INTO accounts (id, name, account_type, `group`, currency, is_default, is_active, \
              created_at, updated_at, platform_id, account_number, meta, provider, provider_account_id, \
              is_archived, tracking_mode) VALUES ('{}', 'Test', 'cash', NULL, 'USD', 1, 1, \
-             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, NULL, NULL, 0, 'portfolio')",
-            account_id
+             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, NULL, NULL, {}, 'portfolio')",
+            account_id,
+            if archived { 1 } else { 0 }
         ))
         .execute(conn)
         .expect("insert account");
+    }
+
+    fn insert_holdings_snapshot(
+        conn: &mut SqliteConnection,
+        account_id: &str,
+        snapshot_date: &str,
+        positions: &str,
+    ) {
+        let snapshot_id = format!("{}_{}", account_id, snapshot_date);
+        sql_query(
+            "INSERT INTO holdings_snapshots (
+                id, account_id, snapshot_date, currency, positions, cash_balances, cost_basis,
+                net_contribution, calculated_at, net_contribution_base,
+                cash_total_account_currency, cash_total_base_currency, source
+             ) VALUES (?, ?, ?, 'USD', ?, '{}', '0', '0', '2026-01-01T00:00:00Z', '0', '0', '0', 'CALCULATED')",
+        )
+        .bind::<Text, _>(snapshot_id)
+        .bind::<Text, _>(account_id)
+        .bind::<Text, _>(snapshot_date)
+        .bind::<Text, _>(positions)
+        .execute(conn)
+        .expect("insert holdings snapshot");
     }
 
     fn insert_template(conn: &mut SqliteConnection, template_id: &str) {
@@ -2008,6 +2113,50 @@ mod tests {
             .expect("insert transfer activity");
     }
 
+    fn insert_activity_with_subtype(
+        conn: &mut SqliteConnection,
+        id: &str,
+        account_id: &str,
+        activity_type: &str,
+        asset_id: Option<&str>,
+        subtype: Option<&str>,
+    ) {
+        let activity = ActivityDB {
+            id: id.to_string(),
+            account_id: account_id.to_string(),
+            asset_id: asset_id.map(str::to_string),
+            activity_type: activity_type.to_string(),
+            activity_type_override: None,
+            source_type: None,
+            subtype: subtype.map(str::to_string),
+            status: "POSTED".to_string(),
+            activity_date: "2024-01-15T00:00:00+00:00".to_string(),
+            settlement_date: None,
+            quantity: Some("1".to_string()),
+            unit_price: Some("100".to_string()),
+            amount: Some("100".to_string()),
+            fee: Some("0".to_string()),
+            currency: "USD".to_string(),
+            fx_rate: None,
+            notes: None,
+            metadata: None,
+            source_system: Some("MANUAL".to_string()),
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: Some(format!("{id}-idempotency")),
+            import_run_id: None,
+            is_user_modified: 0,
+            needs_review: 0,
+            created_at: "2024-01-15T00:00:00+00:00".to_string(),
+            updated_at: "2024-01-15T00:00:00+00:00".to_string(),
+        };
+
+        diesel::insert_into(activities::table)
+            .values(&activity)
+            .execute(conn)
+            .expect("insert activity with subtype");
+    }
+
     fn activity_metadata(conn: &mut SqliteConnection, id: &str) -> serde_json::Value {
         let metadata: Option<String> = activities::table
             .filter(activities::id.eq(id))
@@ -2024,6 +2173,154 @@ mod tests {
             .select(activities::is_user_modified)
             .first(conn)
             .expect("activity is_user_modified")
+    }
+
+    #[tokio::test]
+    async fn holdings_snapshot_bounds_ignore_zero_quantity_and_archived_accounts() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+        insert_account(&mut conn, "acc-open");
+        insert_account_with_archived(&mut conn, "acc-archived", true);
+
+        insert_holdings_snapshot(
+            &mut conn,
+            "acc-open",
+            "2026-01-01",
+            r#"{"AAPL":{"quantity":"3"},"MSFT":{"quantity":"0"}}"#,
+        );
+        insert_holdings_snapshot(
+            &mut conn,
+            "acc-open",
+            "2026-02-01",
+            r#"{"AAPL":{"quantity":"0"},"MSFT":{"quantity":"4"}}"#,
+        );
+        insert_holdings_snapshot(
+            &mut conn,
+            "acc-open",
+            "2026-03-01",
+            r#"{"AAPL":{"quantity":"2"}}"#,
+        );
+        insert_holdings_snapshot(
+            &mut conn,
+            "acc-archived",
+            "2026-01-01",
+            r#"{"ARCH":{"quantity":"5"}}"#,
+        );
+
+        let asset_ids = vec![
+            "AAPL".to_string(),
+            "MSFT".to_string(),
+            "ARCH".to_string(),
+            "NONE".to_string(),
+        ];
+        let bounds = repo
+            .get_holdings_snapshot_bounds_for_assets(&asset_ids)
+            .expect("holdings bounds");
+
+        assert_eq!(
+            bounds.get("AAPL"),
+            Some(&(
+                Some(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
+                Some(NaiveDate::from_ymd_opt(2026, 3, 1).unwrap())
+            ))
+        );
+        assert_eq!(
+            bounds.get("MSFT"),
+            Some(&(
+                Some(NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+                Some(NaiveDate::from_ymd_opt(2026, 2, 1).unwrap())
+            ))
+        );
+        assert!(!bounds.contains_key("ARCH"));
+        assert!(!bounds.contains_key("NONE"));
+    }
+
+    #[tokio::test]
+    async fn update_activity_empty_subtype_clears_existing_subtype() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-subtype");
+        insert_activity_with_subtype(
+            &mut conn,
+            "activity-subtype",
+            "acc-subtype",
+            "DIVIDEND",
+            None,
+            Some("DRIP"),
+        );
+
+        let updated = repo
+            .update_activity(ActivityUpdate {
+                id: "activity-subtype".to_string(),
+                account_id: "acc-subtype".to_string(),
+                asset: None,
+                activity_type: "DIVIDEND".to_string(),
+                subtype: Some(String::new()),
+                activity_date: "2024-01-15".to_string(),
+                quantity: None,
+                unit_price: None,
+                currency: "USD".to_string(),
+                fee: None,
+                amount: None,
+                status: None,
+                notes: None,
+                fx_rate: None,
+                metadata: None,
+            })
+            .await
+            .expect("update activity");
+
+        assert_eq!(updated.subtype, None);
+    }
+
+    #[tokio::test]
+    async fn income_report_derives_asset_backed_amount_only_for_valid_type_subtype_pair() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-income");
+        insert_activity_with_subtype(
+            &mut conn,
+            "valid-staking",
+            "acc-income",
+            "INTEREST",
+            None,
+            Some("STAKING_REWARD"),
+        );
+        insert_activity_with_subtype(
+            &mut conn,
+            "metadata-only",
+            "acc-income",
+            "DIVIDEND",
+            None,
+            Some("STAKING_REWARD"),
+        );
+
+        diesel::sql_query(
+            "UPDATE activities SET amount = '0', quantity = '2', unit_price = '50' \
+             WHERE id IN ('valid-staking', 'metadata-only')",
+        )
+        .execute(&mut conn)
+        .expect("zero income amounts");
+
+        let rows = repo
+            .get_income_activities_data(Some(&[String::from("acc-income")]))
+            .expect("income data");
+        let staking_amount = rows
+            .iter()
+            .find(|row| row.income_type == "INTEREST")
+            .map(|row| row.amount);
+        let metadata_amount = rows
+            .iter()
+            .find(|row| row.income_type == "DIVIDEND")
+            .map(|row| row.amount);
+
+        assert_eq!(staking_amount, Some(Decimal::new(100, 0)));
+        assert_eq!(metadata_amount, Some(Decimal::ZERO));
     }
 
     /// Regression: re-linking the same (account_id, context_kind, source_system) must preserve the row `id`

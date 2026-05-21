@@ -66,6 +66,8 @@ export const importMappingSchema = z.object({
         quoteCcy: z.string().optional(),
         instrumentType: z.string().optional(),
         quoteMode: quoteModeSchema.optional(),
+        providerId: z.string().optional(),
+        providerSymbol: z.string().optional(),
       }),
     )
     .optional(),
@@ -181,6 +183,10 @@ export const importActivitySchema = z
     instrumentType: z.string().optional(),
     /** Optional quote mode hint (e.g., MANUAL, MARKET). */
     quoteMode: quoteModeSchema.optional(),
+    /** Market data provider that resolved this import row, if selected. */
+    providerId: z.string().optional(),
+    /** Provider-native symbol/code selected by search/import. */
+    providerSymbol: z.string().optional(),
     /** ISIN identifier from the CSV (e.g. GB0007188757). Used for unambiguous exchange resolution. */
     isin: z.string().optional(),
     errors: z.record(z.string(), z.array(z.string())).optional(),
@@ -195,6 +201,9 @@ export const importActivitySchema = z
     fxRate: decimalLikeSchema.nullable().optional(),
     subtype: z.string().optional(),
     forceImport: z.boolean().default(false),
+    /** True when a TRANSFER_IN/OUT crosses the tracked-account boundary
+     * (e.g. RSU grant deposit). Persisted as `metadata.flow.is_external` on the activity. */
+    isExternal: z.boolean().optional(),
   })
   .refine(
     (data) => {
@@ -303,6 +312,20 @@ export const importActivitySchema = z
     {
       message: "Unit price must be positive for buy/sell activities",
       path: ["unitPrice"],
+    },
+  )
+  .refine(
+    (data) => {
+      const activityType = data.activityType;
+      if (isSplitActivity(activityType)) {
+        const amount = parseNumberLike(data.amount);
+        return amount !== undefined && amount > 0;
+      }
+      return true;
+    },
+    {
+      message: "Split ratio must be greater than 0",
+      path: ["amount"],
     },
   )
   .refine(

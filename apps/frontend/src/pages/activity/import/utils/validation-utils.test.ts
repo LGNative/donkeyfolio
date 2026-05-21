@@ -137,6 +137,38 @@ describe("validation-utils", () => {
       expect(activity.fee).toBe(5.0);
     });
 
+    it("should apply symbol mappings using trimmed CSV symbol keys", () => {
+      const testData = [
+        {
+          lineNumber: "1",
+          date: "2024-01-01T00:00:00.000Z",
+          symbol: "  Long Fund Name  ",
+          activityType: "BUY",
+          quantity: "10",
+          unitPrice: "25.00",
+          amount: "250.00",
+          fee: "0",
+          currency: "USD",
+        },
+      ];
+
+      const result = validateActivityImport(
+        testData,
+        {
+          ...testMapping,
+          symbolMappings: {
+            "Long Fund Name": "VTI",
+          },
+        },
+        "test-account",
+        "USD",
+      );
+
+      expect(result.activities).toHaveLength(1);
+      expect(result.activities[0].symbol).toBe("VTI");
+      expect(result.activities[0].isValid).toBe(true);
+    });
+
     it("should convert negative values to positive for SELL activities", () => {
       const testData = [
         {
@@ -241,16 +273,16 @@ describe("validation-utils", () => {
       expect(activity.fee).toBe(2.95);
     });
 
-    it("should handle SPLIT activities with no cash impact", () => {
+    it("should handle SPLIT activities with amount as the split ratio", () => {
       const testData = [
         {
           lineNumber: "1",
           date: "2024-01-01T00:00:00.000Z",
           symbol: "AAPL",
           activityType: "SPLIT",
-          quantity: "20", // 2:1 split
-          unitPrice: "75.00", // half the previous price
-          amount: "0",
+          quantity: "",
+          unitPrice: "",
+          amount: "2",
           fee: "0",
           currency: "USD",
         },
@@ -261,9 +293,9 @@ describe("validation-utils", () => {
       expect(result.activities).toHaveLength(1);
       const activity = result.activities[0];
 
-      expect(activity.quantity).toBe(20);
-      expect(activity.unitPrice).toBe(75.0);
-      expect(activity.amount).toBe(0); // SPLIT has no cash impact
+      expect(activity.quantity).toBeUndefined();
+      expect(activity.unitPrice).toBeUndefined();
+      expect(activity.amount).toBe(2);
       expect(activity.fee).toBe(0);
     });
 

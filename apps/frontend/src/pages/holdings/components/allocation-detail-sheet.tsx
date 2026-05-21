@@ -15,7 +15,12 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getHoldingsByAllocation } from "@/adapters";
 import { TickerAvatar } from "@/components/ticker-avatar";
-import type { TaxonomyAllocation, CategoryAllocation, HoldingSummary } from "@/lib/types";
+import type {
+  AccountScope,
+  TaxonomyAllocation,
+  CategoryAllocation,
+  HoldingSummary,
+} from "@/lib/types";
 import { QueryKeys } from "@/lib/query-keys";
 import { CompactAllocationStrip } from "./compact-allocation-strip";
 
@@ -23,7 +28,7 @@ interface AllocationDetailSheetProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   allocation?: TaxonomyAllocation;
-  accountId: string;
+  accountFilter: AccountScope;
   baseCurrency: string;
   initialCategoryId?: string | null;
 }
@@ -32,7 +37,7 @@ export function AllocationDetailSheet({
   isOpen,
   onOpenChange,
   allocation,
-  accountId,
+  accountFilter,
   baseCurrency,
   initialCategoryId,
 }: AllocationDetailSheetProps) {
@@ -82,15 +87,25 @@ export function AllocationDetailSheet({
   }, [isOpen, initialCategoryId, allocation?.categories]);
 
   // Fetch holdings for the selected category
-  const { data: allocationHoldings, isLoading: holdingsLoading } = useQuery({
+  const {
+    data: allocationHoldings,
+    isLoading: holdingsLoading,
+    isError: holdingsError,
+    error: holdingsQueryError,
+    refetch: refetchAllocationHoldings,
+  } = useQuery({
     queryKey: [
       QueryKeys.HOLDINGS_BY_ALLOCATION,
-      accountId,
+      accountFilter,
       allocation?.taxonomyId,
       selectedCategoryId,
     ],
     queryFn: () =>
-      getHoldingsByAllocation(accountId, allocation?.taxonomyId ?? "", selectedCategoryId ?? ""),
+      getHoldingsByAllocation(
+        accountFilter,
+        allocation?.taxonomyId ?? "",
+        selectedCategoryId ?? "",
+      ),
     enabled: !!selectedCategoryId && !!allocation?.taxonomyId,
     staleTime: 30000,
   });
@@ -322,6 +337,24 @@ export function AllocationDetailSheet({
                       </div>
                     </div>
                   ))}
+                </div>
+              ) : holdingsError ? (
+                <div className="space-y-3 py-4 text-center">
+                  <div className="space-y-1">
+                    <p className="text-muted-foreground text-sm">
+                      Could not load holdings for this category.
+                    </p>
+                    {holdingsQueryError?.message && (
+                      <p className="text-muted-foreground text-xs">{holdingsQueryError.message}</p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refetchAllocationHoldings()}
+                  >
+                    Retry
+                  </Button>
                 </div>
               ) : holdings && holdings.length > 0 ? (
                 <div className="divide-y">

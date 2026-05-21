@@ -32,7 +32,7 @@
   },
   "productName": "${DONKEYFOLIO_APP_NAME}",
   "mainBinaryName": "${DONKEYFOLIO_APP_NAME}",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "identifier": "${DONKEYFOLIO_BUNDLE_ID}",
   "plugins": {
     "deep-link": {

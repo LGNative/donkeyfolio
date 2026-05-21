@@ -9,7 +9,7 @@ import {
 import { importActivitySchema } from "@/lib/schemas";
 import { tryParseDate } from "@/lib/utils";
 import { logger } from "@/adapters";
-import { SUBTYPES_BY_ACTIVITY_TYPE, SUBTYPE_DISPLAY_NAMES } from "@/lib/constants";
+import { SUBTYPE_DISPLAY_NAMES } from "@/lib/constants";
 import { looksLikeOccSymbol, normalizeOptionSymbol } from "@/lib/occ-symbol";
 import { looksLikeIsin } from "@/lib/isin";
 import { findMappedActivityType } from "./activity-type-mapping";
@@ -84,8 +84,8 @@ function normalizeSubtype(rawSubtype: string): string | undefined {
 }
 
 /**
- * Validates and returns the subtype if it's valid for the given activity type.
- * Returns undefined if the subtype is not valid for the activity type.
+ * Returns the subtype as metadata. Calculation paths only honor known valid
+ * type/subtype pairs, so import should not discard broker/provider labels here.
  */
 function validateSubtypeForActivityType(
   subtype: string | undefined,
@@ -93,19 +93,9 @@ function validateSubtypeForActivityType(
 ): string | undefined {
   if (!subtype || !activityType) return undefined;
 
-  const allowedSubtypes = SUBTYPES_BY_ACTIVITY_TYPE[activityType];
-  if (!allowedSubtypes || allowedSubtypes.length === 0) {
-    // Activity type doesn't support subtypes
-    return undefined;
-  }
+  if (subtype === activityType) return undefined;
 
-  // Check if the subtype is in the allowed list
-  if (allowedSubtypes.includes(subtype)) {
-    return subtype;
-  }
-
-  // Subtype not valid for this activity type
-  return undefined;
+  return subtype;
 }
 
 /**
@@ -372,7 +362,10 @@ const activityLogicMap: Partial<Record<ActivityType, ActivityLogicConfig>> = {
   },
   [ActivityType.SPLIT]: {
     calculateSymbol: (activity) => activity.symbol,
-    calculateAmount: () => 0, // SPLIT has no cash impact according to docs
+    calculateAmount: (activity) => {
+      const amt = toNum(activity.amount);
+      return typeof amt === "number" && amt > 0 ? amt : undefined;
+    },
     calculateFee: () => 0, // SPLIT typically has no fee
   },
   [ActivityType.CREDIT]: {
@@ -468,8 +461,9 @@ function transformRowToActivity(
   const normalizedSubtype = normalizeSubtype(rawSubtype || "");
 
   // Apply Symbol Mapping BEFORE determining activity type logic
-  if (activity.symbol && mapping.symbolMappings[activity.symbol]) {
-    activity.symbol = mapping.symbolMappings[activity.symbol];
+  if (activity.symbol) {
+    const symbolKey = activity.symbol.trim();
+    activity.symbol = mapping.symbolMappings[symbolKey] || symbolKey;
   }
 
   // Support typed symbol format (e.g. bond:US037833DU14)
@@ -521,8 +515,11 @@ function transformRowToActivity(
   if (activity.fee !== undefined && isNaN(activity.fee)) activity.fee = 0; // Ensure fee is 0 if NaN
   if (activity.amount !== undefined && isNaN(activity.amount)) activity.amount = undefined;
 
-  // If amount is validly set (not undefined and not NaN), default quantity/unitPrice to 0 if they are undefined/NaN
-  if (activity.amount !== undefined && !isNaN(activity.amount)) {
+  if (activity.activityType === ActivityType.SPLIT) {
+    activity.quantity = undefined;
+    activity.unitPrice = undefined;
+  } else if (activity.amount !== undefined && !isNaN(activity.amount)) {
+    // If amount is validly set (not undefined and not NaN), default quantity/unitPrice to 0 if they are undefined/NaN
     if (activity.quantity === undefined || isNaN(activity.quantity)) {
       activity.quantity = 0;
     }

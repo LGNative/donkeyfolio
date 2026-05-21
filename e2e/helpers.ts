@@ -79,22 +79,26 @@ export async function selectActivityType(page: Page, type: string) {
 }
 
 export async function searchAndSelectSymbol(page: Page, symbol: string) {
+  const escapedSymbol = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const exactSymbolPattern = new RegExp(`^${escapedSymbol}$`, "i");
   const symbolCombobox = page.getByRole("combobox").filter({ hasText: /Select symbol/i });
   await symbolCombobox.click();
-  await page.waitForTimeout(200);
 
   const searchInput = page.getByPlaceholder("Search for symbol");
+  await expect(searchInput).toBeVisible({ timeout: 5000 });
   await searchInput.fill(symbol);
-  await page.waitForTimeout(500);
 
-  await expect(page.getByRole("progressbar", { name: "Loading..." })).toBeHidden({
-    timeout: 15000,
-  });
-
-  const symbolOption = page.getByRole("option", { name: new RegExp(symbol, "i") }).first();
-  await expect(symbolOption).toBeVisible({ timeout: 5000 });
+  const suggestions = page.getByRole("listbox", { name: /Suggestions/i });
+  await expect(suggestions).toBeVisible({ timeout: 10000 });
+  const symbolOption = suggestions
+    .getByRole("option")
+    .filter({
+      has: page.locator("span.font-mono").filter({ hasText: exactSymbolPattern }),
+      hasNotText: /Create custom|manual/i,
+    })
+    .first();
+  await expect(symbolOption).toBeVisible({ timeout: 30000 });
   await symbolOption.click();
-  await page.waitForTimeout(200);
 }
 
 export async function expandAdvancedOptions(page: Page) {
@@ -185,6 +189,43 @@ export async function waitForSyncToast(page: Page, maxWaitMs = 60000) {
     }
   }
   await page.waitForTimeout(1000);
+}
+
+export async function completeOnboardingIfNeeded(page: Page) {
+  await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+
+  const continueButton = page.getByRole("button", { name: "Continue" });
+  const loginInput = page.getByPlaceholder("Enter your password");
+  const dashboardHeading = page.getByRole("heading", { name: "Dashboard" });
+  const accountsHeading = page.getByRole("heading", { name: "Accounts" });
+
+  // Wait for the app to settle into any known state before deciding what to do.
+  // A short isVisible check is not enough — the frontend may take several seconds
+  // to load and determine whether onboarding is needed.
+  await expect(continueButton.or(loginInput).or(dashboardHeading).or(accountsHeading)).toBeVisible({
+    timeout: 120000,
+  });
+
+  if (!(await continueButton.isVisible())) return;
+
+  // Step 1: Info screen — click Continue
+  await continueButton.click();
+
+  // Step 2: Currency selection — pick CAD and continue
+  await expect(page.getByTestId("currency-cad-button")).toBeVisible({ timeout: 5000 });
+  await page.getByTestId("currency-cad-button").click();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // Step 3: Appearance — pick Light theme and continue
+  await expect(page.getByTestId("theme-light-button")).toBeVisible({ timeout: 5000 });
+  await page.getByTestId("theme-light-button").click();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  // Step 4: Finish onboarding
+  await expect(page.getByTestId("onboarding-finish-button")).toBeVisible({ timeout: 15000 });
+  await page.getByTestId("onboarding-finish-button").click();
+
+  await page.waitForURL(new RegExp(`${BASE_URL}/settings/accounts`), { timeout: 15000 });
 }
 
 export async function loginIfNeeded(page: Page) {

@@ -120,6 +120,17 @@ export default function AboutSettingsPage() {
                 size="sm"
                 className="inline-flex items-center gap-2"
               >
+                <ExternalLink href={`${REPO_URL}/blob/main/README.md`}>
+                  <Icons.FileText className="h-4 w-4" />
+                  Docs
+                </ExternalLink>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="inline-flex items-center gap-2"
+              >
                 <ExternalLink href={REPO_URL}>
                   <Icons.ExternalLink className="h-4 w-4" />
                   GitHub
