@@ -2,6 +2,12 @@ packages:
   - "apps/frontend"
   - "packages/*"
 
+allowBuilds:
+  esbuild: set this to true or false
+  lefthook: set this to true or false
+  msw: set this to true or false
+  sharp: set this to true or false
+
 ignoredBuiltDependencies:
   - "@tailwindcss/oxide"
   - esbuild

@@ -107,6 +107,92 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }} ${{ steps.win-bundles.outputs.args }}
 
+  generate-updater-manifest:
+    # After all matrix builds finish, generate latest.json from the .sig files
+    # already uploaded to the release by tauri-action, then upload it as a
+    # release asset. The Tauri updater plugin fetches this file to decide
+    # whether a new version is available and to verify the signature.
+    needs: release
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Generate and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          export VERSION="${TAG#v}"
+          export BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          WORK="$(mktemp -d)"
+
+          # Fetch the release assets list
+          gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name' > "$WORK/assets.txt"
+          echo "=== Available assets ==="
+          cat "$WORK/assets.txt"
+
+          # Helper: download a .sig file (if present) and emit its contents (base64).
+          # Empty pkg name → returns empty.
+          get_sig() {
+            local pkg="$1"
+            [ -z "$pkg" ] && { echo ""; return 0; }
+            local name="${pkg}.sig"
+            if grep -qx "$name" "$WORK/assets.txt"; then
+              gh release download "$TAG" -R "$REPO" -p "$name" -D "$WORK" --skip-existing >/dev/null 2>&1 || true
+              [ -f "$WORK/$name" ] && cat "$WORK/$name" || echo ""
+            else
+              echo ""
+            fi
+          }
+
+          # Detect platform-specific asset names from what tauri-action uploaded.
+          export MAC_ARM_TAR=$(grep -E '^Donkeyfolio_.*aarch64\.app\.tar\.gz$' "$WORK/assets.txt" | head -1 || true)
+          export MAC_ARM_SIG=$(get_sig "$MAC_ARM_TAR")
+          export MAC_X64_TAR=$(grep -E '^Donkeyfolio_.*(x64|x86_64)\.app\.tar\.gz$' "$WORK/assets.txt" | head -1 || true)
+          export MAC_X64_SIG=$(get_sig "$MAC_X64_TAR")
+          export WIN_ARM_PKG=$(grep -E '^Donkeyfolio_.*arm64.*\.(nsis|msi)\.zip$' "$WORK/assets.txt" | head -1 || true)
+          export WIN_ARM_SIG=$(get_sig "$WIN_ARM_PKG")
+          export WIN_X64_PKG=$(grep -E '^Donkeyfolio_.*(x64|x86_64).*\.(nsis|msi)\.zip$' "$WORK/assets.txt" | head -1 || true)
+          export WIN_X64_SIG=$(get_sig "$WIN_X64_PKG")
+          export LIN_X64_PKG=$(grep -E '^Donkeyfolio_.*amd64\.AppImage(\.tar\.gz)?$' "$WORK/assets.txt" | head -1 || true)
+          export LIN_X64_SIG=$(get_sig "$LIN_X64_PKG")
+
+          export PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export NOTES="Donkeyfolio v${VERSION}. See assets to download and install."
+
+          node <<'EOF' > latest.json
+          const e = process.env;
+          const mk = (sig, pkg) => (sig && pkg)
+            ? { signature: sig, url: `${e.BASE}/${pkg}` }
+            : null;
+          const platforms = {};
+          const macArm = mk(e.MAC_ARM_SIG, e.MAC_ARM_TAR);
+          if (macArm) { platforms['darwin-aarch64'] = macArm; platforms['darwin-aarch64-app'] = macArm; }
+          const macX64 = mk(e.MAC_X64_SIG, e.MAC_X64_TAR);
+          if (macX64) { platforms['darwin-x86_64'] = macX64; platforms['darwin-x86_64-app'] = macX64; }
+          const winArm = mk(e.WIN_ARM_SIG, e.WIN_ARM_PKG);
+          if (winArm) platforms['windows-aarch64'] = winArm;
+          const winX64 = mk(e.WIN_X64_SIG, e.WIN_X64_PKG);
+          if (winX64) platforms['windows-x86_64'] = winX64;
+          const linX64 = mk(e.LIN_X64_SIG, e.LIN_X64_PKG);
+          if (linX64) platforms['linux-x86_64'] = linX64;
+          console.log(JSON.stringify({
+            version: e.VERSION,
+            notes: e.NOTES,
+            pub_date: e.PUB_DATE,
+            platforms,
+          }, null, 2));
+          EOF
+
+          echo "=== Generated latest.json ==="
+          cat latest.json
+
+          # Upload (replace if exists)
+          gh release upload "$TAG" latest.json -R "$REPO" --clobber
+
   prebuild-server-linux:
     # Standalone server tarball for self-hosters (Proxmox LXC, bare metal, systemd).
     # Tracks: https://github.com/wealthfolio/wealthfolio/issues/563

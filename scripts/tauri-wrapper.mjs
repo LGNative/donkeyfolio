@@ -46,10 +46,11 @@ function loadEnv(filePath) {
   return count;
 }
 
-// Load order: .env.example first (defaults), .env.local overrides.
-// .env.local is gitignored — contains local/fork-specific values.
-const loaded1 = loadEnv(path.join(projectRoot, ".env.example"));
+// Load order: .env.local first (highest precedence), .env.example fallback.
+// .env.local is gitignored — contains local/fork-specific values that
+// must override the example/defaults committed to the repo.
 const loaded2 = loadEnv(path.join(projectRoot, ".env.local"));
+const loaded1 = loadEnv(path.join(projectRoot, ".env.example"));
 console.log(`[tauri-wrapper] Loaded env: .env.example=${loaded1}, .env.local=${loaded2}`);
 
 // ─── Generate tauri.conf.json from template ─────────────────────────────
