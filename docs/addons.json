@@ -3,10 +3,10 @@
     {
       "id": "tr-importer-addon",
       "name": "TR Importer",
-      "version": "5.1.1",
+      "version": "5.1.2",
       "description": "Trade Republic CSV importer. Drop the 'Extrato de transações.csv' export from the TR app, get every trade, dividend, interest, deposit, withdrawal, staking reward, and corporate action mapped to native Donkeyfolio activities — with cost basis, FX, and withholding tax preserved.",
       "author": "Donkeyfolio",
-      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/tr-importer-v5.1.1/tr-importer-5.1.1.zip",
+      "downloadUrl": "https://github.com/LGNative/donkeyfolio/releases/download/tr-importer-v5.1.2/tr-importer-5.1.2.zip",
       "tags": [
         "trade-republic",
         "csv",
@@ -20,7 +20,7 @@
       "downloads": 0,
       "rating": 0,
       "reviewCount": 0,
-      "releaseNotes": "v5.1.1 — fix SDK test for DIVIDEND_IN_KIND (Wealthfolio v3.4.0 requires unitPrice/FMV for asset-backed income).",
+      "releaseNotes": "v5.1.2 — add PSTG, RGTI, U (Unity), SOLS (Honeywell spin-off) to ISIN→ticker map.",
       "images": [],
       "isCritical": 0,
       "hasBreakingChanges": 0
