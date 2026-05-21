@@ -14,5 +14,5 @@
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true
   },
-  "include": ["src", "../../fork/sdk/augmentation.d.ts"]
+  "include": ["src", "../../sdk/augmentation.d.ts"]
 }
