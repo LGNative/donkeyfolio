@@ -418,11 +418,13 @@ const getColumns = (
       const holdingA = rowA.original;
       const holdingB = rowB.original;
 
-      // Always sort by base currency value for consistency
-      const valueA = (showTotalReturn ? holdingA.totalGain?.base : holdingA.dayChange?.base) ?? 0;
-      const valueB = (showTotalReturn ? holdingB.totalGain?.base : holdingB.dayChange?.base) ?? 0;
+      // Sort by return % (performance) — what the percentage line shows and what
+      // users expect when ranking holdings — rather than absolute € (which just
+      // mirrors position size). % is also currency-agnostic.
+      const pctA = (showTotalReturn ? holdingA.totalGainPct : holdingA.dayChangePct) ?? 0;
+      const pctB = (showTotalReturn ? holdingB.totalGainPct : holdingB.dayChangePct) ?? 0;
 
-      return valueA - valueB;
+      return pctA - pctB;
     },
   },
   {
