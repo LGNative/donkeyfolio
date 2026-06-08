@@ -85,7 +85,7 @@ const CustomTooltip = ({
   }
 
   const netContributionPayload = ncPayload ?? tvPayload;
-  const tooltipColor = tvPayload.totalValue >= 0 ? "var(--success)" : "var(--destructive)";
+  const tooltipColor = tvPayload.totalValue >= 0 ? "var(--primary)" : "var(--destructive)";
 
   return (
     <div className="bg-popover pointer-events-none grid grid-cols-1 gap-1.5 rounded-md border p-2 shadow-md">
@@ -317,14 +317,14 @@ export function HistoryChart({
               </>
             ) : allPositive ? (
               <>
-                <stop offset="5%" stopColor="var(--success)" stopOpacity={0.2} />
-                <stop offset="70%" stopColor="var(--success)" stopOpacity={0.12} />
-                <stop offset="100%" stopColor="var(--success)" stopOpacity={0} />
+                <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.2} />
+                <stop offset="70%" stopColor="var(--primary)" stopOpacity={0.12} />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
               </>
             ) : (
               <>
-                <stop offset="0%" stopColor="var(--success)" stopOpacity={0.2} />
-                <stop offset={zeroPercent} stopColor="var(--success)" stopOpacity={0.05} />
+                <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.2} />
+                <stop offset={zeroPercent} stopColor="var(--primary)" stopOpacity={0.05} />
                 <stop offset={zeroPercent} stopColor="var(--destructive)" stopOpacity={0.05} />
                 <stop offset="100%" stopColor="var(--destructive)" stopOpacity={0.2} />
               </>
@@ -334,10 +334,10 @@ export function HistoryChart({
             {allNegative ? (
               <stop offset="0%" stopColor="var(--destructive)" />
             ) : allPositive ? (
-              <stop offset="0%" stopColor="var(--success)" />
+              <stop offset="0%" stopColor="var(--primary)" />
             ) : (
               <>
-                <stop offset={zeroPercent} stopColor="var(--success)" />
+                <stop offset={zeroPercent} stopColor="var(--primary)" />
                 <stop offset={zeroPercent} stopColor="var(--destructive)" />
               </>
             )}
@@ -372,7 +372,7 @@ export function HistoryChart({
           stroke={`url(#${strokeGradientId})`}
           activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>
             showMarkers && props.payload?.date && markerDateSet.has(props.payload.date) ? null : (
-              <HistoryChartActiveDot {...props} stroke="var(--success)" />
+              <HistoryChartActiveDot {...props} stroke="var(--primary)" />
             )
           }
           fillOpacity={1}
