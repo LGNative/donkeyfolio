@@ -169,7 +169,7 @@ export default function GuidePage({ country }: { country?: string }) {
         <Section title="Italian retirement setup (fondo pensione, TFR, INPS)">
           <div className="space-y-4">
             <Term t="Investment portfolio (Golden Butterfly, All-Weather…)">
-              This is your main portfolio — the value Wealthfolio tracks. Set your return
+              This is your main portfolio — the value Donkeyfolio tracks. Set your return
               assumptions, fee drag, and monthly contribution here. It is the primary accumulation
               engine of your retirement plan.
             </Term>

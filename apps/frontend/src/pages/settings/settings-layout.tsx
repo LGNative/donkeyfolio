@@ -3,6 +3,7 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav } from "./sidebar-nav";
+import { CONNECT_ENABLED } from "@/lib/connect-config";
 
 const settingsSections = [
   {
@@ -77,12 +78,19 @@ const settingsSections = [
   {
     title: "Connections",
     items: [
-      {
-        title: "Wealthfolio Connect",
-        href: "connect",
-        subtitle: "Broker and device linking",
-        icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
-      },
+      // Wealthfolio Connect (cloud sync) is hidden while CONNECT_ENABLED is off —
+      // the app runs fully offline and the entry would only lead to a "not
+      // configured" page. Re-enable by setting the CONNECT_AUTH_* env vars.
+      ...(CONNECT_ENABLED
+        ? [
+            {
+              title: "Wealthfolio Connect",
+              href: "connect",
+              subtitle: "Broker and device linking",
+              icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
+            },
+          ]
+        : []),
       {
         title: "Market Data",
         href: "market-data",
@@ -103,7 +111,7 @@ const settingsSections = [
       {
         title: "Add-ons",
         href: "addons",
-        subtitle: "Extend Wealthfolio with features",
+        subtitle: "Extend Donkeyfolio with features",
         icon: <Icons.Package className="size-5" />,
       },
     ],

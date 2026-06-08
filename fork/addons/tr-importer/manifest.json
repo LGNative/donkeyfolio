@@ -1,0 +1,95 @@
+{
+  "id": "tr-importer-addon",
+  "name": "TR Importer",
+  "version": "5.3.0",
+  "description": "Trade Republic CSV importer. Drop the 'Extrato de transações.csv' export from the TR app, get every trade, dividend, interest, deposit, withdrawal, staking reward, and corporate action mapped to native Wealthfolio activities — with cost basis, FX, and withholding tax preserved. Incremental imports via transaction_id dedup. Replaces tr-pdf-converter v3.x.",
+  "author": "Donkeyfolio",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.0.3",
+  "enabled": true,
+  "permissions": [
+    {
+      "category": "ui",
+      "functions": [
+        { "name": "sidebar.addItem", "isDeclared": true, "isDetected": true },
+        { "name": "router.add", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Add a sidebar entry and a route for the TR Importer page"
+    },
+    {
+      "category": "accounts",
+      "functions": [
+        { "name": "getAll", "isDeclared": true, "isDetected": true },
+        { "name": "create", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Find or create the 'Trade Republic' account so TR activities don't mix with other brokers"
+    },
+    {
+      "category": "activities",
+      "functions": [
+        { "name": "saveMany", "isDeclared": true, "isDetected": true },
+        { "name": "create", "isDeclared": true, "isDetected": true },
+        { "name": "checkImport", "isDeclared": true, "isDetected": true },
+        { "name": "getAll", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Bulk-insert TR activities via saveMany (preserves metadata). getAll fetches existing activities for the Diagnostics panel — detects duplicates by tr_transaction_id, compares per-asset counts vs CSV expected, surfaces silently-rejected rows."
+    },
+    {
+      "category": "portfolio",
+      "functions": [
+        { "name": "recalculate", "isDeclared": true, "isDetected": true },
+        { "name": "update", "isDeclared": true, "isDetected": true },
+        { "name": "getHoldings", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Trigger Rebuild History after a successful import so the Performance chart, TWR and historical valuations populate immediately. getHoldings powers the EUR View panel — reads Wealthfolio's already-computed positions and we recompute Today's Price/Book Cost/Total Value in EUR using the FX rates from exchange-rates.getAll."
+    },
+    {
+      "category": "quotes",
+      "functions": [
+        { "name": "getHistory", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "EUR View panel needs the latest Yahoo quote per asset to compute the EUR-converted Today's Price (native_close × FX_rate). Reads via quotes.getHistory and picks the latest entry."
+    },
+    {
+      "category": "exchange-rates",
+      "functions": [
+        { "name": "getAll", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "EUR View panel uses Wealthfolio's internal FX rates (already maintained for Total Value conversion) to render every column in EUR — Today's Price, Book Cost, Total Value, Avg Cost. No external API, no hardcoded rates."
+    },
+    {
+      "category": "market-data",
+      "functions": [
+        { "name": "syncHistory", "isDeclared": true, "isDetected": true },
+        { "name": "sync", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Trigger market data sync after import so newly-created assets get historical quotes from Yahoo Finance."
+    },
+    {
+      "category": "files",
+      "functions": [
+        { "name": "openSaveDialog", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Save reports (tax report, cashflow) to disk via the system save dialog."
+    },
+    {
+      "category": "assets",
+      "functions": [
+        { "name": "getProfile", "isDeclared": true, "isDetected": true },
+        { "name": "updateProfile", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "After import, override every TR-imported asset's quoteCcy to EUR so the user sees EUR prices in Holdings (TR settles in EUR, even for US-listed stocks). Without this, asset profiles stay at their first-import quoteCcy (USD/CAD) and the user has to edit every security manually."
+    },
+    {
+      "category": "secrets",
+      "functions": [
+        { "name": "set", "isDeclared": true, "isDetected": true },
+        { "name": "get", "isDeclared": true, "isDetected": true },
+        { "name": "delete", "isDeclared": true, "isDetected": true }
+      ],
+      "purpose": "Store the user's Anthropic API key encrypted at rest for the optional AI Validation panel (~€0.08 per call, bring-your-own-key)."
+    }
+  ],
+  "keywords": ["donkeyfolio", "addon", "trade-republic", "csv", "importer"],
+  "license": "MIT"
+}
