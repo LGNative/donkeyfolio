@@ -13,7 +13,7 @@ interface NavigationModeContextValue {
   toggleFocusMode: () => void;
 }
 
-const STORAGE_KEY = "navigation-mode";
+const STORAGE_KEY = "navigation-mode-v2";
 const FOCUS_STORAGE_KEY = "navigation-focus-mode";
 const DEFAULT_MODE: NavigationMode = "sidebar";
 

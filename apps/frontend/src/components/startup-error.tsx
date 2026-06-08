@@ -18,7 +18,7 @@ export function StartupError({ error, isRetrying = false, onRetry }: StartupErro
         <div className="mb-6 space-y-2">
           <h1 className="text-xl font-semibold tracking-tight">Backend unavailable</h1>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Wealthfolio could not load settings from the backend.
+            Donkeyfolio could not load settings from the backend.
           </p>
           {error?.message && (
             <p className="text-muted-foreground/80 text-xs leading-relaxed">{error.message}</p>
