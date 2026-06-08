@@ -50,13 +50,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                   className="draggable flex items-center justify-center pb-6"
                 >
                   <Link to="/">
-                    <img
-                      className={`h-10 w-10 rounded-full bg-transparent shadow-lg transition-transform duration-700 ease-in-out [transform-style:preserve-3d] hover:[transform:rotateY(-180deg)] ${
-                        collapsed ? "[transform:rotateY(180deg)]" : ""
-                      }`}
-                      aria-hidden="true"
-                      src="/logo.png"
-                    />
+                    <img className="h-10 w-10" aria-hidden="true" src="/logo.png" />
                   </Link>
 
                   <span
