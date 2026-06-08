@@ -15,6 +15,7 @@ function AnimatedNumber({ value }: { value: number }) {
   const [NumberFlow, setNumberFlow] = React.useState<React.ComponentType<any> | null>(null);
 
   const absValue = Math.abs(value * 100);
+  const digits = absValue >= 100 ? 0 : 2;
   React.useEffect(() => {
     import("@number-flow/react").then((module) => {
       setNumberFlow(module.default);
@@ -30,8 +31,8 @@ function AnimatedNumber({ value }: { value: number }) {
       value={absValue}
       animated={true}
       format={{
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
       }}
     />
   );

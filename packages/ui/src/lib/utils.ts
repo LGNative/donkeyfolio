@@ -160,11 +160,15 @@ export function formatCompactAmount(
 export function formatPercent(value: number | null | undefined) {
   if (value == null) return "-";
   try {
+    // Drop decimals once the percentage reaches 100% — they are just noise on a
+    // large number (e.g. an all-time return of +27,994%). value is a fraction,
+    // so |value| >= 1 means the percentage is >= 100%.
+    const digits = Math.abs(value) >= 1 ? 0 : 2;
     // Use Intl.NumberFormat for correct percentage formatting (handles x100 and % sign)
     return new Intl.NumberFormat("en-US", {
       style: "percent",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
     }).format(value);
   } catch (error) {
     console.error(`Error formatting percent ${value}: ${error}`);
