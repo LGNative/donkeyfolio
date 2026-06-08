@@ -44,7 +44,7 @@ export function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <CardTitle>Wealthfolio</CardTitle>
+              <CardTitle>Donkeyfolio</CardTitle>
               <CardDescription>{t("auth:login.description")}</CardDescription>
             </div>
           </CardHeader>

@@ -1,5 +1,6 @@
 import { isWeb } from "@/adapters";
 import { isAppleDevice } from "@/lib/device-utils";
+import { CONNECT_ENABLED } from "@/lib/connect-config";
 import { useAuth } from "@/context/auth-context";
 import { cn } from "@/lib/utils";
 import {
@@ -71,7 +72,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
                       },
                     )}
                   >
-                    Wealthfolio
+                    Donkeyfolio
                   </span>
                 </div>
 
@@ -146,7 +147,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
               {navigation?.secondary?.map((item) => (
                 <NavItem key={item.title} item={item} collapsed={collapsed} />
               ))}
-              <ConnectNavItem collapsed={collapsed} />
+              {CONNECT_ENABLED && <ConnectNavItem collapsed={collapsed} />}
               {isWeb && requiresAuth && (
                 <Button
                   type="button"

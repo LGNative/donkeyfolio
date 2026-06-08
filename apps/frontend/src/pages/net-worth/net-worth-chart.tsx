@@ -12,7 +12,7 @@ import type { NetWorthHistoryPoint } from "@/lib/types";
 import type { MouseHandlerDataParam } from "recharts/types/synchronisation/types";
 
 // Goldish orange for net worth chart (consistent across light/dark modes)
-const CHART_COLOR = "hsl(38, 75%, 50%)";
+const CHART_COLOR = "var(--primary)"; /* Donkeyfolio brand green (was amber) */
 const NEGATIVE_COLOR = "var(--destructive)";
 const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 

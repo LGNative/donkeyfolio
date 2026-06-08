@@ -160,6 +160,10 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
   const fontSize2 = Math.min(width, height) < 80 ? Math.min(width, height) * 0.14 : 12;
   const { fill: fillColor, isLightTile } = getTreemapColor(gain, returnType);
   const textColor = isDark || !isLightTile ? TILE_TEXT_LIGHT : TILE_TEXT_DARK;
+  // a11y: a halo in the opposite tone keeps labels legible on every tile shade,
+  // including the ambiguous mid-tones where neither pure dark nor light text wins.
+  const haloColor = isLightTile ? "rgba(245,243,236,0.55)" : "rgba(16,22,19,0.6)";
+  const haloWidth = Math.max(1.5, (fontSize + 1) / 7);
 
   // Determine what text to display based on mode
   const displayText = displayMode === "name" && name ? name : symbol;
@@ -195,9 +199,13 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
               y={y + height / 2}
               textAnchor="middle"
               fill={textColor}
-              className="font-default cursor-pointer text-sm hover:underline"
+              className="font-default cursor-pointer text-sm font-semibold hover:underline"
               style={{
                 fontSize: fontSize + 1,
+                paintOrder: "stroke",
+                stroke: haloColor,
+                strokeWidth: haloWidth,
+                strokeLinejoin: "round",
               }}
             >
               {truncatedText}
@@ -209,9 +217,13 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
             y={y + height / 2 + fontSize}
             textAnchor="middle"
             fill={textColor}
-            className="text- font-thin"
+            className="font-semibold"
             style={{
               fontSize: fontSize2,
+              paintOrder: "stroke",
+              stroke: haloColor,
+              strokeWidth: haloWidth,
+              strokeLinejoin: "round",
             }}
           >
             {gain > 0 ? "+" + formatPercent(gain) : formatPercent(gain)}

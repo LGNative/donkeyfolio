@@ -405,8 +405,8 @@
   --card-foreground: hsl(var(--flexoki-tx));
   --popover: hsl(var(--flexoki-bg-2));
   --popover-foreground: hsl(var(--flexoki-tx));
-  --primary: hsl(var(--flexoki-tx));
-  --primary-foreground: hsl(var(--flexoki-bg));
+  --primary: hsl(150 70% 40%); /* Donkeyfolio brand green */
+  --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(var(--flexoki-ui-2));
   --secondary-foreground: hsl(var(--flexoki-tx-2));
   --muted: hsl(var(--flexoki-ui));
@@ -415,17 +415,17 @@
   --accent-foreground: hsl(var(--flexoki-tx-2));
   --destructive: hsl(var(--flexoki-re));
   --destructive-foreground: hsl(var(--flexoki-bg));
-  --success: hsl(var(--flexoki-gr));
+  --success: hsl(150 65% 45%); /* Donkeyfolio brand green (was olive flexoki) */
   --success-foreground: hsl(var(--flexoki-bg));
   --warning: hsl(var(--flexoki-ye));
   --warning-foreground: hsl(var(--flexoki-bg));
   --border: hsl(var(--flexoki-ui));
   --input: hsl(var(--flexoki-ui));
   --input-bg: hsl(var(--flexoki-bg));
-  --ring: hsl(var(--flexoki-ui-3));
+  --ring: hsl(150 70% 40%); /* Donkeyfolio brand green focus */
 
   /* Charts (allocation palette: forest / sage / sand / clay / plum + stone) */
-  --chart-1: #355c4c;
+  --chart-1: var(--primary); /* Donkeyfolio green dominant slice */
   --chart-2: #7e9f8c;
   --chart-3: #cbba8c;
   --chart-4: #c08a5f;
@@ -487,7 +487,7 @@
   --flexoki-ui-2: 40 3% 20%;
   --flexoki-ui-3: 30 3% 24%;
   --flexoki-tx: 55 10% 79%;
-  --flexoki-tx-2: 43 3% 52%;
+  --flexoki-tx-2: 43 3% 60%;
   --flexoki-tx-3: 45 2% 33%;
   --flexoki-re: 5 61% 54%;
   --flexoki-gr: 72 46% 41%;
@@ -496,7 +496,10 @@
   /* Dark chart palette — same semantic hues as light (forest / sage / sand /
      clay / plum + stone), tuned for the dark surface: forest is lifted for
      contrast, the stones are pulled down so they stay calm instead of glaring. */
-  --chart-1: hsl(156 28% 44%);
+  --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
+  --primary-foreground: hsl(0 0% 0%);
+  --ring: hsl(150 65% 50%);
+  --chart-1: var(--primary);
   --chart-2: #7e9f8c;
   --chart-3: #cbba8c;
   --chart-4: #c08a5f;
@@ -525,6 +528,9 @@
   --toast-info-border: var(--color-blue-800);
 
   --input: hsl(var(--flexoki-ui-2));
+  /* a11y: lift hairlines so cards/separators delineate on the near-black bg
+     (was --flexoki-ui 15% → 1.3:1; ui-3 24% reads as a visible hairline) */
+  --border: hsl(var(--flexoki-ui-3));
 }
 
 @layer base {
