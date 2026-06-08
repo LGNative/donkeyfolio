@@ -17,6 +17,9 @@ function DriverRow({
   currency: string;
 }) {
   const { t } = useTranslation();
+  // Hide drivers that are effectively zero (e.g. "Equity built" for portfolios
+  // with no debt) so the panel doesn't carry dead rows.
+  if (Math.abs(value) < 0.005) return null;
   const perMonth = months > 0 ? value / months : value;
   const share = total > 0 ? (Math.abs(value) / total) * 100 : 0;
   const sign = Math.abs(value) < 0.005 ? "" : value > 0 ? "+" : "-";
