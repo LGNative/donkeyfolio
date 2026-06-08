@@ -198,7 +198,7 @@ export function NetWorthContent() {
                 targetValue={parsedData?.netWorth ?? 0}
                 currency={currency}
                 displayCurrency={true}
-                displayDecimal={false}
+                displayDecimal={true}
                 compact={isMobile}
               />
               {hasStaleValuations && (
