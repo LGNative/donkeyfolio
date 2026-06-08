@@ -76,6 +76,11 @@ const POS_HI = [53, 92, 76]; // #355c4c
 // hue so small losses read red-tinted instead of washed-out pink.
 const NEG_LO = [233, 179, 168]; // #e9b3a8
 const NEG_HI = [209, 78, 66]; // #d14e42
+// Light mode: a saturated ramp where even the smallest movers are dark enough
+// for white labels, so every tile reads uniformly white (like the dark-mode
+// heatmap). Magnitude still reads from the % number and the depth of colour.
+const POS_LO_LIGHT = [108, 160, 122];
+const NEG_LO_LIGHT = [198, 118, 108];
 
 const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
 
@@ -94,9 +99,10 @@ interface TreemapTile {
 // instead of collapsing into a single shade. `k` is the return magnitude that
 // maps to the mid-tone (losses ramp ~2× faster, matching the design). Values
 // are fractions: 0.5 = +50%, 0.025 = +2.5% for the smaller daily returns.
-function getTreemapColor(gain: number, returnType: ReturnType): TreemapTile {
+function getTreemapColor(gain: number, returnType: ReturnType, isDark: boolean): TreemapTile {
   const isGain = isNaN(gain) || gain >= 0;
-  const [lo, hi] = isGain ? [POS_LO, POS_HI] : [NEG_LO, NEG_HI];
+  const lo = isGain ? (isDark ? POS_LO : POS_LO_LIGHT) : isDark ? NEG_LO : NEG_LO_LIGHT;
+  const hi = isGain ? POS_HI : NEG_HI;
   const k = isGain
     ? returnType === "daily"
       ? 0.025
@@ -159,12 +165,8 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
 }) => {
   const fontSize = Math.min(width, height) < 80 ? Math.min(width, height) * 0.16 : 13;
   const fontSize2 = Math.min(width, height) < 80 ? Math.min(width, height) * 0.14 : 12;
-  const { fill: fillColor, isLightTile } = getTreemapColor(gain, returnType);
-  const textColor = isDark || !isLightTile ? TILE_TEXT_LIGHT : TILE_TEXT_DARK;
-  // a11y: a halo in the opposite tone keeps labels legible on every tile shade,
-  // including the ambiguous mid-tones where neither pure dark nor light text wins.
-  const haloColor = isLightTile ? "rgba(245,243,236,0.55)" : "rgba(16,22,19,0.6)";
-  const haloWidth = Math.max(1.5, (fontSize + 1) / 7);
+  const { fill: fillColor, isLightTile } = getTreemapColor(gain, returnType, isDark);
+  const textColor = isLightTile ? TILE_TEXT_DARK : TILE_TEXT_LIGHT;
 
   // Determine what text to display based on mode
   const displayText = displayMode === "name" && name ? name : symbol;
@@ -203,10 +205,6 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
               className="font-default cursor-pointer text-sm font-semibold hover:underline"
               style={{
                 fontSize: fontSize + 1,
-                paintOrder: "stroke",
-                stroke: haloColor,
-                strokeWidth: haloWidth,
-                strokeLinejoin: "round",
               }}
             >
               {truncatedText}
@@ -221,10 +219,6 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
             className="font-semibold"
             style={{
               fontSize: fontSize2,
-              paintOrder: "stroke",
-              stroke: haloColor,
-              strokeWidth: haloWidth,
-              strokeLinejoin: "round",
             }}
           >
             {gain > 0 ? "+" + formatPercent(gain) : formatPercent(gain)}
