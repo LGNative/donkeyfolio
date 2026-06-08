@@ -415,7 +415,7 @@
   --accent-foreground: hsl(var(--flexoki-tx-2));
   --destructive: hsl(var(--flexoki-re));
   --destructive-foreground: hsl(var(--flexoki-bg));
-  --success: hsl(150 65% 45%); /* Donkeyfolio brand green (was olive flexoki) */
+  --success: hsl(150 55% 32%); /* gains: dark green, legible on the light bg */
   --success-foreground: hsl(var(--flexoki-bg));
   --warning: hsl(var(--flexoki-ye));
   --warning-foreground: hsl(var(--flexoki-bg));
@@ -426,14 +426,14 @@
 
   /* Charts (allocation palette: forest / sage / sand / clay / plum + stone) */
   --chart-1: var(--primary); /* Donkeyfolio green dominant slice */
-  --chart-2: #7e9f8c;
-  --chart-3: #cbba8c;
-  --chart-4: #c08a5f;
-  --chart-5: #9a7e92;
-  --chart-6: hsl(49 7% 70%);
-  --chart-7: hsl(55 10% 79%);
-  --chart-8: hsl(50 14% 83%);
-  --chart-9: hsl(51 21% 88%);
+  --chart-2: hsl(172 42% 42%);
+  --chart-3: hsl(190 44% 44%);
+  --chart-4: hsl(206 44% 48%);
+  --chart-5: hsl(220 38% 52%);
+  --chart-6: hsl(158 34% 44%);
+  --chart-7: hsl(135 30% 46%);
+  --chart-8: hsl(182 32% 48%);
+  --chart-9: hsl(210 34% 54%);
   --chart-stone: #b1aa9a;
 
   /* Sidebar (full hsl colors) */
@@ -497,15 +497,16 @@
   --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
   --primary-foreground: hsl(0 0% 0%);
   --ring: hsl(150 65% 50%);
+  --success: hsl(150 58% 48%); /* gains: brighter green for the dark bg */
   --chart-1: var(--primary);
-  --chart-2: #7e9f8c;
-  --chart-3: #cbba8c;
-  --chart-4: #c08a5f;
-  --chart-5: #9a7e92;
-  --chart-6: hsl(49 8% 60%);
-  --chart-7: hsl(55 10% 67%);
-  --chart-8: hsl(50 13% 72%);
-  --chart-9: hsl(51 18% 77%);
+  --chart-2: hsl(172 40% 50%);
+  --chart-3: hsl(190 42% 52%);
+  --chart-4: hsl(206 42% 56%);
+  --chart-5: hsl(220 36% 58%);
+  --chart-6: hsl(158 32% 54%);
+  --chart-7: hsl(135 26% 56%);
+  --chart-8: hsl(182 28% 62%);
+  --chart-9: hsl(210 30% 66%);
   --chart-stone: hsl(49 8% 60%);
 
   /* Sonner toast overrides for dark mode - solid backgrounds for better readability */
