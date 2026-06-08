@@ -1,0 +1,561 @@
+/**
+ * ISIN → Yahoo-friendly symbol mapping for Trade Republic statements.
+ *
+ * Why this exists:
+ *   Donkeyfolio looks up market data via Yahoo Finance, and Yahoo's API
+ *   does NOT accept ISINs for most assets — it expects tickers (AAPL,
+ *   MSFT) or exchange-suffixed tickers (CSPX.L, EUNL.DE). Without this
+ *   mapping, importing TR PDFs leaves 80+ assets with stale prices and
+ *   no logos (since /ticker-logos/<ISIN>.png doesn't exist either).
+ *
+ * What we map:
+ *   - US/CA/major equities → plain US ticker (logos exist, Yahoo native).
+ *   - Irish/LU ETFs → LSE/Xetra/XAMS ticker (Yahoo has data; no logo
+ *     in the bundled set yet — text fallback shows e.g. "CSPX").
+ *   - Crypto pseudo-ISINs (XF000…) → Yahoo crypto pair (BTC-EUR, …) +
+ *     dedicated logos (BTC.png, ETH.png, …).
+ *
+ * What stays as the ISIN:
+ *   Anything not in this map. The activity still imports correctly
+ *   (cost basis preserved); only the live price + logo are missing.
+ *
+ * Source for tickers: TR statement names + manual research per ISIN.
+ * Coverage focuses on the assets observed in real user portfolios; can
+ * be extended freely as new ISINs come up.
+ */
+
+/** Per-ISIN analysis used by the "Unmapped securities" panel. */
+export interface SecurityAnalysis {
+  isin: string;
+  /** Stock name from the PDF description (best effort). */
+  stockName: string;
+  /** WKN if extracted from any trade for this ISIN. */
+  wkn?: string;
+  /** Total shares bought minus sold (across the statement period). */
+  netQty: number;
+  /** Total € spent (sum of buy amounts) — useful to gauge how important
+   *  it is to map this ISIN correctly. Cents-precision rounding ok. */
+  totalSpent: number;
+  /** Number of distinct trades for this ISIN. */
+  tradeCount: number;
+  /** Classification:
+   *  - "mapped"   : in tr-isin-tickers map → Yahoo will price correctly
+   *  - "crypto"   : TR pseudo-ISIN (XF000...) → resolves to a crypto pair
+   *  - "unmapped" : no entry in our map → imports as ISIN-as-symbol, Yahoo
+   *                 may or may not find it, prices may not flow */
+  status: "mapped" | "crypto" | "unmapped";
+  /** Mapped Yahoo ticker (only when status === "mapped" or "crypto"). */
+  mappedSymbol?: string;
+  /** Mapped display name (only when status === "mapped" or "crypto"). */
+  mappedName?: string;
+  /** Yahoo lookup URL pre-filled with the stock name — handy for the user
+   *  to verify what the canonical Yahoo ticker is. Always present. */
+  yahooLookupUrl: string;
+}
+
+export interface TickerMapping {
+  /** Friendly display name override. When set, this is used instead of the
+   *  raw security name from the TR PDF description (e.g. "Core S&P 500"
+   *  instead of "iShares VII plc - iShares Core S&P 500 UCITS ETF USD (Acc)").
+   *  Only applied at FIRST asset creation — existing assets keep their
+   *  current name (Donkeyfolio backend dedups by ISIN). */
+  displayName?: string;
+  /** Yahoo-compatible symbol (e.g. "AAPL", "CSPX.L", "BTC-EUR"). */
+  symbol: string;
+  /** ISO-10383 MIC for the listing (e.g. "XLON", "XAMS"). Optional —
+   * Donkeyfolio infers a sensible default from the symbol suffix when
+   * absent. Crypto/FX must omit this (the backend rejects it). */
+  exchangeMic?: string;
+  /** Quote currency hint. EUR for European ETFs/crypto pairs, USD for
+   * NASDAQ/NYSE listings. Donkeyfolio handles activity-currency FX. */
+  quoteCcy?: string;
+  /** "EQUITY" for stocks/ETFs, "CRYPTO" for crypto pairs. */
+  instrumentType: "EQUITY" | "CRYPTO";
+}
+
+// ─── Crypto pseudo-ISINs ───────────────────────────────────────────────
+// TR emits XF000* synthetic ISINs for crypto. Yahoo expects "BTC-EUR"
+// style pair symbols; we pin EUR since TR settles all crypto in EUR.
+const CRYPTO: Record<string, TickerMapping> = {
+  XF000BTC0017: { symbol: "BTC-EUR", quoteCcy: "EUR", instrumentType: "CRYPTO" },
+  XF000ETH0019: { symbol: "ETH-EUR", quoteCcy: "EUR", instrumentType: "CRYPTO" },
+  XF000XRP0018: { symbol: "XRP-EUR", quoteCcy: "EUR", instrumentType: "CRYPTO" },
+  XF000SOL0012: { symbol: "SOL-EUR", quoteCcy: "EUR", instrumentType: "CRYPTO" },
+  XF000ADA0018: { symbol: "ADA-EUR", quoteCcy: "EUR", instrumentType: "CRYPTO" },
+};
+
+// ─── Irish/LU ETFs ─────────────────────────────────────────────────────
+// TR routes ETF orders through Lang & Schwarz. Yahoo doesn't quote LS;
+// we point at the LSE listing where possible (most reliable Yahoo data),
+// or Xetra for funds with no LSE presence. Currency follows the listing:
+// LSE GBp/USD, Xetra/Amsterdam EUR.
+const ETFS: Record<string, TickerMapping> = {
+  // iShares Core S&P 500 UCITS ETF USD (Acc) — Xetra EUR
+  // (TR trades all UCITS ETFs in EUR via Xetra; switched from CSPX.L LSE
+  // to SXR8.DE Xetra to match TR's reference price.)
+  IE00B5BMR087: {
+    displayName: "iShares Core S&P 500",
+    symbol: "SXR8.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // iShares Core MSCI World UCITS ETF USD (Acc) — Xetra EUR
+  IE00B4L5Y983: {
+    displayName: "iShares Core MSCI World",
+    symbol: "EUNL.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // iShares MSCI World Small Cap UCITS ETF — Xetra EUR
+  IE00BF4RFH31: {
+    displayName: "iShares MSCI World Small Cap",
+    symbol: "IUSN.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // iShares Core MSCI Europe UCITS ETF EUR (Acc) — Xetra EUR
+  IE00B4K48X80: {
+    displayName: "iShares Core MSCI Europe",
+    symbol: "SXR7.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // iShares S&P 500 Information Technology Sector USD (Acc) — Xetra EUR
+  IE00B3WJKG14: {
+    displayName: "iShares S&P 500 Information Technology",
+    symbol: "QDVE.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // iShares S&P 500 Consumer Discretionary Sector USD (Acc) — Xetra EUR
+  IE00B4MCHD36: {
+    displayName: "iShares S&P 500 Consumer Discretionary",
+    symbol: "QDVK.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Vanguard S&P 500 UCITS ETF (USD) Accumulating — Xetra EUR
+  IE00BFMXXD54: {
+    displayName: "Vanguard S&P 500",
+    symbol: "VUAA.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Dist — Xetra EUR
+  IE00B8GKDB10: {
+    displayName: "Vanguard FTSE All-World High Dividend Yield (Dist)",
+    symbol: "VGWD.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Acc — Xetra EUR
+  // (Corrected from a previous mis-mapping that pointed this ISIN at Fidelity
+  //  US Quality Income — verified against TR statement description.)
+  IE00BK5BR626: {
+    displayName: "Vanguard FTSE All-World High Dividend Yield (Acc)",
+    symbol: "VGWE.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Fidelity US Quality Income UCITS ETF (Distributing) — Xetra EUR
+  IE00BYXVGZ48: {
+    displayName: "Fidelity US Quality Income (Dist)",
+    symbol: "FUSD.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Fidelity US Quality Income UCITS ETF EUR Hedged Acc — Xetra EUR
+  IE00BD52YH13: {
+    displayName: "Fidelity US Quality Income (EUR Hedged Acc)",
+    symbol: "FUSU.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Xtrackers MSCI World UCITS ETF 1C — Xetra EUR
+  IE00BJ0KDQ92: {
+    displayName: "Xtrackers MSCI World",
+    symbol: "XDWD.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Xtrackers Russell 2000 UCITS ETF 1C — Xetra EUR
+  IE00BJZ2DD79: {
+    displayName: "Xtrackers Russell 2000",
+    symbol: "XRS2.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Amundi MSCI Emerging Markets Swap UCITS ETF EUR Acc — Paris EUR
+  LU1681045370: {
+    displayName: "Amundi MSCI Emerging Markets",
+    symbol: "AEEM.PA",
+    exchangeMic: "XPAR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Amundi MSCI Semiconductors UCITS ETF Acc — Paris EUR
+  LU1900066033: {
+    displayName: "Amundi MSCI Semiconductors",
+    symbol: "CHIP.PA",
+    exchangeMic: "XPAR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+  // Invesco Physical Gold ETC — Xetra EUR
+  IE00B579F325: {
+    displayName: "Invesco Physical Gold",
+    symbol: "8PSG.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  },
+};
+
+// ─── US / CA / EU equities (single-listing tickers) ────────────────────
+// Yahoo Finance accepts these without exchange suffix for most cases.
+// We omit exchange MIC so Donkeyfolio's symbol-search resolves the
+// canonical primary listing (NYSE/NASDAQ/TSX).
+const EQUITIES: Record<string, TickerMapping> = {
+  // Top US stocks (sorted by frequency in real TR portfolios)
+  US70450Y1038: { symbol: "PYPL", quoteCcy: "USD", instrumentType: "EQUITY" }, // PayPal
+  US83406F1021: { symbol: "SOFI", quoteCcy: "USD", instrumentType: "EQUITY" }, // SoFi
+  US69608A1088: { symbol: "PLTR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Palantir
+  US0079031078: { symbol: "AMD", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US6541061031: { symbol: "NKE", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nike
+  US79466L3024: { symbol: "CRM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Salesforce
+  US88160R1014: { symbol: "TSLA", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US67066G1040: { symbol: "NVDA", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US2935941078: { symbol: "ENVX", quoteCcy: "USD", instrumentType: "EQUITY" }, // Enovix
+  US91680M1071: { symbol: "UPST", quoteCcy: "USD", instrumentType: "EQUITY" }, // Upstart
+  US0404132054: { symbol: "ANET", quoteCcy: "USD", instrumentType: "EQUITY" }, // Arista
+  US81762P1021: { symbol: "NOW", quoteCcy: "USD", instrumentType: "EQUITY" }, // ServiceNow
+  US0231351067: { symbol: "AMZN", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US24703L2025: { symbol: "DELL", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US0378331005: { symbol: "AAPL", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US02079K3059: { symbol: "GOOGL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Alphabet A
+  US46120E6023: { symbol: "ISRG", quoteCcy: "USD", instrumentType: "EQUITY" }, // Intuitive
+  US5949181045: { symbol: "MSFT", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US30303M1027: { symbol: "META", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US92826C8394: { symbol: "V", quoteCcy: "USD", instrumentType: "EQUITY" }, // Visa
+  US00724F1012: { symbol: "ADBE", quoteCcy: "USD", instrumentType: "EQUITY" }, // Adobe
+  US6974351057: { symbol: "PANW", quoteCcy: "USD", instrumentType: "EQUITY" }, // Palo Alto
+  US88339J1051: { symbol: "TTD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Trade Desk
+  CA82509L1076: { symbol: "SHOP", quoteCcy: "USD", instrumentType: "EQUITY" }, // Shopify
+  US22788C1053: { symbol: "CRWD", quoteCcy: "USD", instrumentType: "EQUITY" }, // CrowdStrike
+  US92840M1027: { symbol: "VST", quoteCcy: "USD", instrumentType: "EQUITY" }, // Vistra
+  US11135F1012: { symbol: "AVGO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Broadcom
+  US65339F1012: { symbol: "NEE", quoteCcy: "USD", instrumentType: "EQUITY" }, // NextEra
+  US4330001060: { symbol: "HIMS", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US5951121038: { symbol: "MU", quoteCcy: "USD", instrumentType: "EQUITY" }, // Micron
+  US21873S1087: { symbol: "CRWV", quoteCcy: "USD", instrumentType: "EQUITY" }, // CoreWeave
+  US9633201069: { symbol: "WHR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Whirlpool
+  CA00288U1066: { symbol: "ABCL", quoteCcy: "USD", instrumentType: "EQUITY" }, // AbCellera
+  US90364P1057: { symbol: "PATH", quoteCcy: "USD", instrumentType: "EQUITY" }, // UiPath
+  US26856L1035: { symbol: "ELF", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US0420682058: { symbol: "ARM", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US36317J2096: { symbol: "GLXY", quoteCcy: "USD", instrumentType: "EQUITY" }, // Galaxy Digital
+  US7811541090: { symbol: "RBRK", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rubrik
+  US1273871087: { symbol: "CDNS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cadence
+  US69370C1009: { symbol: "PTC", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US36828A1016: { symbol: "GEV", quoteCcy: "USD", instrumentType: "EQUITY" }, // GE Vernova
+  US8740391003: { symbol: "TSM", quoteCcy: "USD", instrumentType: "EQUITY" }, // TSMC ADR
+  US21037T1097: { symbol: "CEG", quoteCcy: "USD", instrumentType: "EQUITY" }, // Constellation Energy
+  NL0009805522: { symbol: "NBIS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nebius
+  US5533681012: { symbol: "MP", quoteCcy: "USD", instrumentType: "EQUITY" }, // MP Materials
+  US68389X1054: { symbol: "ORCL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Oracle
+  US92686J1060: { symbol: "VKTX", quoteCcy: "USD", instrumentType: "EQUITY" }, // Viking Therapeutics
+  US64110L1061: { symbol: "NFLX", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US48138M1053: { symbol: "JMIA", quoteCcy: "USD", instrumentType: "EQUITY" }, // Jumia
+  US18915M1071: { symbol: "NET", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cloudflare
+  US26740W1099: { symbol: "QBTS", quoteCcy: "USD", instrumentType: "EQUITY" }, // D-Wave
+  US92537N1081: { symbol: "VRT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Vertiv
+  US88023B1035: { symbol: "TEM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Tempus AI
+  KYG037AX1015: { symbol: "AMBA", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ambarella
+  US0494681010: { symbol: "TEAM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Atlassian
+  US0258161092: { symbol: "AXP", quoteCcy: "USD", instrumentType: "EQUITY" }, // Amex
+  US3364331070: { symbol: "FSLR", quoteCcy: "USD", instrumentType: "EQUITY" }, // First Solar
+  US05464C1018: { symbol: "AXON", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US78409V1044: { symbol: "SPGI", quoteCcy: "USD", instrumentType: "EQUITY" }, // S&P Global
+  US7707001027: { symbol: "HOOD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Robinhood
+  US4592001014: { symbol: "IBM", quoteCcy: "USD", instrumentType: "EQUITY" },
+  US03831W1080: { symbol: "APP", quoteCcy: "USD", instrumentType: "EQUITY" }, // AppLovin
+  US98980G1022: { symbol: "ZS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Zscaler
+  US7223041028: { symbol: "PDD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Pinduoduo
+  US89377M1099: { symbol: "TMDX", quoteCcy: "USD", instrumentType: "EQUITY" }, // TransMedics
+  US8334451098: { symbol: "SNOW", quoteCcy: "USD", instrumentType: "EQUITY" }, // Snowflake
+  US17253J1060: { symbol: "CIFR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cipher Mining
+  US7731221062: { symbol: "RKLB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rocket Lab
+  US7475251036: { symbol: "QCOM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Qualcomm
+  US98956A1051: { symbol: "ZETA", quoteCcy: "USD", instrumentType: "EQUITY" },
+  CA2926717083: { symbol: "UUUU", quoteCcy: "USD", instrumentType: "EQUITY" }, // Energy Fuels
+  US00217D1000: { symbol: "ASTS", quoteCcy: "USD", instrumentType: "EQUITY" }, // AST SpaceMobile
+  US23804L1035: { symbol: "DDOG", quoteCcy: "USD", instrumentType: "EQUITY" }, // Datadog
+  US0382221051: { symbol: "AMAT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Applied Materials
+  US5184391044: { symbol: "EL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Estée Lauder
+  KYG6683N1034: { symbol: "NU", quoteCcy: "USD", instrumentType: "EQUITY" }, // Nu Holdings
+  US0937121079: { symbol: "BE", quoteCcy: "USD", instrumentType: "EQUITY" }, // Bloom Energy
+  US46222L1089: { symbol: "IONQ", quoteCcy: "USD", instrumentType: "EQUITY" },
+  CA13321L1085: { symbol: "CCJ", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cameco
+  US5738741041: { symbol: "MRVL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Marvell
+  US04626A1034: { symbol: "ALAB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Astera Labs
+  ZAE000259701: { symbol: "SBSW", quoteCcy: "USD", instrumentType: "EQUITY" }, // Sibanye Stillwater ADR
+  US3696043013: { symbol: "GE", quoteCcy: "USD", instrumentType: "EQUITY" }, // GE Aerospace
+  US60937P1066: { symbol: "MDB", quoteCcy: "USD", instrumentType: "EQUITY" }, // MongoDB
+  US1717793095: { symbol: "CIEN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ciena
+  US50077B2079: { symbol: "KTOS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Kratos
+  US0381692070: { symbol: "APLD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Applied Digital
+  US4385161066: { symbol: "HON", quoteCcy: "USD", instrumentType: "EQUITY" }, // Honeywell
+  KYG017191142: { symbol: "BABA", quoteCcy: "USD", instrumentType: "EQUITY" }, // Alibaba
+  AU0000185993: { symbol: "IREN", quoteCcy: "USD", instrumentType: "EQUITY" }, // IREN
+  US6877931096: { symbol: "OSCR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Oscar Health
+  US1491231015: { symbol: "CAT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Caterpillar
+  US08975B1098: { symbol: "BBAI", quoteCcy: "USD", instrumentType: "EQUITY" }, // BigBear.ai
+  US63942X1063: { symbol: "NVTS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Navitas
+  US12572Q1058: { symbol: "CME", quoteCcy: "USD", instrumentType: "EQUITY" }, // CME Group
+  US72703X1063: { symbol: "PL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Planet Labs
+  US9168961038: { symbol: "UEC", quoteCcy: "USD", instrumentType: "EQUITY" }, // Uranium Energy
+  US15643U1043: { symbol: "LEU", quoteCcy: "USD", instrumentType: "EQUITY" }, // Centrus
+  US00846U1016: { symbol: "A", quoteCcy: "USD", instrumentType: "EQUITY" }, // Agilent
+  US4581401001: { symbol: "INTC", quoteCcy: "USD", instrumentType: "EQUITY" }, // Intel
+  US34379V1035: { symbol: "FLNC", quoteCcy: "USD", instrumentType: "EQUITY" }, // Fluence
+  US7739031091: { symbol: "ROK", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rockwell
+  US86800U1043: { symbol: "SMCI", quoteCcy: "USD", instrumentType: "EQUITY" }, // Super Micro
+  US74624M1027: { symbol: "PSTG", quoteCcy: "USD", instrumentType: "EQUITY" }, // Pure Storage
+  US76655K1034: { symbol: "RGTI", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rigetti Computing
+  US91332U1016: { symbol: "U", quoteCcy: "USD", instrumentType: "EQUITY" }, // Unity Software
+  US88080T1043: { symbol: "WULF", quoteCcy: "USD", instrumentType: "EQUITY" }, // TeraWulf
+  US4824801009: { symbol: "KLAC", quoteCcy: "USD", instrumentType: "EQUITY" }, // KLA
+  US9581021055: { symbol: "WDC", quoteCcy: "USD", instrumentType: "EQUITY" }, // Western Digital
+  US46625H1005: { symbol: "JPM", quoteCcy: "USD", instrumentType: "EQUITY" }, // JPMorgan
+  US75513E1010: { symbol: "RTX", quoteCcy: "USD", instrumentType: "EQUITY" }, // RTX Corp
+  US7134481081: { symbol: "PEP", quoteCcy: "USD", instrumentType: "EQUITY" }, // PepsiCo
+  US8807701029: { symbol: "TER", quoteCcy: "USD", instrumentType: "EQUITY" }, // Teradyne
+  US68236H2040: { symbol: "ONDS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ondas
+  US75886F1075: { symbol: "REGN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Regeneron
+  US05605H1005: { symbol: "BWXT", quoteCcy: "USD", instrumentType: "EQUITY" }, // BWX Tech
+  // (v2.10.3) Restored `US7731211089 → RKLB`. v2.10.2 removed it thinking it
+  // was a duplicate, but the user's PDF legitimately holds shares against
+  // BOTH Rocket Lab ISINs — `US7731221062` (post-merger common stock) AND
+  // `US7731211089` (pre-merger / ADR / older). Both list as RKLB on NASDAQ.
+  // Aliasing both ISINs to the same Yahoo ticker is correct — the asset
+  // profile in Donkeyfolio dedups by `instrument_type:instrument_symbol`
+  // (CRYPTO:BTC, EQUITY:RKLB) so they collapse cleanly.
+  US7731211089: { symbol: "RKLB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Rocket Lab (older ISIN)
+  US5024311095: { symbol: "LHX", quoteCcy: "USD", instrumentType: "EQUITY" }, // L3Harris
+  US5398301094: { symbol: "LMT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Lockheed
+  US00760J1088: { symbol: "AEHR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Aehr Test
+  US30231G1022: { symbol: "XOM", quoteCcy: "USD", instrumentType: "EQUITY" }, // Exxon
+  US0316521006: { symbol: "AMKR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Amkor
+  US0080731088: { symbol: "AVAV", quoteCcy: "USD", instrumentType: "EQUITY" }, // AeroVironment (WKN A0MJX7)
+  US25402D1028: { symbol: "DOCN", quoteCcy: "USD", instrumentType: "EQUITY" }, // DigitalOcean Holdings (WKN A2QRZ4)
+  CA50077N1024: {
+    symbol: "PNG.V",
+    exchangeMic: "XTSX",
+    quoteCcy: "CAD",
+    instrumentType: "EQUITY",
+  }, // Kraken Robotics on TSXV (Yahoo: PNG.V — confirmed by user). Despite the
+  // company graduating to TSX, Yahoo's data still flows through the .V ticker.
+  CA26142Q3044: { symbol: "DPRO", quoteCcy: "USD", instrumentType: "EQUITY" }, // Draganfly
+  // (v3.0.3) Nokia: TR PT routes through Helsinki (NOKIA.HE) in EUR, not the
+  // NYSE ADR (NOK/USD). The ADR has different price ratios. Confirmed Helsinki
+  // is the primary listing for Finnish ISIN FI0009000681.
+  FI0009000681: {
+    symbol: "NOKIA.HE",
+    quoteCcy: "EUR",
+    exchangeMic: "XHEL",
+    instrumentType: "EQUITY",
+    displayName: "Nokia",
+  },
+  IT0003027817: {
+    symbol: "IRE.MI",
+    exchangeMic: "XMIL",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  }, // Iren
+  FR0000121014: { symbol: "MC.PA", exchangeMic: "XPAR", quoteCcy: "EUR", instrumentType: "EQUITY" }, // LVMH
+  FR0000121972: { symbol: "SU.PA", exchangeMic: "XPAR", quoteCcy: "EUR", instrumentType: "EQUITY" }, // Schneider
+  CH0012221716: {
+    symbol: "ABBN.SW",
+    exchangeMic: "XSWX",
+    quoteCcy: "CHF",
+    instrumentType: "EQUITY",
+  }, // ABB
+  DE0007236101: {
+    symbol: "SIE.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  }, // Siemens
+  DE000ENER6Y0: {
+    symbol: "ENR.DE",
+    exchangeMic: "XETR",
+    quoteCcy: "EUR",
+    instrumentType: "EQUITY",
+  }, // Siemens Energy
+  GB00BMHVL512: { symbol: "KLAR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Klarna
+  // (v3.0.3) ASML: TR PT routes through Amsterdam (ASML.AS) in EUR, not the
+  // NYSE ADR (ASML/USD). Both share the same Dutch ISIN NL0010273215 but
+  // ASML.AS is primary, EUR-quoted, and has more liquidity for EU investors.
+  NL0010273215: {
+    symbol: "ASML.AS",
+    quoteCcy: "EUR",
+    exchangeMic: "XAMS",
+    instrumentType: "EQUITY",
+    displayName: "ASML Holding",
+  },
+  DK0015998017: {
+    symbol: "BAVA.CO",
+    exchangeMic: "XCSE",
+    quoteCcy: "DKK",
+    instrumentType: "EQUITY",
+  }, // Bavarian Nordic
+  // Novo Nordisk B-shares (Danish ISIN). User correction: TR PT routes
+  // through Xetra in EUR — NOT the NYSE ADR (NVO/USD). The ADR has different
+  // dividends and price (it's 0.5× the B-share). Xetra match is NOVO-B.DE.
+  DK0062498333: {
+    symbol: "NOVO-B.DE",
+    quoteCcy: "EUR",
+    exchangeMic: "XETR",
+    instrumentType: "EQUITY",
+    displayName: "Novo Nordisk",
+  },
+  US58733R1023: { symbol: "MELI", quoteCcy: "USD", instrumentType: "EQUITY" }, // MercadoLibre (description was truncated to just "INC." but user confirmed)
+  US09175A2069: { symbol: "BMNR", quoteCcy: "USD", instrumentType: "EQUITY" }, // BitMine Immersion (description was clear)
+  US5949724083: { symbol: "MSTR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Strategy (formerly MicroStrategy — Michael Saylor's bitcoin treasury company)
+  US83443Q1031: { symbol: "SOLS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Solstice Advanced Materials (Honeywell spinoff). Yahoo ticker is SOLS, not SOLST. Confirmed via finance.yahoo.com/quote/SOLS/.
+  IE00B4BNMY34: { symbol: "ACN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Accenture (Irish-domiciled, NYSE primary)
+};
+
+const ISIN_TO_TICKER: Record<string, TickerMapping> = {
+  ...CRYPTO,
+  ...ETFS,
+  ...EQUITIES,
+};
+
+/**
+ * Look up a Yahoo-friendly ticker for a Trade Republic ISIN.
+ * Returns null if no mapping is known — caller should fall back to the
+ * raw ISIN (price won't sync but cost basis still imports correctly).
+ */
+export function lookupTicker(isin: string): TickerMapping | null {
+  return ISIN_TO_TICKER[isin] ?? null;
+}
+
+/**
+ * (v2.7.11) Analyze every ISIN in the parsed trades and classify it as
+ * mapped / crypto / unmapped. Returns rows sorted by importance (largest
+ * total € spend first) so the user can see at a glance which positions
+ * matter most to verify.
+ *
+ * For each unmapped ISIN we generate a Yahoo lookup URL pre-filled with
+ * the stock name — the user can click it, see what Yahoo's actual ticker
+ * is, and tell us so we can add it to the map for future imports.
+ *
+ * Caveats:
+ *   - We use the FIRST cleanStockName seen for each ISIN. PDF descriptions
+ *     can be truncated ("INC." for MercadoLibre, ".A NEW" for ARM, etc.) so
+ *     the lookup URL may not always be helpful. WKN (when present) is more
+ *     reliable as a unique identifier.
+ *   - "Unmapped" doesn't necessarily mean Yahoo won't price it — Yahoo's
+ *     ISIN search sometimes resolves directly. But the mapping path is
+ *     more deterministic and survives Yahoo data inconsistencies.
+ */
+export interface AnalyzedTrade {
+  isin: string;
+  stockName?: string;
+  cleanStockName?: string;
+  wkn?: string;
+  isBuy: boolean;
+  amount: number;
+  quantity?: number;
+}
+
+export function analyzeSecurities(trades: AnalyzedTrade[]): SecurityAnalysis[] {
+  const byIsin = new Map<
+    string,
+    {
+      isin: string;
+      stockName: string;
+      wkn?: string;
+      buyQty: number;
+      sellQty: number;
+      buyAmount: number;
+      tradeCount: number;
+    }
+  >();
+
+  for (const t of trades) {
+    if (!t.isin) continue;
+    const cur = byIsin.get(t.isin) ?? {
+      isin: t.isin,
+      stockName: t.cleanStockName || t.stockName || t.isin,
+      wkn: t.wkn,
+      buyQty: 0,
+      sellQty: 0,
+      buyAmount: 0,
+      tradeCount: 0,
+    };
+    if (t.isBuy) {
+      cur.buyQty += t.quantity ?? 0;
+      cur.buyAmount += Math.abs(t.amount);
+    } else {
+      cur.sellQty += t.quantity ?? 0;
+    }
+    cur.tradeCount += 1;
+    if (!cur.wkn && t.wkn) cur.wkn = t.wkn;
+    if (!cur.stockName && (t.cleanStockName || t.stockName)) {
+      cur.stockName = t.cleanStockName || t.stockName!;
+    }
+    byIsin.set(t.isin, cur);
+  }
+
+  const out: SecurityAnalysis[] = [];
+  for (const [isin, info] of byIsin) {
+    const mapped = lookupTicker(isin);
+    const status: SecurityAnalysis["status"] = mapped
+      ? mapped.instrumentType === "CRYPTO"
+        ? "crypto"
+        : "mapped"
+      : "unmapped";
+    // Yahoo's lookup URL accepts query strings via /lookup?s=... It's not a
+    // documented API but it's stable and links to the lookup UI directly.
+    // Use the WKN when present (more unique) else the cleaned stock name.
+    const lookupQuery = info.wkn || info.stockName || isin;
+    const yahooLookupUrl = `https://finance.yahoo.com/lookup?s=${encodeURIComponent(lookupQuery)}`;
+    out.push({
+      isin,
+      stockName: info.stockName,
+      wkn: info.wkn,
+      netQty: info.buyQty - info.sellQty,
+      totalSpent: info.buyAmount,
+      tradeCount: info.tradeCount,
+      status,
+      mappedSymbol: mapped?.symbol,
+      mappedName: mapped?.displayName,
+      yahooLookupUrl,
+    });
+  }
+  // Sort by status priority then by spend descending — unmapped first so
+  // the user's eye lands on what needs attention.
+  const STATUS_ORDER = { unmapped: 0, crypto: 1, mapped: 2 } as const;
+  out.sort((a, b) => {
+    const sa = STATUS_ORDER[a.status];
+    const sb = STATUS_ORDER[b.status];
+    if (sa !== sb) return sa - sb;
+    return b.totalSpent - a.totalSpent;
+  });
+  return out;
+}

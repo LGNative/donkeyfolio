@@ -20,9 +20,9 @@ const desktopNotes = [
 ] as const;
 
 const webNotes = [
-  "Backups are SQLite .db files saved in Wealthfolio's data directory.",
+  "Backups are SQLite .db files saved in Donkeyfolio's data directory.",
   "Downloaded backups can be restored in the desktop or iOS app.",
-  "To restore in web mode, stop Wealthfolio, replace app.db with a backup file, then restart.",
+  "To restore in web mode, stop Donkeyfolio, replace app.db with a backup file, then restart.",
   "Create backups regularly, especially before bulk imports or migrations.",
 ] as const;
 
@@ -202,7 +202,7 @@ const WebBackupPanel = ({
               Database Backups
             </CardTitle>
             <CardDescription>
-              SQLite .db files saved in Wealthfolio's data directory.
+              SQLite .db files saved in Donkeyfolio's data directory.
             </CardDescription>
           </div>
           <Button

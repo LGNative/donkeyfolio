@@ -230,7 +230,7 @@ export function AddonUpdateCard({
         <div className="mt-3 rounded-md bg-amber-100 p-2 dark:bg-amber-900/20">
           <p className="text-xs text-amber-800 dark:text-amber-200">
             <Icons.Info className="mr-1 inline h-3 w-3" />
-            Requires Wealthfolio {updateInfo.minWealthfolioVersion} or later
+            Requires Donkeyfolio {updateInfo.minWealthfolioVersion} or later
           </p>
         </div>
       )}
