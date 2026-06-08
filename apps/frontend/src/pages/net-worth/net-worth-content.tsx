@@ -30,8 +30,6 @@ import { BreakdownTable } from "./components/breakdown-table";
 import { CategoryDetailSheet } from "./components/category-detail-sheet";
 import { MomentumCard } from "./components/momentum-card";
 import {
-  THEME_COLOR,
-  THEME_COLOR_LIGHT,
   averageMonthlyChange,
   computeMomentum,
   computeVelocity,
@@ -273,7 +271,7 @@ export function NetWorthContent() {
           backgroundImage:
             (parsedData?.netWorth ?? 0) < 0
               ? `linear-gradient(to top, color-mix(in srgb, var(--destructive) 30%, transparent), color-mix(in srgb, var(--destructive) 15%, transparent) 50%, transparent 100%)`
-              : `linear-gradient(to top, ${THEME_COLOR.replace(")", " / 0.30)")}, ${THEME_COLOR.replace(")", " / 0.15)")} 50%, transparent 100%)`,
+              : `linear-gradient(to top, color-mix(in srgb, var(--primary) 30%, transparent), color-mix(in srgb, var(--primary) 15%, transparent) 50%, transparent 100%)`,
         }}
       >
         {/* Chart section */}
@@ -331,8 +329,8 @@ export function NetWorthContent() {
                 />
               ) : (
                 <div
-                  className="rounded-xl border border-orange-200/50 p-6 text-center md:p-8 dark:border-orange-800/50"
-                  style={{ backgroundColor: THEME_COLOR_LIGHT }}
+                  className="border-primary/20 rounded-xl border p-6 text-center md:p-8"
+                  style={{ backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)" }}
                 >
                   <p className="text-sm">{t("insights:networth.no_assets_found")}</p>
                   <Link

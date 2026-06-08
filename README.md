@@ -1,208 +1,39 @@
-<div align="center">
-  <a href="https://github.com/wealthfolio/wealthfolio">
-    <img src="apps/frontend/public/logo.svg" alt="Logo" width="80" height="80">
-  </a>
+# Donkeyfolio
 
-  <h3 align="center">Wealthfolio</h3>
+A personal fork of **[Wealthfolio](https://github.com/afadil/wealthfolio)** — a
+local-first desktop app for tracking investments and net worth. All data stays
+on your machine in a local SQLite database; no account, no cloud required.
 
-  <p align="center">
-    The open-source, private portfolio tracker — investments, net worth, spending, and simulations.
-    <br />
-    Local-first: your data lives on your device.
-    <br />
-    <br />
-    <a href="https://wealthfolio.app?utm_source=github&utm_medium=readme">Website</a>
-    ·
-    <a href="https://discord.gg/WDMCY6aPWK">Discord</a>
-    ·
-    <a href="https://x.com/intent/follow?screen_name=WealthfolioApp">Twitter</a>
-    ·
-    <a href="https://github.com/wealthfolio/wealthfolio/releases">Releases</a>
-  </p>
+This fork follows upstream Wealthfolio closely and adds a thin personal layer on
+top: branding, a Trade Republic CSV importer add-on, and a few small fixes. All
+credit for the application itself goes to the Wealthfolio authors — see
+**Credits** below.
 
-  <p align="center">
-    <a href="https://wealthfolio.app/download?utm_source=github&utm_medium=readme&utm_campaign=cta"><strong>⬇️&nbsp;&nbsp;Download for macOS · Windows · Linux</strong></a>
-    &nbsp;·&nbsp;
-    <a href="https://apps.apple.com/us/app/wealthfolio-private-finance/id6732888445">📱&nbsp;iOS&nbsp;App</a>
-    &nbsp;·&nbsp;
-    <a href="https://wealthfolio.app/docs/guide/self-hosting/docker?utm_source=github&utm_medium=readme">🐳&nbsp;Docker</a>
-  </p>
-</div>
-<div align="center">
+## Stack
 
-[<img src="./apps/frontend/public/button-buy-me-a-coffee.png" width="180" alt="Buy me a coffee button"/>](https://www.buymeacoffee.com/afadil)
+- **Frontend** — React + Vite + TypeScript (Tailwind)
+- **Desktop / mobile** — Tauri (Rust)
+- **Web mode** — Axum HTTP server
+- **Storage** — SQLite (Diesel migrations)
 
-</div>
-
-<div align="center">
-<a href="https://news.ycombinator.com/item?id=41465735">
-  <img
-    alt="Featured on Hacker News"
-    src="https://hackerbadge.now.sh/api?id=41465735"
-    style="width: 250px; height: 55px;" width="250" height="55"
-  />
-</a>
-  <a href="https://www.producthunt.com/posts/wealthfolio?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_souce=badge-wealthfolio" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=461640&amp;theme=light" alt="Wealthfolio - A beautiful, local-first personal finance tracker | Product Hunt" class="h-[55px] w-[250px]" width="250" height="55"></a>
-
-  <a href="https://trendshift.io/repositories/11701" target="_blank">
-  <img src="https://trendshift.io/api/badge/repositories/11701" alt="wealthfolio%2Fwealthfolio | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-</div>
-
-## Introduction
-
-**Wealthfolio** is an open-source, private portfolio tracker — investments, net
-worth, spending, and simulations. All your data is stored locally on your
-device: no cloud database, no account required, free forever.
-
-For automatic brokerage syncing (30+ institutions, read-only) and encrypted
-multi-device sync, there's
-**[Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)**
-— an optional subscription that covers the real cost of the brokerage data
-connections. The app never requires it: manual tracking and CSV import are free,
-forever.
-
-Visit the website at
-[wealthfolio.app](https://wealthfolio.app/?utm_source=github&utm_medium=readme).
-
-![Screenshot](apps/frontend/public/screenshot.webp)
-
-### ✨ Key Features
-
-- **📊 Portfolio Tracking** - Track your investments across multiple accounts
-  and asset types
-- **📈 Performance Analytics** - True time-weighted and money-weighted returns,
-  benchmark comparison, and historical analysis
-- **💰 Activity Management** - Import and manage all your trading activities
-- **🎯 Goal Planning** - Set and track financial goals with allocation
-  management
-- **🔒 Local Data** - All data stored locally with no cloud dependencies
-- **🔄 Optional Broker Sync** - Auto-sync 30+ brokerages with
-  [Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)
-  (read-only, entirely optional)
-- **🧩 Extensible** - Powerful addon system for custom functionality
-- **🌍 Multi-Currency** - Support for multiple currencies with exchange rate
-  management
-- **📱 Cross-Platform** - Desktop (Windows, macOS, Linux), iOS, and self-hosted
-  Docker/web
-
-### 🧩 Addon System
-
-Wealthfolio features a powerful addon system that allows developers to extend
-functionality:
-
-- **🔌 Easy Development** - TypeScript SDK with full type safety and hot reload
-- **🔒 Secure** - Comprehensive permission system with user consent
-- **⚡ High Performance** - Optimized for speed with minimal overhead
-- **🎨 UI Integration** - Add custom pages, navigation items, and components
-- **📡 Real-time Events** - Listen to portfolio updates, market sync, and user
-  actions
-- **🗄️ Full Data Access** - Access to accounts, holdings, activities, and market
-  data
-- **🔐 Secrets Management** - Secure storage for API keys and sensitive data
-
-**Get started building addons:** See the
-[Addon Documentation Hub](docs/addons/index.md)
-
-Documentation for all Activity types, including the required form fields, is
-available in
-[docs/activities/activity-types.md](docs/activities/activity-types.md).
-
-## Roadmap
-
-See [ROADMAP.md](./ROADMAP.md).
-
-## 📖 Documentation
-
-### Core Application
-
-- **[Activity Types](docs/activities/activity-types.md)** - Complete guide to
-  all supported activity types and their required fields
-- **[Roadmap](ROADMAP.md)** - Future plans and development roadmap
-
-### Architecture
-
-- **[Adapter System](docs/architecture/adapters.md)** - Compile-time environment
-  detection for Desktop/Web builds
-
-### Addon Development
-
-- **[Addon Documentation Hub](docs/addons/index.md)** - Main entry point for
-  addon development
-- **[Getting Started](docs/addons/addon-getting-started.md)** - Guide to get
-  started with addon development
-- **[API Reference](docs/addons/addon-api-reference.md)** - Complete API
-  documentation with examples
-- **[Architecture](docs/addons/addon-architecture.md)** - Design patterns and
-  architecture guide
-
-### Quick Links
-
-- 💡 **Official Addons** - Browse maintained addon examples in the
-  [official addon repository](https://github.com/wealthfolio/wealthfolio-addons/tree/main/official)
-- 🧩 **Community Addons** - Browse addons shared by the community in the
-  [community addon directory](https://github.com/wealthfolio/wealthfolio-addons/tree/main/community)
-- 🛠️ **[Development Tools](packages/addon-dev-tools/)** - CLI tools for addon
-  development
-
-## Getting Started
-
-### Prerequisites
-
-Ensure you have the following installed on your machine:
-
-- [Node.js](https://nodejs.org/)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/)
-- [Tauri](https://tauri.app/)
-
-### Building from Source
-
-1. **Clone the repository**:
-
-   ```bash
-   git clone https://github.com/wealthfolio/wealthfolio.git
-   cd wealthfolio
-   ```
-
-2. **Install dependencies using pnpm**:
-
-   ```bash
-   pnpm install
-   ```
-
-3. **Setup environment configuration**:
-
-   Copy the environment template and configure it for your setup:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Update the `.env` file with your database path and other configuration as
-   needed:
-
-   ```bash
-   # Database location
-   DATABASE_URL=../db/wealthfolio.db
-   ```
-
-4. **Run in Development Mode**:
-
-Build and run the desktop application using Tauri:
+## Development
 
 ```bash
-pnpm tauri dev
+pnpm install        # install dependencies
+
+pnpm tauri dev      # desktop app (Tauri)
+pnpm run dev:web    # browser (web mode)
+
+pnpm test           # frontend tests
+cargo test          # Rust tests
+pnpm type-check     # TypeScript
+pnpm lint           # lint
 ```
 
-#### Addon Development Mode
-
-Addon hot reload servers now start only when you explicitly opt in.
-
-**For desktop development with Tauri:**
+## Build
 
 ```bash
-VITE_ENABLE_ADDON_DEV_MODE=true pnpm tauri dev
+pnpm tauri build    # production desktop build
 ```
 
 **For browser-only development (Vite only, no Tauri):**
@@ -818,19 +649,12 @@ Contributions are welcome! Please follow these steps:
 
 ## License
 
-This project is licensed under the AGPL-3.0 license. See the `LICENSE` file for
-details.
+This project inherits its license from upstream Wealthfolio — see
+[LICENSE](./LICENSE). It is a derivative work; original copyright remains with
+the Wealthfolio authors.
 
-Brand assets in `assets/brand/` are trademarks; see
-[TRADEMARKS.md](TRADEMARKS.md).
+## Credits
 
----
-
-Wealthfolio and the Wealthfolio logo are trademarks of Teymz Inc. The code is
-licensed under AGPL-3.0; trademarks are not granted under that license.
-
-## 🌟 Star History
-
-## [![Star History Chart](https://api.star-history.com/svg?repos=wealthfolio/wealthfolio&type=Timeline)](https://star-history.com/#wealthfolio/wealthfolio&Date)
-
-Enjoy managing your wealth with **Wealthfolio**! 🚀
+Built on **[Wealthfolio](https://github.com/afadil/wealthfolio)** by
+[@afadil](https://github.com/afadil) and contributors. Donkeyfolio is an
+unaffiliated personal fork.

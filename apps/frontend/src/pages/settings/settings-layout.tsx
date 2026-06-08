@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav } from "./sidebar-nav";
+import { CONNECT_ENABLED } from "@/lib/connect-config";
 
 export default function SettingsLayout() {
   const { t } = useTranslation();
@@ -85,12 +86,19 @@ export default function SettingsLayout() {
       {
         title: t("settings:nav.sections.connections"),
         items: [
-          {
-            title: t("settings:nav.items.connect"),
-            href: "connect",
-            subtitle: t("settings:nav.subtitles.connect"),
-            icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
-          },
+          // Wealthfolio Connect (cloud sync) is hidden while CONNECT_ENABLED is off —
+          // the app runs fully offline and the entry would only lead to a "not
+          // configured" page. Re-enable by setting the CONNECT_AUTH_* env vars.
+          ...(CONNECT_ENABLED
+            ? [
+                {
+                  title: t("settings:nav.items.connect"),
+                  href: "connect",
+                  subtitle: t("settings:nav.subtitles.connect"),
+                  icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
+                },
+              ]
+            : []),
           {
             title: t("settings:nav.items.market_data"),
             href: "market-data",
