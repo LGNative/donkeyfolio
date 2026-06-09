@@ -1,13 +1,5 @@
 import type { ActivityCreate, AddonContext } from "@wealthfolio/addon-sdk";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
   Badge,
   Button,
   Card,
@@ -126,6 +118,18 @@ type State =
   | { kind: "eur_view" }
   | { kind: "error"; error: ErrorInfo };
 
+/** Whether `state` belongs to the Import tab's document flow (vs the
+ *  Análise/Avançado tool panels). Used to preserve the user's parsed CSV
+ *  across tab switches instead of discarding it. */
+const isImportFlowState = (s: State): boolean =>
+  s.kind === "empty" ||
+  s.kind === "parsing" ||
+  s.kind === "parsed" ||
+  s.kind === "reviewing_assets" ||
+  s.kind === "importing" ||
+  s.kind === "imported" ||
+  s.kind === "error";
+
 /**
  * CHUNK_SIZE = 50.
  *
@@ -164,6 +168,9 @@ function describeError(err: unknown): { message: string; detail?: string } {
 
 export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
   const [state, setState] = React.useState<State>({ kind: "empty" });
+  // Remembers the Import tab's document flow so switching to Análise/Avançado
+  // and back restores it instead of forcing a re-upload from scratch.
+  const importStateRef = React.useRef<State>({ kind: "empty" });
   const [isDragging, setIsDragging] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -171,9 +178,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
   // The state machine still lives in `state`, but it now models the
   // *contents* of each tab rather than the page-level navigation.
   const [currentTab, setCurrentTab] = React.useState<TabId>("import");
-
-  // Confirmation dialog state for "leaving an in-progress wizard step".
-  const [pendingTab, setPendingTab] = React.useState<TabId | null>(null);
 
   // v5.1.0 — AbortController for the import loop. Lets the user cancel a
   // long-running import without killing the addon. Successfully-inserted
@@ -610,14 +614,8 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
       if (tab === currentTab) return;
       // Block leaving while the import is actively running.
       if (state.kind === "importing") return;
-      // Confirm if user has a parsed preview or unsaved review.
-      if (
-        currentTab === "import" &&
-        (state.kind === "parsed" || state.kind === "reviewing_assets")
-      ) {
-        setPendingTab(tab);
-        return;
-      }
+      // The Import document is preserved across tabs (switchTabImmediate saves
+      // and restores it), so no "you'll lose your work" confirmation is needed.
       switchTabImmediate(tab);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -625,19 +623,20 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
   );
 
   const switchTabImmediate = (tab: TabId) => {
-    setCurrentTab(tab);
-    // Reset Import-tab state if we're navigating away from a stale flow.
-    if (tab !== "import" && state.kind !== "imported") {
-      // Keep imported state so the user can come back to see the summary.
-      // Otherwise reset to empty so the next visit shows the drop zone.
-      if (state.kind === "parsed" || state.kind === "reviewing_assets" || state.kind === "error") {
-        setState({ kind: "empty" });
-      }
+    // Preserve the in-progress import document so returning to Importar
+    // restores it. The single `state` machine is shared across tabs, so
+    // leaving without saving lets Análise/Avançado clobber the user's CSV.
+    if (currentTab === "import" && isImportFlowState(state)) {
+      importStateRef.current = state;
     }
+    setCurrentTab(tab);
     // v5.2.0: Análise tab loads holdings + auto-runs diagnostics (was its
     // own tab). Avançado tab opens the Expert (AI) panel and also exposes
     // the SDK-test panel via a button further down.
-    if (tab === "holdings") {
+    if (tab === "import") {
+      // Restore the document the user was working on (empty on first visit).
+      setState(importStateRef.current);
+    } else if (tab === "holdings") {
       handleDiagnose();
     } else if (tab === "expert") {
       setState({ kind: "expert" });
@@ -697,7 +696,7 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
           {/* TAB: ANÁLISE — holdings em EUR + diagnostics inline */}
           {currentTab === "holdings" && (
             <div className="space-y-6">
-              <EurHoldingsView ctx={ctx} onClose={() => setCurrentTab("import")} />
+              <EurHoldingsView ctx={ctx} onClose={() => switchTabImmediate("import")} />
 
               {/* Diagnostics section (was its own tab in <=v5.1.x) */}
               {state.kind === "diagnosing" && (
@@ -729,7 +728,7 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
               <ExpertPanel
                 secrets={ctx.api.secrets}
                 context={undefined}
-                onClose={() => setCurrentTab("import")}
+                onClose={() => switchTabImmediate("import")}
               />
 
               {/* SDK contract test (was a separate top-level tab in <=v5.1.x).
@@ -758,7 +757,7 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
                 <SdkTestView
                   results={state.results}
                   durationMs={state.durationMs}
-                  onClose={() => setCurrentTab("import")}
+                  onClose={() => switchTabImmediate("import")}
                 />
               )}
               {state.kind !== "sdk_testing" && state.kind !== "sdk_tested" && (
@@ -788,35 +787,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
             e.target.value = "";
           }}
         />
-
-        {/* Confirmation dialog when leaving the import wizard mid-flow */}
-        <AlertDialog
-          open={pendingTab !== null}
-          onOpenChange={(open) => !open && setPendingTab(null)}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Discard import preview?</AlertDialogTitle>
-              <AlertDialogDescription>
-                You have a parsed CSV preview that hasn't been imported yet. Switching tabs will
-                discard it. The CSV file is still on your computer — you can re-drop it any time.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => setPendingTab(null)}>
-                Stay on Import
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  if (pendingTab) switchTabImmediate(pendingTab);
-                  setPendingTab(null);
-                }}
-              >
-                Discard and switch
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </PageContent>
     </Page>
   );
