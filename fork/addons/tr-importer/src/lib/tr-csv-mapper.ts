@@ -524,7 +524,14 @@ function mapSpinOff(row: TrCsvRow, accountId: string): ActivityCreate[] {
       quantity: shares,
       currency: row.currency || "EUR",
       comment: row.description || `SPIN_OFF ${row.symbol}`,
-      metadata: buildMetadata(row, { tr_corporate_action: "SPIN_OFF" }),
+      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
+      // performance pipeline doesn't warn about a missing pair (flow_classifier
+      // reads metadata.flow.is_external). A spin-off is an external reallocation,
+      // not income, so external is the correct treatment.
+      metadata: buildMetadata(row, {
+        tr_corporate_action: "SPIN_OFF",
+        flow: { is_external: true },
+      }),
     },
   ];
 }
@@ -586,7 +593,15 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
       quantity: shares,
       currency: row.currency || "EUR",
       comment: row.description || `TR Staking reward (${row.symbol})`,
-      metadata: buildMetadata(row, { tr_staking: true, tr_fmv_at_receipt: row.price ?? undefined }),
+      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
+      // performance pipeline doesn't warn about a missing pair. (b) Reclassifying
+      // staking as INTEREST/STAKING_REWARD income — using tr_fmv_at_receipt as the
+      // value — remains a future option; impact is negligible (~€0.40/reward).
+      metadata: buildMetadata(row, {
+        tr_staking: true,
+        tr_fmv_at_receipt: row.price ?? undefined,
+        flow: { is_external: true },
+      }),
     },
   ];
 }
