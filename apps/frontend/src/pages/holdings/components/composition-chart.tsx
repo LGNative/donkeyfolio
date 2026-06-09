@@ -66,21 +66,45 @@ const DisplayModeToggle: React.FC<{
   );
 };
 
-// Treemap heatmap palette — symbols colored by return.
-// Matches the "Allocation Concept E - Unified" design: gains lerp from a light
-// sage to a deep green, losses from a light clay to a deep red.
-const POS_LO = [205, 217, 191]; // #cdd9bf
-const POS_HI = [53, 92, 76]; // #355c4c
-// Loss ramp tuned to the theme's --destructive (flexoki red). NEG_HI matches the
-// dark-mode token hsl(5 61% 54%) = #d14e42; NEG_LO is a saturated tint of the same
-// hue so small losses read red-tinted instead of washed-out pink.
-const NEG_LO = [233, 179, 168]; // #e9b3a8
-const NEG_HI = [209, 78, 66]; // #d14e42
-// Light mode: a saturated ramp where even the smallest movers are dark enough
-// for white labels, so every tile reads uniformly white (like the dark-mode
-// heatmap). Magnitude still reads from the % number and the depth of colour.
-const POS_LO_LIGHT = [108, 160, 122];
-const NEG_LO_LIGHT = [198, 118, 108];
+// Treemap heatmap — gains ramp toward the brand green, losses toward the
+// --destructive red. Endpoints are RESOLVED FROM THE THEME TOKENS at runtime
+// (no hand-picked RGB): the green steps come from the generated --brand-* scale,
+// the red from --destructive, so the heatmap always tracks the theme.
+type Rgb = [number, number, number];
+
+function resolveRgb(cssColor: string): Rgb {
+  if (typeof document === "undefined") return [0, 0, 0];
+  const el = document.createElement("span");
+  el.style.cssText = `color:${cssColor};display:none`;
+  document.body.appendChild(el);
+  const m = getComputedStyle(el).color.match(/[\d.]+/g);
+  el.remove();
+  return m ? [Number(m[0]), Number(m[1]), Number(m[2])] : [0, 0, 0];
+}
+
+// Lighten toward white — derives the small-mover tint from a saturated endpoint
+// instead of hand-tuning a second colour.
+const tintToward = (c: Rgb, amt: number): Rgb =>
+  c.map((v) => Math.round(v + (255 - v) * amt)) as Rgb;
+
+// Ramp endpoints, resolved once per theme mode. --brand-* is mode-independent;
+// --destructive differs between light/dark, so cache by `isDark`.
+const rampCache = new Map<boolean, { posLo: Rgb; posHi: Rgb; negLo: Rgb; negHi: Rgb }>();
+function getRamps(isDark: boolean) {
+  const cached = rampCache.get(isDark);
+  if (cached) return cached;
+  const posHi = resolveRgb("var(--brand-800)");
+  const negHi = resolveRgb("var(--destructive)");
+  const ramps = {
+    posHi,
+    // light bg needs a darker low end so small-gain tiles still carry white text
+    posLo: isDark ? resolveRgb("var(--brand-200)") : resolveRgb("var(--brand-600)"),
+    negHi,
+    negLo: tintToward(negHi, isDark ? 0.45 : 0.2),
+  };
+  rampCache.set(isDark, ramps);
+  return ramps;
+}
 
 const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
 
@@ -101,8 +125,9 @@ interface TreemapTile {
 // are fractions: 0.5 = +50%, 0.025 = +2.5% for the smaller daily returns.
 function getTreemapColor(gain: number, returnType: ReturnType, isDark: boolean): TreemapTile {
   const isGain = isNaN(gain) || gain >= 0;
-  const lo = isGain ? (isDark ? POS_LO : POS_LO_LIGHT) : isDark ? NEG_LO : NEG_LO_LIGHT;
-  const hi = isGain ? POS_HI : NEG_HI;
+  const ramp = getRamps(isDark);
+  const lo = isGain ? ramp.posLo : ramp.negLo;
+  const hi = isGain ? ramp.posHi : ramp.negHi;
   const k = isGain
     ? returnType === "daily"
       ? 0.025
