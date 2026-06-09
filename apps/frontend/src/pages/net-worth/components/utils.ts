@@ -150,10 +150,10 @@ export function deriveChange(series: number[], isLiability: boolean): Change {
   return { amount, percent: base > 0 ? amount / base : 0 };
 }
 
-/** Percent is a ratio (0.145 = 14.5%); drop decimals for very large swings. */
+/** Percent is a ratio (0.145 = 14.5%); shown with two decimals. */
 export function formatChangePercent(percent: number): string {
   const abs = Math.abs(percent);
-  return formatPercent(abs, { digits: abs >= 10 ? 0 : 1, signDisplay: "never" });
+  return formatPercent(abs, { digits: 2, signDisplay: "never" });
 }
 
 const MS_PER_DAY = 86_400_000;
