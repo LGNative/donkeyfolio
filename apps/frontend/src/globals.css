@@ -405,7 +405,24 @@
   --card-foreground: hsl(var(--flexoki-tx));
   --popover: hsl(var(--flexoki-bg-2));
   --popover-foreground: hsl(var(--flexoki-tx));
-  --primary: hsl(150 70% 40%); /* Donkeyfolio brand green */
+
+  /* ── Brand accent scale — generated from the Donkeyfolio green #1FAD66
+     (hue 150) with the uicolors.app curve, anchored at step 600 = the brand.
+     Single source of truth: every brand/chart token below is a step of this
+     scale — no hand-picked colour values. Defined on :root so .dark inherits. ── */
+  --brand-50: hsl(150 70% 96%);
+  --brand-100: hsl(150 72% 92%);
+  --brand-200: hsl(150 70% 83%);
+  --brand-300: hsl(150 68% 70%);
+  --brand-400: hsl(150 70% 55%);
+  --brand-500: hsl(150 70% 46%);
+  --brand-600: hsl(150 70% 40%);
+  --brand-700: hsl(150 74% 33%);
+  --brand-800: hsl(150 72% 27%);
+  --brand-900: hsl(150 68% 22%);
+  --brand-950: hsl(150 74% 13%);
+
+  --primary: var(--brand-600); /* Donkeyfolio brand green */
   --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(var(--flexoki-ui-2));
   --secondary-foreground: hsl(var(--flexoki-tx-2));
@@ -415,26 +432,27 @@
   --accent-foreground: hsl(var(--flexoki-tx-2));
   --destructive: hsl(var(--flexoki-re));
   --destructive-foreground: hsl(var(--flexoki-bg));
-  --success: hsl(150 55% 32%); /* gains: dark green, legible on the light bg */
+  --success: var(--brand-700); /* gains: dark green, legible on the light bg */
   --success-foreground: hsl(var(--flexoki-bg));
   --warning: hsl(var(--flexoki-ye));
   --warning-foreground: hsl(var(--flexoki-bg));
   --border: hsl(var(--flexoki-ui));
   --input: hsl(var(--flexoki-ui));
   --input-bg: hsl(var(--flexoki-bg));
-  --ring: hsl(150 70% 40%); /* Donkeyfolio brand green focus */
+  --ring: var(--brand-600); /* Donkeyfolio brand green focus */
 
-  /* Charts (allocation palette: forest / sage / sand / clay / plum + stone) */
-  --chart-1: var(--primary); /* Donkeyfolio green dominant slice */
-  --chart-2: hsl(172 42% 42%);
-  --chart-3: hsl(190 44% 44%);
-  --chart-4: hsl(206 44% 48%);
-  --chart-5: hsl(220 38% 52%);
-  --chart-6: hsl(158 34% 44%);
-  --chart-7: hsl(135 30% 46%);
-  --chart-8: hsl(182 32% 48%);
-  --chart-9: hsl(210 34% 54%);
-  --chart-stone: #b1aa9a;
+  /* Charts — single-accent monochrome ramp (steps of the brand scale, dark→light).
+     chart-1 = most prominent (darkest) on the light surface. */
+  --chart-1: var(--brand-900);
+  --chart-2: var(--brand-800);
+  --chart-3: var(--brand-700);
+  --chart-4: var(--brand-600);
+  --chart-5: var(--brand-500);
+  --chart-6: var(--brand-400);
+  --chart-7: var(--brand-300);
+  --chart-8: var(--brand-200);
+  --chart-9: var(--brand-100);
+  --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
 
   /* Sidebar (full hsl colors) */
   --sidebar: hsl(var(--flexoki-bg));
@@ -491,23 +509,23 @@
   --flexoki-gr: 72 46% 41%;
   --flexoki-ye: 45 82% 45%;
 
-  /* Dark chart palette — same semantic hues as light (forest / sage / sand /
-     clay / plum + stone), tuned for the dark surface: forest is lifted for
-     contrast, the stones are pulled down so they stay calm instead of glaring. */
-  --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
+  /* Dark mode — same brand scale, mapped to lighter steps for the dark surface.
+     primary/success lifted; charts use a light→dark monochrome ramp so chart-1
+     (lightest) stays the most prominent against the dark background. */
+  --primary: var(--brand-500); /* Donkeyfolio brand green (lifted for dark) */
   --primary-foreground: hsl(0 0% 0%);
-  --ring: hsl(150 65% 50%);
-  --success: hsl(150 58% 48%); /* gains: brighter green for the dark bg */
-  --chart-1: var(--primary);
-  --chart-2: hsl(172 40% 50%);
-  --chart-3: hsl(190 42% 52%);
-  --chart-4: hsl(206 42% 56%);
-  --chart-5: hsl(220 36% 58%);
-  --chart-6: hsl(158 32% 54%);
-  --chart-7: hsl(135 26% 56%);
-  --chart-8: hsl(182 28% 62%);
-  --chart-9: hsl(210 30% 66%);
-  --chart-stone: hsl(49 8% 60%);
+  --ring: var(--brand-500);
+  --success: var(--brand-400); /* gains: brighter green for the dark bg */
+  --chart-1: var(--brand-100);
+  --chart-2: var(--brand-200);
+  --chart-3: var(--brand-300);
+  --chart-4: var(--brand-400);
+  --chart-5: var(--brand-500);
+  --chart-6: var(--brand-600);
+  --chart-7: var(--brand-700);
+  --chart-8: var(--brand-900);
+  --chart-9: var(--brand-950);
+  --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
 
   /* Sonner toast overrides for dark mode - solid backgrounds for better readability */
   --toast-bg: hsl(var(--flexoki-bg-2));
