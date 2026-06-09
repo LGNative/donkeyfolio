@@ -311,14 +311,14 @@ const EQUITIES: Record<string, TickerMapping> = {
   CA13321L1085: { symbol: "CCJ", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cameco
   US5738741041: { symbol: "MRVL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Marvell
   US04626A1034: { symbol: "ALAB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Astera Labs
-  ZAE000259701: { symbol: "SBSW", quoteCcy: "USD", instrumentType: "EQUITY" }, // Sibanye Stillwater ADR
+  ZAE000259701: { symbol: "SSW.JO", quoteCcy: "ZAc", instrumentType: "EQUITY" }, // Sibanye Stillwater JSE ordinary (SSW.JO, quoted in ZAR cents = ZAc, major ZAR). NOT the US ADR (SBSW): 1 ADR = 4 ordinary shares, so SBSW is ~4x too high for this ISIN.
   US3696043013: { symbol: "GE", quoteCcy: "USD", instrumentType: "EQUITY" }, // GE Aerospace
   US60937P1066: { symbol: "MDB", quoteCcy: "USD", instrumentType: "EQUITY" }, // MongoDB
   US1717793095: { symbol: "CIEN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ciena
   US50077B2079: { symbol: "KTOS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Kratos
   US0381692070: { symbol: "APLD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Applied Digital
   US4385161066: { symbol: "HON", quoteCcy: "USD", instrumentType: "EQUITY" }, // Honeywell
-  KYG017191142: { symbol: "BABA", quoteCcy: "USD", instrumentType: "EQUITY" }, // Alibaba
+  KYG017191142: { symbol: "9988.HK", quoteCcy: "HKD", instrumentType: "EQUITY" }, // Alibaba HK ordinary (9988.HK, HKD). NOT the US ADR (BABA = ISIN US01609W1027): 1 ADR = 8 ordinary shares, so BABA's price is ~8x too high for this ISIN.
   AU0000185993: { symbol: "IREN", quoteCcy: "USD", instrumentType: "EQUITY" }, // IREN
   US6877931096: { symbol: "OSCR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Oscar Health
   US1491231015: { symbol: "CAT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Caterpillar
