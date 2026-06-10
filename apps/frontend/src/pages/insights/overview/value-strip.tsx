@@ -91,7 +91,7 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
     return (
       <>
         <Card className="overflow-hidden sm:hidden">
-          <div className="from-muted/60 space-y-1.5 bg-gradient-to-b to-transparent px-4 py-3.5">
+          <div className="space-y-1.5 px-4 py-3.5">
             <Skeleton className="h-3 w-24" />
             <Skeleton className="h-7 w-40" />
             <Skeleton className="h-3 w-36" />
@@ -122,7 +122,7 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
   return (
     <>
       <Card className="overflow-hidden sm:hidden">
-        <div className="from-muted/60 space-y-1.5 bg-gradient-to-b to-transparent to-[65%] px-4 py-3.5">
+        <div className="space-y-1.5 px-4 py-3.5">
           <MobileEyebrow>Portfolio value</MobileEyebrow>
           <div className="text-foreground text-[24px] font-bold leading-7 tracking-tight">
             <AmountDisplay value={data.total} currency={currency} isHidden={isBalanceHidden} />
@@ -160,8 +160,8 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
       </Card>
 
       <Card className="hidden grid-cols-1 divide-y overflow-hidden sm:grid sm:grid-cols-[2.25fr_1.35fr_1fr] sm:divide-x sm:divide-y-0">
-        {/* Portfolio value — hero cell with a slight top-to-center gradient wash */}
-        <div className={cn(gap, pad, "from-muted/60 bg-gradient-to-b to-transparent to-[60%]")}>
+        {/* Portfolio value — hero cell, flat (editorial: hairlines, no washes) */}
+        <div className={cn(gap, pad)}>
           <Eyebrow>Portfolio value</Eyebrow>
           <div className={cn("text-foreground font-bold tabular-nums tracking-tight", totalSize)}>
             <AmountDisplay value={data.total} currency={currency} isHidden={isBalanceHidden} />

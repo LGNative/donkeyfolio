@@ -97,7 +97,7 @@ export function RiskLabSkeleton() {
 function CalculatingBanner() {
   return (
     <div className="bg-muted/20 flex items-start gap-4 rounded-xl border px-5 py-4 md:px-6">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[hsl(91,34%,29%)]/10 text-[hsl(91,34%,29%)]">
+      <span className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-full">
         <Icons.Spinner className="size-5 animate-spin" />
       </span>
       <div className="min-w-0 flex-1">

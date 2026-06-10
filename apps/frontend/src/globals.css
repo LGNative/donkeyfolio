@@ -386,8 +386,8 @@
   --font-size-base: 0.875rem; /* text-sm */
 
   /* Flexoki Light Theme (HSL numeric components) */
-  --flexoki-bg: 48 100% 97%;
-  --flexoki-bg-2: 51 59% 95%;
+  --flexoki-bg: 44 36% 94%; /* soft warm paper (#F5F2EA) — calmer than near-white */
+  --flexoki-bg-2: 44 26% 91%; /* cards recede a touch against the paper */
   --flexoki-ui: 51 21% 88%;
   --flexoki-ui-2: 50 14% 83%;
   --flexoki-ui-3: 55 10% 79%;
@@ -441,17 +441,18 @@
   --input-bg: hsl(var(--flexoki-bg));
   --ring: var(--brand-600); /* Donkeyfolio brand green focus */
 
-  /* Charts — single-accent monochrome ramp (steps of the brand scale, dark→light).
-     chart-1 = most prominent (darkest) on the light surface. */
-  --chart-1: var(--brand-900);
-  --chart-2: var(--brand-800);
-  --chart-3: var(--brand-700);
-  --chart-4: var(--brand-600);
-  --chart-5: var(--brand-500);
-  --chart-6: var(--brand-400);
-  --chart-7: var(--brand-300);
-  --chart-8: var(--brand-200);
-  --chart-9: var(--brand-100);
+  /* Charts — single-accent monochrome ramp. chart-1 (the dominant slice) IS the
+     brand green; the next steps walk darker, and the tail gets the tints. Never
+     starts at a near-white/near-black extreme. */
+  --chart-1: var(--brand-600);
+  --chart-2: var(--brand-700);
+  --chart-3: var(--brand-800);
+  --chart-4: var(--brand-900);
+  --chart-5: var(--brand-950);
+  --chart-6: var(--brand-500);
+  --chart-7: var(--brand-400);
+  --chart-8: var(--brand-300);
+  --chart-9: var(--brand-200);
   --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
 
   /* Sidebar (full hsl colors) */
@@ -509,20 +510,20 @@
   --flexoki-gr: 72 46% 41%;
   --flexoki-ye: 45 82% 45%;
 
-  /* Dark mode — same brand scale, mapped to lighter steps for the dark surface.
-     primary/success lifted; charts use a light→dark monochrome ramp so chart-1
-     (lightest) stays the most prominent against the dark background. */
+  /* Dark mode — same brand scale, lighter steps for the dark surface.
+     primary/success lifted; chart-1 (the dominant slice) is the lifted brand
+     green itself, the next steps brighten, the tail darkens — never near-white. */
   --primary: var(--brand-500); /* Donkeyfolio brand green (lifted for dark) */
   --primary-foreground: hsl(0 0% 0%);
   --ring: var(--brand-500);
   --success: var(--brand-400); /* gains: brighter green for the dark bg */
-  --chart-1: var(--brand-100);
-  --chart-2: var(--brand-200);
+  --chart-1: var(--brand-500);
+  --chart-2: var(--brand-400);
   --chart-3: var(--brand-300);
-  --chart-4: var(--brand-400);
-  --chart-5: var(--brand-500);
-  --chart-6: var(--brand-600);
-  --chart-7: var(--brand-700);
+  --chart-4: var(--brand-200);
+  --chart-5: var(--brand-600);
+  --chart-6: var(--brand-700);
+  --chart-7: var(--brand-800);
   --chart-8: var(--brand-900);
   --chart-9: var(--brand-950);
   --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */

@@ -321,14 +321,14 @@ export const AlternativeAssetContent: React.FC<AlternativeAssetContentProps> = (
   );
 };
 
-// Kind labels and colors for badges (subtle/muted colors)
+// Kind labels and colors for badges (subtle/muted — from the theme)
 const KIND_CONFIG: Record<string, { label: string; color: string }> = {
-  property: { label: "Property", color: "#6b7280" },
-  vehicle: { label: "Vehicle", color: "#6b7280" },
-  collectible: { label: "Collectible", color: "#6b7280" },
-  precious: { label: "Precious Metal", color: "#6b7280" },
-  liability: { label: "Liability", color: "#6b7280" },
-  other: { label: "Other", color: "#6b7280" },
+  property: { label: "Property", color: "var(--muted-foreground)" },
+  vehicle: { label: "Vehicle", color: "var(--muted-foreground)" },
+  collectible: { label: "Collectible", color: "var(--muted-foreground)" },
+  precious: { label: "Precious Metal", color: "var(--muted-foreground)" },
+  liability: { label: "Liability", color: "var(--muted-foreground)" },
+  other: { label: "Other", color: "var(--muted-foreground)" },
 };
 
 // Type-specific subtype labels

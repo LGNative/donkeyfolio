@@ -25,8 +25,8 @@ function formatRate(rate: number) {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const COLORS = {
-  nominal: { fill: "hsl(92, 24%, 70%)", stroke: "var(--success)" },
-  range: { stroke: "hsl(91, 24%, 46%)" },
+  nominal: { fill: "var(--brand-200)", stroke: "var(--success)" },
+  range: { stroke: "var(--brand-500)" },
   target: "var(--muted-foreground)",
 };
 

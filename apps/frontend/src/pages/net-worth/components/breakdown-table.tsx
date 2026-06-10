@@ -21,9 +21,11 @@ import {
 } from "./utils";
 
 // name | % | value | Δ. Fixed widths so columns line up across rows (each row is
-// its own grid). On mobile the % column and the Δ-percent collapse.
+// its own grid). On mobile the % column and the Δ-percent collapse. The Δ column
+// can grow (max-content) so extreme percentages push inward instead of
+// overflowing the card.
 const ROW_GRID =
-  "grid grid-cols-[minmax(0,1fr)_4.5rem_5rem] md:grid-cols-[minmax(0,1fr)_3rem_7rem_8rem] items-center gap-x-3 md:gap-x-4";
+  "grid grid-cols-[minmax(0,1fr)_4.5rem_5rem] md:grid-cols-[minmax(0,1fr)_3rem_7rem_minmax(8rem,max-content)] items-center gap-x-3 md:gap-x-4";
 
 function ChangeCell({ change, currency }: { change: Change; currency: string }) {
   const isZero = Math.abs(change.amount) < 0.005;
@@ -39,7 +41,7 @@ function ChangeCell({ change, currency }: { change: Change; currency: string }) 
         {sign}
         <CompactAmount value={Math.abs(change.amount)} currency={currency} />
       </span>
-      <span className="text-muted-foreground/60 hidden w-12 text-right text-sm tabular-nums md:block">
+      <span className="text-muted-foreground/60 hidden min-w-12 text-right text-sm tabular-nums md:block">
         {formatChangePercent(change.percent)}
       </span>
     </div>

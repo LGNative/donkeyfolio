@@ -253,9 +253,9 @@ export function TargetRailsCard({
             </div>
             <div className="space-y-3">
               {[
-                { width: "72%", target: "64%", color: "bg-success/70" },
-                { width: "46%", target: "58%", color: "bg-warning/70" },
-                { width: "28%", target: "36%", color: "bg-primary/65" },
+                { width: "72%", target: "64%", color: "bg-primary/80" },
+                { width: "46%", target: "58%", color: "bg-primary/50" },
+                { width: "28%", target: "36%", color: "bg-primary/30" },
               ].map((row, index) => (
                 <div key={index} className="grid grid-cols-[14px_1fr] items-center gap-2">
                   <span className={cn("h-2.5 w-2.5 rounded-sm", row.color)} />
