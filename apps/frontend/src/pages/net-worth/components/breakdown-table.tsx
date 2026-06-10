@@ -22,7 +22,9 @@ import {
 } from "./utils";
 
 // name | % | value | Δ. Fixed widths so columns line up across rows (each row is
-// its own grid). On mobile the % column and the Δ-percent collapse.
+// its own grid). On mobile the % column and the Δ-percent collapse. The Δ column
+// can grow (max-content) so extreme percentages push inward instead of
+// overflowing the card.
 const ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_4.5rem_5.75rem] md:grid-cols-[minmax(0,1fr)_3rem_7rem_9.5rem] items-center gap-x-3 md:gap-x-4";
 
