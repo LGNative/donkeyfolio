@@ -93,7 +93,7 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
     return (
       <>
         <Card className="overflow-hidden sm:hidden">
-          <div className="from-muted/60 space-y-1.5 bg-gradient-to-b to-transparent px-4 py-3.5">
+          <div className="space-y-1.5 px-4 py-3.5">
             <Skeleton className="h-3 w-24" />
             <Skeleton className="h-7 w-40" />
             <Skeleton className="h-3 w-36" />

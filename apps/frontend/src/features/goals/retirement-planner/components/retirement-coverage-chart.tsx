@@ -16,8 +16,8 @@ import type { ChartValueMode } from "./value-mode-toggle";
 export const COVERAGE_COLORS = {
   income: "var(--fi-stream-1)",
   portfolio: PROJECTED_CHART_COLORS.offTrack.stroke,
-  shortfall: "hsl(8, 67%, 48%)",
-  planned: "#888",
+  shortfall: "var(--destructive)",
+  planned: "var(--muted-foreground)",
 };
 
 export interface CoverageProjectionPoint {
@@ -59,7 +59,7 @@ function CoverageProjectionTooltip({
       </p>
       <div className="flex items-center justify-between gap-5">
         <div className="flex items-center gap-1.5">
-          <span className="block h-0 w-3 border-b border-dashed border-[#888]" />
+          <span className="block h-0 w-3 border-b border-dashed border-muted-foreground" />
           <span className="text-muted-foreground text-xs">
             {t("goals:coverage_chart.planned_spending_yr")}
           </span>
@@ -198,7 +198,7 @@ export function RetirementCoverageChart({
         />
         <ReferenceLine
           x={fireAgeForBudget}
-          stroke="#888"
+          stroke="var(--muted-foreground)"
           strokeWidth={1}
           strokeDasharray="4 3"
           strokeOpacity={0.5}
@@ -207,7 +207,7 @@ export function RetirementCoverageChart({
             position: "top",
             fontSize: 10,
             fontWeight: 600,
-            fill: "#888",
+            fill: "var(--muted-foreground)",
           }}
         />
         <Area

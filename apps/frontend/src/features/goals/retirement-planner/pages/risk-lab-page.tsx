@@ -62,10 +62,10 @@ interface Props {
 }
 
 const CHART = {
-  portfolio: "hsl(38, 75%, 50%)",
-  portfolioSoft: "hsla(38, 75%, 50%, 0.16)",
+  portfolio: "var(--primary)",
+  portfolioSoft: "color-mix(in srgb, var(--primary) 16%, transparent)",
   income: "var(--fi-stream-1)",
-  risk: "hsl(8, 67%, 48%)",
+  risk: "var(--destructive)",
   muted: "var(--muted-foreground)",
   grid: "var(--border)",
   success: "var(--success)",
@@ -293,7 +293,7 @@ function HeroMetric({
       <div
         className={cn(
           "mt-1.5 text-xl font-semibold leading-none tracking-tight",
-          tone === "good" && "text-[hsl(102,32%,39%)]",
+          tone === "good" && "text-success",
           tone === "bad" && "text-destructive",
         )}
       >
@@ -388,7 +388,7 @@ function PlanResilienceHero({
           <div
             className={cn(
               "mt-2 h-14 w-1.5 shrink-0 rounded-full",
-              isBaselineHealthy ? "bg-[hsl(111,25%,48%)]" : "bg-destructive",
+              isBaselineHealthy ? "bg-success" : "bg-destructive",
             )}
           />
           <div className="min-w-0 space-y-3">
@@ -401,7 +401,7 @@ function PlanResilienceHero({
                 <span
                   className={cn(
                     "whitespace-nowrap font-medium",
-                    isBaselineHealthy ? "text-[hsl(111,25%,43%)]" : "text-destructive",
+                    isBaselineHealthy ? "text-success" : "text-destructive",
                   )}
                 >
                   {status}
@@ -507,7 +507,7 @@ function severityRailClass(severity: StressSeverity) {
 function impactTextClass(value: number, badWhenPositive = true) {
   if (Math.abs(value) < 1) return "text-foreground";
   const isBad = badWhenPositive ? value > 0 : value < 0;
-  return isBad ? "text-destructive" : "text-[hsl(102,32%,39%)]";
+  return isBad ? "text-destructive" : "text-success";
 }
 
 function StressIcon({ id }: { id: StressTestResult["id"] }) {
@@ -572,7 +572,7 @@ function SimulationMetric({
       <p
         className={cn(
           "mt-2 text-xl font-semibold tabular-nums leading-none",
-          tone === "good" && "text-[hsl(102,32%,39%)]",
+          tone === "good" && "text-success",
           tone === "bad" && "text-destructive",
         )}
       >
@@ -973,7 +973,7 @@ function MonteCarloDistributionSection({
         {running && (
           <div className="bg-muted/20 m-5 rounded-xl border md:m-6">
             <div className="flex min-h-44 flex-col items-center justify-center px-5 py-8 text-center">
-              <span className="flex size-11 items-center justify-center rounded-full bg-[hsl(91,34%,29%)]/10 text-[hsl(91,34%,29%)]">
+              <span className="bg-primary/10 text-primary flex size-11 items-center justify-center rounded-full">
                 <Icons.Spinner className="size-5 animate-spin" />
               </span>
               <p className="mt-4 text-sm font-semibold">
@@ -986,11 +986,11 @@ function MonteCarloDistributionSection({
           </div>
         )}
         {!running && !result && (
-          <div className="m-5 rounded-xl bg-[hsl(88,45%,84%)] px-4 py-4 text-[hsl(91,31%,24%)] md:m-6 md:px-5">
+          <div className="m-5 rounded-xl bg-[var(--brand-100)] px-4 py-4 text-[var(--brand-900)] md:m-6 md:px-5">
             <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-left">
               <div>
                 <p className="text-sm font-semibold">{t("goals:risk_lab.montecarlo.no_run_yet")}</p>
-                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-[hsl(91,22%,32%)]">
+                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-[var(--brand-800)]">
                   {moneyLastsCta}
                 </p>
               </div>
@@ -999,7 +999,7 @@ function MonteCarloDistributionSection({
                   size="sm"
                   onClick={() => onRun(10_000)}
                   disabled={running}
-                  className="bg-[hsl(91,34%,29%)] text-white hover:bg-[hsl(91,34%,24%)]"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   <Icons.Sparkles className="mr-2 size-3.5" />
                   {running && activeSims === 10_000
@@ -1011,7 +1011,7 @@ function MonteCarloDistributionSection({
                   size="sm"
                   onClick={() => onRun(100_000)}
                   disabled={running}
-                  className="text-[hsl(91,31%,24%)] hover:bg-[hsl(91,34%,29%)]/10"
+                  className="hover:bg-primary/10 text-[var(--brand-900)]"
                 >
                   {running && activeSims === 100_000
                     ? t("goals:risk_lab.montecarlo.running_short")
@@ -1182,7 +1182,9 @@ function tint(color: "success" | "warning" | "destructive", strength: number) {
 
 function neutralRamp(lightStart: number, lightEnd: number, strength: number) {
   const lightness = lightStart - (lightStart - lightEnd) * Math.max(0, Math.min(1, strength));
-  return `hsl(70 8% ${lightness}%)`;
+  // Theme-aware neutral: mix foreground into card by inverse lightness, so the
+  // ramp tracks both light and dark modes instead of a fixed warm-grey hue.
+  return `color-mix(in srgb, var(--foreground) ${Math.round(100 - lightness)}%, var(--card))`;
 }
 
 function isFlatColumn(matrix: DecisionSensitivityMatrix, column: number) {
@@ -1333,7 +1335,7 @@ function DecisionHeatmap({
                         <div
                           className={cn(
                             "flex h-12 items-center justify-center rounded-[6px] px-2 text-center text-xs font-semibold tabular-nums leading-none transition-shadow sm:h-[52px] sm:px-3 sm:text-[13px]",
-                            active && "ring-2 ring-[hsl(91,34%,29%)] ring-offset-0",
+                            active && "ring-primary ring-2 ring-offset-0",
                           )}
                           style={sensitivityCellStyle({ cell, baseline, range, active })}
                         >
@@ -1677,12 +1679,14 @@ function SorrChart({
   );
 }
 
+// Scenario line colors — theme tokens, kept mutually distinguishable:
+// brand green / red / amber / light brand step / neutral stone.
 const SORR_COLORS = [
-  "hsl(91,34%,29%)",
-  "hsl(8,55%,45%)",
-  "hsl(38,65%,43%)",
-  "hsl(191,24%,42%)",
-  "hsl(50,4%,45%)",
+  "var(--chart-1)",
+  "var(--destructive)",
+  "var(--warning)",
+  "var(--chart-7)",
+  "var(--chart-stone)",
 ];
 
 function sorrRiskAge(scenario: SorrScenario) {
@@ -1827,7 +1831,7 @@ function AdvancedSection({
                   <span
                     className={cn(
                       "shrink-0 font-semibold",
-                      scenario.survived ? "text-[hsl(102,32%,39%)]" : "text-destructive",
+                      scenario.survived ? "text-success" : "text-destructive",
                     )}
                   >
                     {sorrOutcomeText(t, scenario, plan.currency)}

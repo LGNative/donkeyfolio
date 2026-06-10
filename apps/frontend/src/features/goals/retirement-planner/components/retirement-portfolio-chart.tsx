@@ -30,8 +30,8 @@ export interface ChartPoint {
 }
 
 export const PROJECTED_CHART_COLORS = {
-  onTrack: { fill: "hsl(92, 24%, 70%)", stroke: "hsl(91, 43%, 29%)" },
-  offTrack: { fill: "hsl(38, 75%, 50%)", stroke: "hsl(38, 75%, 50%)" },
+  onTrack: { fill: "var(--brand-200)", stroke: "var(--brand-700)" },
+  offTrack: { fill: "var(--warning)", stroke: "var(--warning)" },
 } as const;
 
 export const CHART_COLORS = {
@@ -169,7 +169,7 @@ function RetirementChartTooltip({
       {point.target != null && (
         <div className="flex items-center justify-between space-x-4">
           <div className="flex items-center space-x-1.5">
-            <span className="block h-0 w-3 border-b border-dashed border-[#888]" />
+            <span className="block h-0 w-3 border-b border-dashed border-muted-foreground" />
             <span className="text-muted-foreground text-xs">
               {t("goals:portfolio_chart.what_youll_need")}
             </span>

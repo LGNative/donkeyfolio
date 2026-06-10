@@ -21,10 +21,11 @@ import {
 import { accountScopeKey } from "./target-scope";
 import { useRebalancePlan } from "../hooks/use-rebalance";
 
-// Drift direction colors — clay for overweight (+), slate-blue for underweight (−).
-const DRIFT_OVER = "#b4664a";
-const DRIFT_UNDER = "#4f6d99";
-const FOREST = "#355c4c";
+// Drift direction colors — theme tokens: destructive for overweight (+, trim),
+// brand green for underweight (−, room to buy). FOREST = the dominant ramp step.
+const DRIFT_OVER = "var(--destructive)";
+const DRIFT_UNDER = "var(--primary)";
+const FOREST = "var(--chart-1)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -648,7 +649,7 @@ function DriftBar({
             {/* tolerance band: solid to the tightest sleeve, soft to the widest sleeve */}
             <div
               className="absolute inset-y-0 left-0 rounded-full"
-              style={{ width: `${toleranceMinPos}%`, background: "#9db8a8" }}
+              style={{ width: `${toleranceMinPos}%`, background: "var(--brand-300)" }}
             />
             {toleranceMaxPos > toleranceMinPos && (
               <div

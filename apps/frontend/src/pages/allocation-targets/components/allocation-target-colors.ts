@@ -1,26 +1,28 @@
-// Allocation palette — forest / sage / sand / clay / plum / stone (matches the design + chart tokens).
+// Allocation palette — steps of the theme's single-accent chart ramp (theme-aware
+// in both modes, no hand-picked hexes). Equity gets the dominant brand green,
+// cash the neutral filler — consistent with the net-worth category colors.
 const CALM_PALETTE = [
-  "#355c4c", // forest
-  "#7e9f8c", // sage
-  "#cbba8c", // sand
-  "#c08a5f", // clay
-  "#9a7e92", // plum
-  "#b1aa9a", // stone
-  "#5a7d6b", // forest tint
-  "#a8b89e", // sage tint
-  "#8a6b49", // muted brown
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-6)",
+  "var(--chart-7)",
+  "var(--chart-8)",
+  "var(--chart-stone)",
 ];
 
 const NAMED_COLORS: Record<string, string> = {
-  equity: "#355c4c", // forest
-  fixed: "#7e9f8c", // sage
-  cash: "#cbba8c", // sand
-  commodities: "#c08a5f", // clay
-  real: "#c08a5f", // clay (real assets / real estate)
-  property: "#c08a5f", // clay
-  crypto: "#9a7e92", // plum
-  digital: "#9a7e92", // plum
-  alternatives: "#b1aa9a", // stone
+  equity: "var(--chart-1)",
+  fixed: "var(--chart-2)",
+  cash: "var(--chart-stone)",
+  commodities: "var(--chart-3)",
+  real: "var(--chart-4)",
+  property: "var(--chart-4)",
+  crypto: "var(--chart-5)",
+  digital: "var(--chart-5)",
+  alternatives: "var(--chart-6)",
 };
 
 export interface AllocationTargetColorRow {
