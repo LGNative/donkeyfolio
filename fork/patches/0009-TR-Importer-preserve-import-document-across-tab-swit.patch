@@ -1,7 +1,7 @@
 From 16cb8c3b3e68c8ae510fbd9cc193068dacb5e39e Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 22:23:26 +0100
-Subject: [PATCH 09/11] TR Importer: preserve import document across tab
+Subject: [PATCH 09/12] TR Importer: preserve import document across tab
  switches
 
 Switching to Analise/Avancado discarded the parsed CSV (single shared

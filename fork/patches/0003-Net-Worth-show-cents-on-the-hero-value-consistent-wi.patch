@@ -1,7 +1,7 @@
 From 88af4e81d4137a31a8d5fabee4071131edfe030b Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 20:43:28 +0100
-Subject: [PATCH 03/11] Net Worth: show cents on the hero value (consistent
+Subject: [PATCH 03/12] Net Worth: show cents on the hero value (consistent
  with Investments)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

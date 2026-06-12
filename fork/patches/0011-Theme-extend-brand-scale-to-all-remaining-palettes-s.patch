@@ -1,7 +1,7 @@
 From 5e79cfc85e499d034e21c511b5847e09c9627ba2 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 10 Jun 2026 20:51:32 +0100
-Subject: [PATCH 11/11] Theme: extend brand scale to all remaining palettes +
+Subject: [PATCH 11/12] Theme: extend brand scale to all remaining palettes +
  softer paper bg
 
 Replace every remaining hand-picked colour with theme tokens derived from

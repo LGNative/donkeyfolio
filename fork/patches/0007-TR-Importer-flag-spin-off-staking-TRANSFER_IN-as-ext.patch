@@ -1,7 +1,7 @@
 From 99bf1ff85e35bed649cf79b5ab1b8a2fb93c7892 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 10:17:54 +0100
-Subject: [PATCH 07/11] TR Importer: flag spin-off / staking TRANSFER_IN as
+Subject: [PATCH 07/12] TR Importer: flag spin-off / staking TRANSFER_IN as
  external
 
 Set metadata.flow.is_external=true on the lone TRANSFER_IN legs the mapper emits
