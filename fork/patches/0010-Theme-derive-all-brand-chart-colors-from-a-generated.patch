@@ -1,7 +1,7 @@
 From 432c6a3c255a1687a58c28978f88444fd0061b3c Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 22:23:29 +0100
-Subject: [PATCH 10/11] Theme: derive all brand/chart colors from a generated
+Subject: [PATCH 10/12] Theme: derive all brand/chart colors from a generated
  brand scale
 
 Replace hand-picked HSL/hex values with a single --brand-50..950 scale

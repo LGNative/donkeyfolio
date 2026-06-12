@@ -1,7 +1,7 @@
 From 25219d4e9cb49a91eb22cac9f6dc9944e9621d42 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 18:33:03 +0100
-Subject: [PATCH 01/11] Donkeyfolio: brand, dark a11y, treemap legibility, hide
+Subject: [PATCH 01/12] Donkeyfolio: brand, dark a11y, treemap legibility, hide
  Connect, repo cleanup
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
