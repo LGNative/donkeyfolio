@@ -23,10 +23,12 @@
  *   CASH/CARD_ORDERING_FEE        → FEE
  *   CORPORATE_ACTION/SPLIT        → SPLIT (ratio computed from delta vs
  *                                          pre-split position)
- *   CORPORATE_ACTION/MERGER       → 2× ADJUSTMENT (out old / in new)
+ *   CORPORATE_ACTION/MERGER       → no-op when old+new ISINs map to one ticker
+ *                                   (skipped); otherwise external TRANSFER_OUT
+ *                                   old / TRANSFER_IN new (different assets)
  *   CORPORATE_ACTION/SPIN_OFF     → TRANSFER_IN (cancelled-pair net resolved)
- *   CORPORATE_ACTION/STOCK_DIVIDEND → DIVIDEND subtype DIVIDEND_IN_KIND
- *                                     (cancelled-pair net resolved)
+ *   CORPORATE_ACTION/STOCK_DIVIDEND → TRANSFER_IN (bonus shares delivered at
+ *                                     zero cost; cancelled-pair net resolved)
  *   CORPORATE_ACTION/WORTHLESS    → SELL @ unitPrice=0 (zeros out position)
  *   DELIVERY/FREE_RECEIPT         → TRANSFER_IN (TR Crypto staking, qty only)
  *
@@ -76,6 +78,13 @@ import type { ActivityCreate } from "@wealthfolio/addon-sdk";
 import { resolveCountry } from "./tr-geography";
 import { lookupTicker } from "./tr-isin-tickers";
 import { type TrCsvRow } from "./tr-csv-parser";
+import type { ResolvedAsset } from "./tr-resolve";
+
+/** Pre-resolved ISIN→EUR-listing map for the current mapping run. Set by
+ *  mapTrCsvToActivities from MapperOptions.resolved; read by resolveAsset.
+ *  The mapper runs synchronously start-to-finish, so a module-level handle is
+ *  safe (no reentrancy) and avoids threading the map through every helper. */
+let RESOLVED: Map<string, ResolvedAsset> | undefined;
 
 export interface MapperOptions {
   accountId: string;
@@ -83,6 +92,11 @@ export interface MapperOptions {
    *  collapsed into 1 WITHDRAWAL per month. When false, each row maps to
    *  its own WITHDRAWAL (verbose but lossless). Default true. */
   consolidateCard?: boolean;
+  /** Pre-resolved ISIN→EUR-listing map (built async before mapping via
+   *  tr-resolve). When an ISIN is present, resolveAsset prefers it over the
+   *  legacy curated table. Absent ISINs fall back to the table, then to
+   *  ISIN-as-symbol. */
+  resolved?: Map<string, ResolvedAsset>;
 }
 
 export interface MapperResult {
@@ -136,6 +150,7 @@ function tagSource<T extends ActivityCreate>(activity: T, recordId: string): T {
  * Map a list of parsed TR CSV rows to Wealthfolio `ActivityCreate[]`.
  */
 export function mapTrCsvToActivities(rows: TrCsvRow[], opts: MapperOptions): MapperResult {
+  RESOLVED = opts.resolved;
   const consolidateCard = opts.consolidateCard ?? true;
   const activities: ActivityCreate[] = [];
   const notes: MapperNote[] = [];
@@ -147,6 +162,11 @@ export function mapTrCsvToActivities(rows: TrCsvRow[], opts: MapperOptions): Map
   // skips them.
   const skipRowIndexes = new Set<number>();
   resolveCancelledPairs(rows, skipRowIndexes, notes);
+
+  // ── Pass 1b: resolve MERGER pairs. Same-ticker swaps (both ISINs → one
+  // ticker) are no-ops and get skipped; different-asset swaps are left for
+  // mapRow to emit as external transfer legs.
+  resolveMergers(rows, skipRowIndexes, notes);
 
   // ── Pass 2: collect card transactions for monthly consolidation.
   const cardRows: TrCsvRow[] = [];
@@ -257,7 +277,7 @@ function mapBuySell(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: row.type === "BUY" ? "BUY" : "SELL",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: Math.abs(row.shares ?? 0),
       unitPrice: row.price ?? undefined,
@@ -281,7 +301,7 @@ function mapDividend(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "DIVIDEND",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       amount: net,
       currency: row.currency || "EUR",
@@ -301,7 +321,7 @@ function mapInterest(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "INTEREST",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       amount: row.amount ?? 0,
       currency: row.currency || "EUR",
       comment: row.description || undefined,
@@ -320,7 +340,7 @@ function mapSaveback(row: TrCsvRow, accountId: string): ActivityCreate[] {
       accountId,
       activityType: "CREDIT",
       subtype: isFixedIncome ? "BONUS" : "REBATE",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       amount: row.amount ?? 0,
       currency: row.currency || "EUR",
       comment: row.description || undefined,
@@ -334,7 +354,7 @@ function mapDeposit(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "DEPOSIT",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       amount: row.amount ?? 0,
       currency: row.currency || "EUR",
       comment: row.description || row.name || undefined,
@@ -348,7 +368,7 @@ function mapWithdrawal(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "WITHDRAWAL",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       amount: Math.abs(row.amount ?? 0),
       currency: row.currency || "EUR",
       comment: row.description || row.name || undefined,
@@ -364,7 +384,7 @@ function mapCardOrderingFee(row: TrCsvRow, accountId: string): ActivityCreate[] 
     {
       accountId,
       activityType: "FEE",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       amount: fee,
       currency: row.currency || "EUR",
       comment: row.description || "Trade Republic Card",
@@ -472,7 +492,7 @@ function mapSplit(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "SPLIT",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       // The Wealthfolio backend stores the ratio in `amount`. We don't
       // know the prior position from a single row, so the caller
@@ -490,22 +510,37 @@ function mapSplit(row: TrCsvRow, accountId: string): ActivityCreate[] {
 }
 
 function mapMerger(row: TrCsvRow, accountId: string): ActivityCreate[] {
-  // 1:1 ticker swap (Rocket Lab US7731221062 ↔ US7731211089). Per row
-  // we emit a single ADJUSTMENT with the signed share delta. The two
-  // CSV rows together produce a -OLD / +NEW pair.
+  // Ticker swap (e.g. Rocket Lab US7731221062 → US7731211089), recorded by TR
+  // as a -OLD / +NEW pair.
+  //
+  // Two cases, decided in resolveMergers:
+  //   1. Both legs resolve to the SAME asset (the ISIN→ticker map already
+  //      unifies the old and new listing, e.g. both → RKLB). The merger is
+  //      then a no-op — every buy already sits under the shared ticker — so
+  //      resolveMergers marks BOTH rows skipped and we never reach here.
+  //   2. The legs resolve to DIFFERENT assets. We emit a lone external
+  //      transfer per leg: TRANSFER_OUT (old) / TRANSFER_IN (new, zero cost).
+  //
+  // We do NOT pair the legs with a shared sourceGroupId: the backend only
+  // accepts paired transfers across *different* accounts (transfer_pairs.rs
+  // rejects same-account pairs as invalid → "Incomplete transfer detected").
+  // `is_external` marks the intent so the unpaired leg isn't flagged. Cost
+  // basis on the new listing is lost (same accepted trade-off as SPIN_OFF).
   const shares = row.shares ?? 0;
+  const isOut = shares < 0;
   return [
     {
       accountId,
-      activityType: "ADJUSTMENT",
-      activityDate: row.datetime || row.date,
+      activityType: isOut ? "TRANSFER_OUT" : "TRANSFER_IN",
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
-      quantity: shares,
+      quantity: Math.abs(shares),
       currency: row.currency || "EUR",
       comment: row.description || `MERGER ${row.symbol}`,
       metadata: buildMetadata(row, {
         tr_corporate_action: "MERGER",
-        tr_direction: shares < 0 ? "OUT" : "IN",
+        tr_direction: isOut ? "OUT" : "IN",
+        flow: { is_external: true },
       }),
     },
   ];
@@ -519,7 +554,7 @@ function mapSpinOff(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "TRANSFER_IN",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
       currency: row.currency || "EUR",
@@ -537,20 +572,33 @@ function mapSpinOff(row: TrCsvRow, accountId: string): ActivityCreate[] {
 }
 
 function mapStockDividend(row: TrCsvRow, accountId: string): ActivityCreate[] {
-  // Bonus shares (e.g. Enovix warrants). Subtype DIVIDEND_IN_KIND.
+  // Bonus shares delivered cash-free (e.g. Enovix warrants, scrip dividends).
+  // These create a real position at zero cost basis, so they must be a
+  // lot-creating activity — NOT an income-only DIVIDEND. A DIVIDEND only
+  // touches cash (handle_income), leaving the shares un-held; any later
+  // disposal of them (e.g. a WORTHLESS expiry mapped to SELL) then has no
+  // cost-basis lot to match and trips the "Sale missing cost-basis match"
+  // health check. Treated exactly like SPIN_OFF / FREE_RECEIPT: a lone
+  // external TRANSFER_IN, quantity only, no cash impact.
   const shares = row.shares ?? 0;
   return [
     {
       accountId,
-      activityType: "DIVIDEND",
-      subtype: "DIVIDEND_IN_KIND",
-      activityDate: row.datetime || row.date,
+      activityType: "TRANSFER_IN",
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
-      amount: 0,
       currency: row.currency || "EUR",
       comment: row.description || `STOCK_DIVIDEND ${row.symbol}`,
-      metadata: buildMetadata(row, { tr_corporate_action: "STOCK_DIVIDEND" }),
+      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
+      // performance pipeline doesn't warn about a missing pair. Zero cost
+      // basis (TR ships no price for these); fair value at receipt is kept in
+      // metadata for a future income-in-kind / tax treatment.
+      metadata: buildMetadata(row, {
+        tr_corporate_action: "STOCK_DIVIDEND",
+        tr_fmv_at_receipt: row.price ?? undefined,
+        flow: { is_external: true },
+      }),
     },
   ];
 }
@@ -563,7 +611,7 @@ function mapWorthless(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "SELL",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
       unitPrice: 0,
@@ -588,7 +636,7 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
     {
       accountId,
       activityType: "TRANSFER_IN",
-      activityDate: row.datetime || row.date,
+      activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
       currency: row.currency || "EUR",
@@ -652,6 +700,75 @@ function resolveCancelledPairs(rows: TrCsvRow[], skip: Set<number>, notes: Mappe
   }
 }
 
+/* ─────────────────────────  Merger resolution  ───────────────────────── */
+
+/**
+ * Detect CORPORATE_ACTION/MERGER no-ops. TR records a merger/ticker-swap as a
+ * −OLD / +NEW pair sharing a timestamp and |shares|. When both legs resolve to
+ * the SAME asset — the ISIN→ticker map already unifies the old and new listing
+ * (e.g. both Rocket Lab ISINs → RKLB) — the merger changes nothing: every buy
+ * already sits under the shared ticker. Emitting a TRANSFER_OUT+IN there would
+ * be a same-account self-transfer, which the backend rejects as an invalid pair
+ * ("Incomplete transfer detected"). So we mark both rows skipped.
+ *
+ * Pairs that resolve to DIFFERENT assets are left for mapMerger to emit as lone
+ * external transfers (old out / new in at zero cost).
+ */
+function resolveMergers(rows: TrCsvRow[], skip: Set<number>, notes: MapperNote[]): void {
+  const byKey = new Map<string, TrCsvRow[]>();
+  for (const row of rows) {
+    if (row.category !== "CORPORATE_ACTION" || row.type !== "MERGER") continue;
+    const key = `${activityDateOf(row)}|${Math.abs(row.shares ?? 0).toFixed(8)}`;
+    const arr = byKey.get(key) ?? [];
+    arr.push(row);
+    byKey.set(key, arr);
+  }
+
+  for (const [key, group] of byKey) {
+    const outs = group.filter((r) => (r.shares ?? 0) < 0);
+    const ins = group.filter((r) => (r.shares ?? 0) > 0);
+    if (outs.length !== 1 || ins.length !== 1) continue; // mapped as external legs
+    const out = outs[0];
+    const inn = ins[0];
+    const outSym = resolveAsset(out)?.symbol;
+    const inSym = resolveAsset(inn)?.symbol;
+
+    if (outSym && inSym && outSym === inSym) {
+      skip.add(out.rowIndex);
+      skip.add(inn.rowIndex);
+      notes.push({
+        kind: "merger_pair",
+        message: `MERGER ${out.symbol} → ${inn.symbol} both resolve to ${outSym} — no-op, skipped (${key})`,
+      });
+    } else {
+      notes.push({
+        kind: "merger_pair",
+        message: `MERGER ${out.symbol} → ${inn.symbol} (${outSym ?? "?"} → ${inSym ?? "?"}) — imported as external transfers (cost basis not carried)`,
+      });
+    }
+  }
+}
+
+/**
+ * The activity date to import for a row.
+ *
+ * TR's `datetime` is the booking/processing timestamp; `date` is the trade /
+ * value date. They normally share a calendar day — then we keep the full
+ * `datetime` so same-day trades (e.g. multiple DCA executions) preserve their
+ * intra-day order. When they DON'T share a day, TR re-booked the event later
+ * (a corrected buy posted weeks afterwards, or a corporate action booked
+ * months after its ex-date). The trade `date` is then the economically correct
+ * day: a BUY must never sort *after* a SELL of the very shares it created, or
+ * the cost-basis lot won't exist when the sale is processed.
+ */
+function activityDateOf(row: TrCsvRow): string {
+  const dt = row.datetime;
+  const d = row.date;
+  if (!dt) return d;
+  if (!d) return dt;
+  return dt.slice(0, 10) === d ? dt : d;
+}
+
 /* ─────────────────────────  Asset resolution  ───────────────────────── */
 
 function resolveAsset(row: TrCsvRow) {
@@ -705,9 +822,10 @@ function resolveAsset(row: TrCsvRow) {
     };
   }
 
-  // ISIN: try the ticker map for friendly Yahoo symbols. Use the map's
-  // natural quoteCcy (USD for US stocks, EUR for Xetra-listed ETFs)
-  // and trust Wealthfolio's FX engine to convert at display time.
+  // ISIN resolution, most-reliable first:
+  // 1) Curated table — hand-verified mappings (EUR Xetra ETFs, Alibaba
+  //    9988.HK, etc.). These win because provider search misses or mis-ranks
+  //    some ISINs (the cause of the unpriced-ETF regression).
   const mapping = lookupTicker(sym);
   if (mapping) {
     return {
@@ -721,8 +839,23 @@ function resolveAsset(row: TrCsvRow) {
     };
   }
 
-  // Unknown ISIN — fall back to ISIN-as-symbol; let Wealthfolio's
-  // auto-discovery infer the currency from the provider metadata.
+  // 2) Dynamic resolution via the app's own provider search (built async in
+  //    tr-resolve). Covers assets not in the table with no manual upkeep.
+  const dyn = RESOLVED?.get(sym);
+  if (dyn) {
+    return {
+      symbol: dyn.symbol,
+      kind: "INVESTMENT",
+      name: dyn.name || row.name || sym,
+      exchangeMic: dyn.exchangeMic,
+      quoteCcy: dyn.quoteCcy,
+      instrumentType: instrumentType ?? "EQUITY",
+      quoteMode,
+    };
+  }
+
+  // 3) Neither the table nor provider search resolved it → ISIN-as-symbol; let
+  // Wealthfolio's auto-discovery infer the currency from the provider metadata.
   // For derivatives, also pin quoteMode=MANUAL so the backend doesn't
   // hammer Yahoo / CUSTOM_SCRAPER with a 404-bound ISIN every sync.
   return {

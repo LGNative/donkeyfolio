@@ -36,6 +36,7 @@ import {
   type MapperNote,
   type MapperResult,
 } from "../lib/tr-csv-mapper";
+import { resolveIsins, type ResolvedAsset } from "../lib/tr-resolve";
 import {
   clearImportHistory,
   loadImportHistory,
@@ -76,6 +77,8 @@ interface ParsedData {
   history: ImportHistory;
   newRows: TrCsvRow[];
   alreadyImported: TrCsvRow[];
+  /** ISIN → EUR-listing resolution (built once at preview, reused at import). */
+  resolved: Map<string, ResolvedAsset>;
 }
 
 interface ErrorInfo {
@@ -87,7 +90,7 @@ interface ErrorInfo {
 
 type State =
   | { kind: "empty" }
-  | { kind: "parsing"; filename: string }
+  | { kind: "parsing"; filename: string; done?: number; total?: number }
   | { kind: "parsed"; data: ParsedData }
   | {
       kind: "reviewing_assets";
@@ -185,45 +188,62 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
   // tx_ids are recorded in history so a re-import skips them.
   const abortRef = React.useRef<AbortController | null>(null);
 
-  const handleFile = React.useCallback(async (file: File) => {
-    setState({ kind: "parsing", filename: file.name });
-    try {
-      const text = await file.text();
-      const { rows, warnings } = parseTrCsv(text);
-      const summary = summarizeCsv(rows);
-      const history = loadImportHistory();
-      const { newRows, alreadyImported } = partitionByHistory(rows, history);
-      const mapping = mapTrCsvToActivities(newRows, { accountId: PREVIEW_ACCOUNT_ID });
-      resolveSplitRatios(newRows, mapping.activities, mapping.notes);
-      setState({
-        kind: "parsed",
-        data: {
-          filename: file.name,
-          rows,
-          summary,
-          warnings,
-          mapping,
-          history,
-          newRows,
-          alreadyImported,
-        },
-      });
-    } catch (err) {
-      const { message, detail } = describeError(err);
-      setState({
-        kind: "error",
-        error: {
-          origin: "parse",
-          title:
-            err instanceof TrCsvParseError
-              ? "Could not parse the CSV"
-              : "Failed to process the file",
-          message,
-          detail,
-        },
-      });
-    }
-  }, []);
+  const handleFile = React.useCallback(
+    async (file: File) => {
+      setState({ kind: "parsing", filename: file.name });
+      try {
+        const text = await file.text();
+        const { rows, warnings } = parseTrCsv(text);
+        const summary = summarizeCsv(rows);
+        const history = loadImportHistory();
+        const { newRows, alreadyImported } = partitionByHistory(rows, history);
+
+        // Resolve each ISIN to its EUR-denominated listing via the app's own
+        // providers (Yahoo + OpenFIGI) so assets are natively EUR and their
+        // daily history flows in EUR. No hardcoded table, no base-code change.
+        const resolved = await resolveIsins(
+          ctx,
+          newRows.map((r) => r.symbol),
+          (done, total) => setState({ kind: "parsing", filename: file.name, done, total }),
+        );
+
+        const mapping = mapTrCsvToActivities(newRows, {
+          accountId: PREVIEW_ACCOUNT_ID,
+          resolved,
+        });
+        resolveSplitRatios(newRows, mapping.activities, mapping.notes);
+        setState({
+          kind: "parsed",
+          data: {
+            filename: file.name,
+            rows,
+            summary,
+            warnings,
+            mapping,
+            history,
+            newRows,
+            alreadyImported,
+            resolved,
+          },
+        });
+      } catch (err) {
+        const { message, detail } = describeError(err);
+        setState({
+          kind: "error",
+          error: {
+            origin: "parse",
+            title:
+              err instanceof TrCsvParseError
+                ? "Could not parse the CSV"
+                : "Failed to process the file",
+            message,
+            detail,
+          },
+        });
+      }
+    },
+    [ctx],
+  );
 
   const handleDrop = React.useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -251,7 +271,10 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
       const account = await ensureTRAccount(ctx);
 
       stepLabel = "remap with real accountId";
-      const mapping = mapTrCsvToActivities(data.newRows, { accountId: account.accountId });
+      const mapping = mapTrCsvToActivities(data.newRows, {
+        accountId: account.accountId,
+        resolved: data.resolved,
+      });
       resolveSplitRatios(data.newRows, mapping.activities, mapping.notes);
 
       // Apply per-asset quoteCcy overrides chosen in Review Assets step.
@@ -440,6 +463,14 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
   }, [ctx]);
 
   const handleDiagnose = React.useCallback(async () => {
+    // Diagnostics reads straight from the DB (no CSV needed) and only renders
+    // under the Análise tab. When triggered from the Import-result screen we're
+    // still on the Import tab, which has no renderer for the diagnosed state —
+    // so navigate to Análise first, preserving the import document to return to.
+    if (currentTab === "import" && isImportFlowState(state)) {
+      importStateRef.current = state;
+    }
+    setCurrentTab("holdings");
     setState({ kind: "diagnosing" });
     try {
       const account = await ensureTRAccount(ctx);
@@ -459,7 +490,8 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
         },
       });
     }
-  }, [ctx]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, currentTab, state]);
 
   const handleCleanupDuplicates = React.useCallback(async () => {
     if (state.kind !== "diagnosed") return;
@@ -849,7 +881,11 @@ function ImportTabContent({
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
-            <p className="text-sm font-medium">Parsing {state.filename}…</p>
+            <p className="text-sm font-medium">
+              {state.total
+                ? `A resolver ativos em EUR… ${state.done ?? 0}/${state.total}`
+                : `Parsing ${state.filename}…`}
+            </p>
           </CardContent>
         </Card>
       )}

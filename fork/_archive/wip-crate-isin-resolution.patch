@@ -1,0 +1,253 @@
+diff --git a/crates/core/src/quotes/sync.rs b/crates/core/src/quotes/sync.rs
+index 015c22dc..72b40f2e 100644
+--- a/crates/core/src/quotes/sync.rs
++++ b/crates/core/src/quotes/sync.rs
+@@ -41,7 +41,7 @@ use super::sync_state::{
+ };
+ use super::types::{AssetId, Day, ProviderId};
+ use crate::activities::{ActivityRepositoryTrait, ActivityUpsert};
+-use crate::assets::{Asset, AssetKind, AssetRepositoryTrait, QuoteMode};
++use crate::assets::{Asset, AssetKind, AssetRepositoryTrait, QuoteMode, UpdateAssetProfile};
+ use crate::errors::Error;
+ use crate::errors::Result;
+ use crate::utils::time_utils;
+@@ -89,6 +89,13 @@ fn market_fetch_end_date(now: DateTime<Utc>, exchange_mic: Option<&str>) -> Naiv
+     time_utils::market_calendar_date(now, exchange_mic)
+ }
+ 
++/// True when `s` has the shape of an ISIN (2 country letters + 10 alphanumerics).
++fn symbol_looks_like_isin(s: &str) -> bool {
++    s.len() == 12
++        && s[..2].chars().all(|c| c.is_ascii_uppercase())
++        && s[2..].chars().all(|c| c.is_ascii_alphanumeric())
++}
++
+ /// Determine the effective data provider for an asset.
+ ///
+ /// Priority: sync state `data_source` (if non-empty) → asset `preferred_provider` → Yahoo default.
+@@ -814,6 +821,87 @@ where
+     /// Uses per-asset locking (US-012) to prevent duplicate sync work when multiple
+     /// sync triggers occur for the same asset. If a sync is already in progress for
+     /// this asset, the call is skipped (not blocked) to keep the system responsive.
++    /// For assets whose `instrument_symbol` is still a bare ISIN (e.g. an
++    /// unmapped Trade Republic import), resolve it to a real ticker via provider
++    /// search and persist the ticker on the asset (display_code +
++    /// instrument_symbol + name/exchange/currency) so the UI shows "RDDT"
++    /// instead of "US75734B1008". Runs once per asset: after enrichment the
++    /// symbol is a ticker and no longer matches `symbol_looks_like_isin`.
++    /// MANUAL-quoted assets (e.g. expired warrants) are left untouched.
++    async fn enrich_isin_assets(&self, assets: &[Asset]) {
++        for asset in assets {
++            if matches!(asset.quote_mode, QuoteMode::Manual) {
++                continue;
++            }
++            let Some(isin) = asset.instrument_symbol.as_deref() else {
++                continue;
++            };
++            if !symbol_looks_like_isin(isin) {
++                continue;
++            }
++
++            let results = {
++                let client = self.client.read().await;
++                match client.search(isin).await {
++                    Ok(results) => results,
++                    Err(e) => {
++                        debug!("ISIN enrich: search failed for {}: {:?}", isin, e);
++                        continue;
++                    }
++                }
++            };
++
++            let best = results.into_iter().find(|r| {
++                !r.symbol.trim().is_empty()
++                    && !symbol_looks_like_isin(&r.symbol)
++                    && matches!(
++                        r.quote_type.to_ascii_uppercase().as_str(),
++                        "EQUITY" | "ETF" | "MUTUALFUND" | "ETP"
++                    )
++            });
++            let Some(best) = best else {
++                debug!("ISIN enrich: no ticker match for {}", isin);
++                continue;
++            };
++
++            let ticker = best.symbol.clone();
++            let name = Some(best.long_name.clone())
++                .filter(|s| !s.trim().is_empty())
++                .or_else(|| asset.name.clone());
++            let payload = UpdateAssetProfile {
++                name,
++                display_code: Some(ticker.clone()),
++                notes: asset.notes.clone().unwrap_or_default(),
++                kind: None,
++                quote_mode: Some(asset.quote_mode.clone()),
++                quote_ccy: best
++                    .currency
++                    .clone()
++                    .filter(|c| !c.trim().is_empty())
++                    .or_else(|| Some(asset.quote_ccy.clone())),
++                instrument_type: asset.instrument_type.clone(),
++                instrument_symbol: Some(ticker.clone()),
++                instrument_exchange_mic: best
++                    .exchange_mic
++                    .clone()
++                    .or_else(|| asset.instrument_exchange_mic.clone()),
++                provider_config: None,
++                metadata: None,
++            };
++
++            match self.asset_repo.update_profile(&asset.id, payload).await {
++                Ok(_) => info!(
++                    "Resolved ISIN {} -> ticker {} (asset {})",
++                    isin, ticker, asset.id
++                ),
++                Err(e) => warn!(
++                    "Failed to persist ticker {} for ISIN asset {}: {:?}",
++                    ticker, asset.id, e
++                ),
++            }
++        }
++    }
++
+     async fn sync_asset(&self, asset: &Asset, plan: &SymbolSyncPlan) -> AssetSyncResult {
+         let asset_id_str = &asset.id;
+         let asset_id = AssetId::new(asset_id_str);
+@@ -1337,11 +1425,26 @@ where
+ 
+         let targeted_sync = is_targeted_asset_sync(asset_ids.as_deref());
+         let include_closed_positions = should_include_closed_positions(mode, targeted_sync);
+-        let assets = match asset_ids.as_ref() {
++        let mut assets = match asset_ids.as_ref() {
+             Some(ids) => self.asset_repo.list_by_asset_ids(ids)?,
+             None => self.asset_repo.list()?,
+         };
+ 
++        // Resolve any bare-ISIN symbols to real tickers (e.g. US75734B1008 →
++        // RDDT) and persist them, then reload so the rest of the sync uses the
++        // resolved symbols. No-op once every ISIN asset has been resolved.
++        if assets.iter().any(|a| {
++            a.instrument_symbol
++                .as_deref()
++                .is_some_and(symbol_looks_like_isin)
++        }) {
++            self.enrich_isin_assets(&assets).await;
++            assets = match asset_ids.as_ref() {
++                Some(ids) => self.asset_repo.list_by_asset_ids(ids)?,
++                None => self.asset_repo.list()?,
++            };
++        }
++
+         let all_asset_ids: Vec<String> = assets.iter().map(|asset| asset.id.clone()).collect();
+         let initial_states = self.sync_state_store.get_by_asset_ids(&all_asset_ids)?;
+         let activity_bounds = self
+diff --git a/crates/market-data/src/provider/yahoo/mod.rs b/crates/market-data/src/provider/yahoo/mod.rs
+index 68d263b5..0199132d 100644
+--- a/crates/market-data/src/provider/yahoo/mod.rs
++++ b/crates/market-data/src/provider/yahoo/mod.rs
+@@ -7,6 +7,7 @@
+ 
+ mod models;
+ 
++use std::collections::HashMap;
+ use std::sync::RwLock;
+ use std::time::Duration;
+ 
+@@ -68,6 +69,19 @@ struct YahooSearchQuoteRaw {
+ lazy_static! {
+     /// Global cache for Yahoo authentication crumb
+     static ref YAHOO_CRUMB: RwLock<Option<CrumbData>> = RwLock::default();
++
++    /// Cache of ISIN → resolved Yahoo ticker (e.g. "US75734B1008" → "RDDT").
++    /// `None` marks an ISIN we searched but couldn't resolve, so we don't
++    /// re-query Yahoo on every sync.
++    static ref ISIN_TICKER_CACHE: RwLock<HashMap<String, Option<String>>> =
++        RwLock::new(HashMap::new());
++}
++
++/// True when `s` has the shape of an ISIN (2 country letters + 10 alphanumerics).
++fn looks_like_isin(s: &str) -> bool {
++    s.len() == 12
++        && s[..2].chars().all(|c| c.is_ascii_uppercase())
++        && s[2..].chars().all(|c| c.is_ascii_alphanumeric())
+ }
+ 
+ // ============================================================================
+@@ -833,6 +847,51 @@ impl YahooProvider {
+         Ok(profile)
+     }
+ 
++    /// If `symbol` is an ISIN, resolve it to a real Yahoo ticker via search
++    /// (e.g. "US75734B1008" → "RDDT") so quotes can be fetched. Non-ISIN
++    /// symbols are returned unchanged. The mapping is cached per ISIN, and a
++    /// failed lookup is cached as such to avoid repeated searches.
++    async fn resolve_isin_to_ticker(&self, symbol: &str) -> String {
++        if !looks_like_isin(symbol) {
++            return symbol.to_string();
++        }
++        if let Ok(cache) = ISIN_TICKER_CACHE.read() {
++            if let Some(cached) = cache.get(symbol) {
++                return cached.clone().unwrap_or_else(|| symbol.to_string());
++            }
++        }
++        let resolved = match self.search_single(symbol).await {
++            Ok(results) => results
++                .into_iter()
++                .filter(|r| {
++                    !r.symbol.trim().is_empty()
++                        && matches!(
++                            r.asset_type.to_ascii_uppercase().as_str(),
++                            "EQUITY" | "ETF" | "MUTUALFUND"
++                        )
++                })
++                .max_by(|a, b| {
++                    a.score
++                        .unwrap_or(0.0)
++                        .partial_cmp(&b.score.unwrap_or(0.0))
++                        .unwrap_or(std::cmp::Ordering::Equal)
++                })
++                .map(|r| r.symbol),
++            Err(e) => {
++                debug!("ISIN→ticker search failed for {}: {}", symbol, e);
++                None
++            }
++        };
++        match &resolved {
++            Some(t) => debug!("Resolved ISIN {} → ticker {}", symbol, t),
++            None => debug!("Could not resolve ISIN {} to a Yahoo ticker", symbol),
++        }
++        if let Ok(mut cache) = ISIN_TICKER_CACHE.write() {
++            cache.insert(symbol.to_string(), resolved.clone());
++        }
++        resolved.unwrap_or_else(|| symbol.to_string())
++    }
++
+     async fn search_single(&self, query: &str) -> Result<Vec<SearchResult>, MarketDataError> {
+         let encoded_query = encode(query);
+ 
+@@ -929,6 +988,13 @@ impl MarketDataProvider for YahooProvider {
+         instrument: ProviderInstrument,
+     ) -> Result<Quote, MarketDataError> {
+         let symbol = self.extract_symbol(&instrument)?;
++        // ISIN symbols (e.g. an unmapped TR import) aren't Yahoo tickers —
++        // resolve them to the real ticker via search before fetching.
++        let symbol = if matches!(&instrument, ProviderInstrument::EquitySymbol { .. }) {
++            self.resolve_isin_to_ticker(&symbol).await
++        } else {
++            symbol
++        };
+ 
+         debug!("Fetching latest quote for {} from Yahoo", symbol);
+ 
+@@ -955,6 +1021,11 @@ impl MarketDataProvider for YahooProvider {
+         end: DateTime<Utc>,
+     ) -> Result<Vec<Quote>, MarketDataError> {
+         let symbol = self.extract_symbol(&instrument)?;
++        let symbol = if matches!(&instrument, ProviderInstrument::EquitySymbol { .. }) {
++            self.resolve_isin_to_ticker(&symbol).await
++        } else {
++            symbol
++        };
+ 
+         debug!(
+             "Fetching historical quotes for {} from {} to {} from Yahoo",

@@ -1,0 +1,271 @@
+From c85029294554cf7c5091fdec4f50977a3d1ce412 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Mon, 8 Jun 2026 20:36:13 +0100
+Subject: [PATCH 02/11] =?UTF-8?q?Donkeyfolio:=20visual=20polish=20?=
+ =?UTF-8?q?=E2=80=94=20charts,=20gains,=20treemap,=20logo,=20avatars?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Light/dark refinements on top of the v3.5.0 fork base.
+
+- Chart palette: cohesive cool family (green/teal/blue) for the allocation
+  gauges and bars, replacing the earthy green+sand+clay+plum mix
+- Gains: --success is dark green in light mode (legible on the cream bg) and
+  brighter green in dark mode; the dashboard history chart now uses --primary
+  so its fill is decoupled from the gains text colour
+- Treemap: bold labels without the SVG halo; light mode uses a saturated ramp so
+  every tile is dark enough for uniform white labels (instead of mixed
+  black/white). Magnitude still reads from the % and the depth of colour
+- Sidebar logo: dropped the circular clip, drop shadow and 3D flip so the black
+  mark sits flat and integrated
+- Ticker avatars: neutral (bg-muted) background with foreground-coloured
+  fallbacks, so coloured company logos stay distinct in both themes
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../frontend/src/components/history-chart.tsx | 18 +++++-----
+ .../frontend/src/components/ticker-avatar.tsx | 10 +++---
+ apps/frontend/src/globals.css                 | 35 ++++++++++---------
+ .../holdings/components/composition-chart.tsx | 24 +++++--------
+ .../pages/layouts/navigation/app-sidebar.tsx  |  8 +----
+ 5 files changed, 41 insertions(+), 54 deletions(-)
+
+diff --git a/apps/frontend/src/components/history-chart.tsx b/apps/frontend/src/components/history-chart.tsx
+index aab620e8..9d4e344d 100644
+--- a/apps/frontend/src/components/history-chart.tsx
++++ b/apps/frontend/src/components/history-chart.tsx
+@@ -83,7 +83,7 @@ const CustomTooltip = ({
+   }
+ 
+   const netContributionPayload = ncPayload ?? tvPayload;
+-  const tooltipColor = tvPayload.totalValue >= 0 ? "var(--success)" : "var(--destructive)";
++  const tooltipColor = tvPayload.totalValue >= 0 ? "var(--primary)" : "var(--destructive)";
+ 
+   return (
+     <div className="bg-popover pointer-events-none grid grid-cols-1 gap-1.5 rounded-md border p-2 shadow-md">
+@@ -308,14 +308,14 @@ export function HistoryChart({
+               </>
+             ) : allPositive ? (
+               <>
+-                <stop offset="5%" stopColor="var(--success)" stopOpacity={0.2} />
+-                <stop offset="70%" stopColor="var(--success)" stopOpacity={0.12} />
+-                <stop offset="100%" stopColor="var(--success)" stopOpacity={0} />
++                <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.2} />
++                <stop offset="70%" stopColor="var(--primary)" stopOpacity={0.12} />
++                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+               </>
+             ) : (
+               <>
+-                <stop offset="0%" stopColor="var(--success)" stopOpacity={0.2} />
+-                <stop offset={zeroPercent} stopColor="var(--success)" stopOpacity={0.05} />
++                <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.2} />
++                <stop offset={zeroPercent} stopColor="var(--primary)" stopOpacity={0.05} />
+                 <stop offset={zeroPercent} stopColor="var(--destructive)" stopOpacity={0.05} />
+                 <stop offset="100%" stopColor="var(--destructive)" stopOpacity={0.2} />
+               </>
+@@ -325,10 +325,10 @@ export function HistoryChart({
+             {allNegative ? (
+               <stop offset="0%" stopColor="var(--destructive)" />
+             ) : allPositive ? (
+-              <stop offset="0%" stopColor="var(--success)" />
++              <stop offset="0%" stopColor="var(--primary)" />
+             ) : (
+               <>
+-                <stop offset={zeroPercent} stopColor="var(--success)" />
++                <stop offset={zeroPercent} stopColor="var(--primary)" />
+                 <stop offset={zeroPercent} stopColor="var(--destructive)" />
+               </>
+             )}
+@@ -363,7 +363,7 @@ export function HistoryChart({
+           stroke={`url(#${strokeGradientId})`}
+           activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>
+             showMarkers && props.payload?.date && markerDateSet.has(props.payload.date) ? null : (
+-              <HistoryChartActiveDot {...props} stroke="var(--success)" />
++              <HistoryChartActiveDot {...props} stroke="var(--primary)" />
+             )
+           }
+           fillOpacity={1}
+diff --git a/apps/frontend/src/components/ticker-avatar.tsx b/apps/frontend/src/components/ticker-avatar.tsx
+index 3b5aa8ed..93d964e5 100644
+--- a/apps/frontend/src/components/ticker-avatar.tsx
++++ b/apps/frontend/src/components/ticker-avatar.tsx
+@@ -57,8 +57,8 @@ export const TickerAvatar = ({
+ 
+   if (cashAvatarLabel) {
+     return (
+-      <Avatar className={cn("border-white/20 font-semibold backdrop-blur-md", className)}>
+-        <AvatarFallback className="bg-primary/80 dark:bg-primary/20 text-xs font-semibold text-white">
++      <Avatar className={cn("border-border font-semibold backdrop-blur-md", className)}>
++        <AvatarFallback className="bg-muted text-foreground text-xs font-semibold">
+           <span className="p-1" title={fullSymbol}>
+             {cashAvatarLabel}
+           </span>
+@@ -68,9 +68,7 @@ export const TickerAvatar = ({
+   }
+ 
+   return (
+-    <Avatar
+-      className={cn("bg-primary/80 dark:bg-primary/20 border-white/20 backdrop-blur-md", className)}
+-    >
++    <Avatar className={cn("bg-muted border-border backdrop-blur-md", className)}>
+       <AvatarImage
+         src={logoUrl}
+         alt={fullSymbol}
+@@ -85,7 +83,7 @@ export const TickerAvatar = ({
+           }
+         }}
+       />
+-      <AvatarFallback className="bg-primary/80 dark:bg-primary/20 font-medium text-white">
++      <AvatarFallback className="bg-muted text-foreground font-medium">
+         <span
+           className={cn(
+             "px-0.5 leading-none",
+diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
+index d3b28d11..346d3c67 100644
+--- a/apps/frontend/src/globals.css
++++ b/apps/frontend/src/globals.css
+@@ -415,7 +415,7 @@
+   --accent-foreground: hsl(var(--flexoki-tx-2));
+   --destructive: hsl(var(--flexoki-re));
+   --destructive-foreground: hsl(var(--flexoki-bg));
+-  --success: hsl(150 65% 45%); /* Donkeyfolio brand green (was olive flexoki) */
++  --success: hsl(150 55% 32%); /* gains: dark green, legible on the light bg */
+   --success-foreground: hsl(var(--flexoki-bg));
+   --warning: hsl(var(--flexoki-ye));
+   --warning-foreground: hsl(var(--flexoki-bg));
+@@ -426,14 +426,14 @@
+ 
+   /* Charts (allocation palette: forest / sage / sand / clay / plum + stone) */
+   --chart-1: var(--primary); /* Donkeyfolio green dominant slice */
+-  --chart-2: #7e9f8c;
+-  --chart-3: #cbba8c;
+-  --chart-4: #c08a5f;
+-  --chart-5: #9a7e92;
+-  --chart-6: hsl(49 7% 70%);
+-  --chart-7: hsl(55 10% 79%);
+-  --chart-8: hsl(50 14% 83%);
+-  --chart-9: hsl(51 21% 88%);
++  --chart-2: hsl(172 42% 42%);
++  --chart-3: hsl(190 44% 44%);
++  --chart-4: hsl(206 44% 48%);
++  --chart-5: hsl(220 38% 52%);
++  --chart-6: hsl(158 34% 44%);
++  --chart-7: hsl(135 30% 46%);
++  --chart-8: hsl(182 32% 48%);
++  --chart-9: hsl(210 34% 54%);
+   --chart-stone: #b1aa9a;
+ 
+   /* Sidebar (full hsl colors) */
+@@ -497,15 +497,16 @@
+   --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
+   --primary-foreground: hsl(0 0% 0%);
+   --ring: hsl(150 65% 50%);
++  --success: hsl(150 58% 48%); /* gains: brighter green for the dark bg */
+   --chart-1: var(--primary);
+-  --chart-2: #7e9f8c;
+-  --chart-3: #cbba8c;
+-  --chart-4: #c08a5f;
+-  --chart-5: #9a7e92;
+-  --chart-6: hsl(49 8% 60%);
+-  --chart-7: hsl(55 10% 67%);
+-  --chart-8: hsl(50 13% 72%);
+-  --chart-9: hsl(51 18% 77%);
++  --chart-2: hsl(172 40% 50%);
++  --chart-3: hsl(190 42% 52%);
++  --chart-4: hsl(206 42% 56%);
++  --chart-5: hsl(220 36% 58%);
++  --chart-6: hsl(158 32% 54%);
++  --chart-7: hsl(135 26% 56%);
++  --chart-8: hsl(182 28% 62%);
++  --chart-9: hsl(210 30% 66%);
+   --chart-stone: hsl(49 8% 60%);
+ 
+   /* Sonner toast overrides for dark mode - solid backgrounds for better readability */
+diff --git a/apps/frontend/src/pages/holdings/components/composition-chart.tsx b/apps/frontend/src/pages/holdings/components/composition-chart.tsx
+index e2ad1d3f..b14ff720 100644
+--- a/apps/frontend/src/pages/holdings/components/composition-chart.tsx
++++ b/apps/frontend/src/pages/holdings/components/composition-chart.tsx
+@@ -69,6 +69,11 @@ const POS_HI = [53, 92, 76]; // #355c4c
+ // hue so small losses read red-tinted instead of washed-out pink.
+ const NEG_LO = [233, 179, 168]; // #e9b3a8
+ const NEG_HI = [209, 78, 66]; // #d14e42
++// Light mode: a saturated ramp where even the smallest movers are dark enough
++// for white labels, so every tile reads uniformly white (like the dark-mode
++// heatmap). Magnitude still reads from the % number and the depth of colour.
++const POS_LO_LIGHT = [108, 160, 122];
++const NEG_LO_LIGHT = [198, 118, 108];
+ 
+ const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+ 
+@@ -87,9 +92,10 @@ interface TreemapTile {
+ // instead of collapsing into a single shade. `k` is the return magnitude that
+ // maps to the mid-tone (losses ramp ~2× faster, matching the design). Values
+ // are fractions: 0.5 = +50%, 0.025 = +2.5% for the smaller daily returns.
+-function getTreemapColor(gain: number, returnType: ReturnType): TreemapTile {
++function getTreemapColor(gain: number, returnType: ReturnType, isDark: boolean): TreemapTile {
+   const isGain = isNaN(gain) || gain >= 0;
+-  const [lo, hi] = isGain ? [POS_LO, POS_HI] : [NEG_LO, NEG_HI];
++  const lo = isGain ? (isDark ? POS_LO : POS_LO_LIGHT) : isDark ? NEG_LO : NEG_LO_LIGHT;
++  const hi = isGain ? POS_HI : NEG_HI;
+   const k = isGain
+     ? returnType === "daily"
+       ? 0.025
+@@ -152,12 +158,8 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
+ }) => {
+   const fontSize = Math.min(width, height) < 80 ? Math.min(width, height) * 0.16 : 13;
+   const fontSize2 = Math.min(width, height) < 80 ? Math.min(width, height) * 0.14 : 12;
+-  const { fill: fillColor, isLightTile } = getTreemapColor(gain, returnType);
++  const { fill: fillColor, isLightTile } = getTreemapColor(gain, returnType, isDark);
+   const textColor = isLightTile ? TILE_TEXT_DARK : TILE_TEXT_LIGHT;
+-  // a11y: a halo in the opposite tone keeps labels legible on every tile shade,
+-  // including the ambiguous mid-tones where neither pure dark nor light text wins.
+-  const haloColor = isLightTile ? "rgba(245,243,236,0.55)" : "rgba(16,22,19,0.6)";
+-  const haloWidth = Math.max(1.5, (fontSize + 1) / 7);
+ 
+   // Determine what text to display based on mode
+   const displayText = displayMode === "name" && name ? name : symbol;
+@@ -196,10 +198,6 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
+               className="font-default cursor-pointer text-sm font-semibold hover:underline"
+               style={{
+                 fontSize: fontSize + 1,
+-                paintOrder: "stroke",
+-                stroke: haloColor,
+-                strokeWidth: haloWidth,
+-                strokeLinejoin: "round",
+               }}
+             >
+               {truncatedText}
+@@ -214,10 +212,6 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
+             className="font-semibold"
+             style={{
+               fontSize: fontSize2,
+-              paintOrder: "stroke",
+-              stroke: haloColor,
+-              strokeWidth: haloWidth,
+-              strokeLinejoin: "round",
+             }}
+           >
+             {gain > 0 ? "+" + formatPercent(gain) : formatPercent(gain)}
+diff --git a/apps/frontend/src/pages/layouts/navigation/app-sidebar.tsx b/apps/frontend/src/pages/layouts/navigation/app-sidebar.tsx
+index 51202503..91fd72d4 100644
+--- a/apps/frontend/src/pages/layouts/navigation/app-sidebar.tsx
++++ b/apps/frontend/src/pages/layouts/navigation/app-sidebar.tsx
+@@ -50,13 +50,7 @@ export function AppSidebar({ navigation }: AppSidebarProps) {
+                   className="draggable flex items-center justify-center pb-6"
+                 >
+                   <Link to="/">
+-                    <img
+-                      className={`h-10 w-10 rounded-full bg-transparent shadow-lg transition-transform duration-700 ease-in-out [transform-style:preserve-3d] hover:[transform:rotateY(-180deg)] ${
+-                        collapsed ? "[transform:rotateY(180deg)]" : ""
+-                      }`}
+-                      aria-hidden="true"
+-                      src="/logo.png"
+-                    />
++                    <img className="h-10 w-10" aria-hidden="true" src="/logo.png" />
+                   </Link>
+ 
+                   <span
+-- 
+2.54.0 (Apple Git-156)
+

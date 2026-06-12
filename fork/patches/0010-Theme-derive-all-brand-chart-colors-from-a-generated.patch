@@ -1,0 +1,211 @@
+From 432c6a3c255a1687a58c28978f88444fd0061b3c Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Tue, 9 Jun 2026 22:23:29 +0100
+Subject: [PATCH 10/11] Theme: derive all brand/chart colors from a generated
+ brand scale
+
+Replace hand-picked HSL/hex values with a single --brand-50..950 scale
+(uicolors.app curve anchored at the #1FAD66 brand green). primary,
+success, ring and chart-1..9 (monochrome ramp, light+dark) now derive
+from it; chart-stone maps to a Flexoki neutral. The treemap resolves
+its gain/loss ramp endpoints from --brand-*/--destructive at runtime
+instead of hardcoded RGB triplets.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ apps/frontend/src/globals.css                 | 80 ++++++++++++-------
+ .../holdings/components/composition-chart.tsx | 59 ++++++++++----
+ 2 files changed, 91 insertions(+), 48 deletions(-)
+
+diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
+index 346d3c67..c274984a 100644
+--- a/apps/frontend/src/globals.css
++++ b/apps/frontend/src/globals.css
+@@ -405,7 +405,24 @@
+   --card-foreground: hsl(var(--flexoki-tx));
+   --popover: hsl(var(--flexoki-bg-2));
+   --popover-foreground: hsl(var(--flexoki-tx));
+-  --primary: hsl(150 70% 40%); /* Donkeyfolio brand green */
++
++  /* ── Brand accent scale — generated from the Donkeyfolio green #1FAD66
++     (hue 150) with the uicolors.app curve, anchored at step 600 = the brand.
++     Single source of truth: every brand/chart token below is a step of this
++     scale — no hand-picked colour values. Defined on :root so .dark inherits. ── */
++  --brand-50: hsl(150 70% 96%);
++  --brand-100: hsl(150 72% 92%);
++  --brand-200: hsl(150 70% 83%);
++  --brand-300: hsl(150 68% 70%);
++  --brand-400: hsl(150 70% 55%);
++  --brand-500: hsl(150 70% 46%);
++  --brand-600: hsl(150 70% 40%);
++  --brand-700: hsl(150 74% 33%);
++  --brand-800: hsl(150 72% 27%);
++  --brand-900: hsl(150 68% 22%);
++  --brand-950: hsl(150 74% 13%);
++
++  --primary: var(--brand-600); /* Donkeyfolio brand green */
+   --primary-foreground: hsl(0 0% 100%);
+   --secondary: hsl(var(--flexoki-ui-2));
+   --secondary-foreground: hsl(var(--flexoki-tx-2));
+@@ -415,26 +432,27 @@
+   --accent-foreground: hsl(var(--flexoki-tx-2));
+   --destructive: hsl(var(--flexoki-re));
+   --destructive-foreground: hsl(var(--flexoki-bg));
+-  --success: hsl(150 55% 32%); /* gains: dark green, legible on the light bg */
++  --success: var(--brand-700); /* gains: dark green, legible on the light bg */
+   --success-foreground: hsl(var(--flexoki-bg));
+   --warning: hsl(var(--flexoki-ye));
+   --warning-foreground: hsl(var(--flexoki-bg));
+   --border: hsl(var(--flexoki-ui));
+   --input: hsl(var(--flexoki-ui));
+   --input-bg: hsl(var(--flexoki-bg));
+-  --ring: hsl(150 70% 40%); /* Donkeyfolio brand green focus */
+-
+-  /* Charts (allocation palette: forest / sage / sand / clay / plum + stone) */
+-  --chart-1: var(--primary); /* Donkeyfolio green dominant slice */
+-  --chart-2: hsl(172 42% 42%);
+-  --chart-3: hsl(190 44% 44%);
+-  --chart-4: hsl(206 44% 48%);
+-  --chart-5: hsl(220 38% 52%);
+-  --chart-6: hsl(158 34% 44%);
+-  --chart-7: hsl(135 30% 46%);
+-  --chart-8: hsl(182 32% 48%);
+-  --chart-9: hsl(210 34% 54%);
+-  --chart-stone: #b1aa9a;
++  --ring: var(--brand-600); /* Donkeyfolio brand green focus */
++
++  /* Charts — single-accent monochrome ramp (steps of the brand scale, dark→light).
++     chart-1 = most prominent (darkest) on the light surface. */
++  --chart-1: var(--brand-900);
++  --chart-2: var(--brand-800);
++  --chart-3: var(--brand-700);
++  --chart-4: var(--brand-600);
++  --chart-5: var(--brand-500);
++  --chart-6: var(--brand-400);
++  --chart-7: var(--brand-300);
++  --chart-8: var(--brand-200);
++  --chart-9: var(--brand-100);
++  --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
+ 
+   /* Sidebar (full hsl colors) */
+   --sidebar: hsl(var(--flexoki-bg));
+@@ -491,23 +509,23 @@
+   --flexoki-gr: 72 46% 41%;
+   --flexoki-ye: 45 82% 45%;
+ 
+-  /* Dark chart palette — same semantic hues as light (forest / sage / sand /
+-     clay / plum + stone), tuned for the dark surface: forest is lifted for
+-     contrast, the stones are pulled down so they stay calm instead of glaring. */
+-  --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
++  /* Dark mode — same brand scale, mapped to lighter steps for the dark surface.
++     primary/success lifted; charts use a light→dark monochrome ramp so chart-1
++     (lightest) stays the most prominent against the dark background. */
++  --primary: var(--brand-500); /* Donkeyfolio brand green (lifted for dark) */
+   --primary-foreground: hsl(0 0% 0%);
+-  --ring: hsl(150 65% 50%);
+-  --success: hsl(150 58% 48%); /* gains: brighter green for the dark bg */
+-  --chart-1: var(--primary);
+-  --chart-2: hsl(172 40% 50%);
+-  --chart-3: hsl(190 42% 52%);
+-  --chart-4: hsl(206 42% 56%);
+-  --chart-5: hsl(220 36% 58%);
+-  --chart-6: hsl(158 32% 54%);
+-  --chart-7: hsl(135 26% 56%);
+-  --chart-8: hsl(182 28% 62%);
+-  --chart-9: hsl(210 30% 66%);
+-  --chart-stone: hsl(49 8% 60%);
++  --ring: var(--brand-500);
++  --success: var(--brand-400); /* gains: brighter green for the dark bg */
++  --chart-1: var(--brand-100);
++  --chart-2: var(--brand-200);
++  --chart-3: var(--brand-300);
++  --chart-4: var(--brand-400);
++  --chart-5: var(--brand-500);
++  --chart-6: var(--brand-600);
++  --chart-7: var(--brand-700);
++  --chart-8: var(--brand-900);
++  --chart-9: var(--brand-950);
++  --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
+ 
+   /* Sonner toast overrides for dark mode - solid backgrounds for better readability */
+   --toast-bg: hsl(var(--flexoki-bg-2));
+diff --git a/apps/frontend/src/pages/holdings/components/composition-chart.tsx b/apps/frontend/src/pages/holdings/components/composition-chart.tsx
+index b14ff720..81536951 100644
+--- a/apps/frontend/src/pages/holdings/components/composition-chart.tsx
++++ b/apps/frontend/src/pages/holdings/components/composition-chart.tsx
+@@ -59,21 +59,45 @@ const DisplayModeToggle: React.FC<{
+   </Tooltip>
+ );
+ 
+-// Treemap heatmap palette — symbols colored by return.
+-// Matches the "Allocation Concept E - Unified" design: gains lerp from a light
+-// sage to a deep green, losses from a light clay to a deep red.
+-const POS_LO = [205, 217, 191]; // #cdd9bf
+-const POS_HI = [53, 92, 76]; // #355c4c
+-// Loss ramp tuned to the theme's --destructive (flexoki red). NEG_HI matches the
+-// dark-mode token hsl(5 61% 54%) = #d14e42; NEG_LO is a saturated tint of the same
+-// hue so small losses read red-tinted instead of washed-out pink.
+-const NEG_LO = [233, 179, 168]; // #e9b3a8
+-const NEG_HI = [209, 78, 66]; // #d14e42
+-// Light mode: a saturated ramp where even the smallest movers are dark enough
+-// for white labels, so every tile reads uniformly white (like the dark-mode
+-// heatmap). Magnitude still reads from the % number and the depth of colour.
+-const POS_LO_LIGHT = [108, 160, 122];
+-const NEG_LO_LIGHT = [198, 118, 108];
++// Treemap heatmap — gains ramp toward the brand green, losses toward the
++// --destructive red. Endpoints are RESOLVED FROM THE THEME TOKENS at runtime
++// (no hand-picked RGB): the green steps come from the generated --brand-* scale,
++// the red from --destructive, so the heatmap always tracks the theme.
++type Rgb = [number, number, number];
++
++function resolveRgb(cssColor: string): Rgb {
++  if (typeof document === "undefined") return [0, 0, 0];
++  const el = document.createElement("span");
++  el.style.cssText = `color:${cssColor};display:none`;
++  document.body.appendChild(el);
++  const m = getComputedStyle(el).color.match(/[\d.]+/g);
++  el.remove();
++  return m ? [Number(m[0]), Number(m[1]), Number(m[2])] : [0, 0, 0];
++}
++
++// Lighten toward white — derives the small-mover tint from a saturated endpoint
++// instead of hand-tuning a second colour.
++const tintToward = (c: Rgb, amt: number): Rgb =>
++  c.map((v) => Math.round(v + (255 - v) * amt)) as Rgb;
++
++// Ramp endpoints, resolved once per theme mode. --brand-* is mode-independent;
++// --destructive differs between light/dark, so cache by `isDark`.
++const rampCache = new Map<boolean, { posLo: Rgb; posHi: Rgb; negLo: Rgb; negHi: Rgb }>();
++function getRamps(isDark: boolean) {
++  const cached = rampCache.get(isDark);
++  if (cached) return cached;
++  const posHi = resolveRgb("var(--brand-800)");
++  const negHi = resolveRgb("var(--destructive)");
++  const ramps = {
++    posHi,
++    // light bg needs a darker low end so small-gain tiles still carry white text
++    posLo: isDark ? resolveRgb("var(--brand-200)") : resolveRgb("var(--brand-600)"),
++    negHi,
++    negLo: tintToward(negHi, isDark ? 0.45 : 0.2),
++  };
++  rampCache.set(isDark, ramps);
++  return ramps;
++}
+ 
+ const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+ 
+@@ -94,8 +118,9 @@ interface TreemapTile {
+ // are fractions: 0.5 = +50%, 0.025 = +2.5% for the smaller daily returns.
+ function getTreemapColor(gain: number, returnType: ReturnType, isDark: boolean): TreemapTile {
+   const isGain = isNaN(gain) || gain >= 0;
+-  const lo = isGain ? (isDark ? POS_LO : POS_LO_LIGHT) : isDark ? NEG_LO : NEG_LO_LIGHT;
+-  const hi = isGain ? POS_HI : NEG_HI;
++  const ramp = getRamps(isDark);
++  const lo = isGain ? ramp.posLo : ramp.negLo;
++  const hi = isGain ? ramp.posHi : ramp.negHi;
+   const k = isGain
+     ? returnType === "daily"
+       ? 0.025
+-- 
+2.54.0 (Apple Git-156)
+

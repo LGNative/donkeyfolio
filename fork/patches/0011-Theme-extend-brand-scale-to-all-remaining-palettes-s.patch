@@ -1,0 +1,611 @@
+From 5e79cfc85e499d034e21c511b5847e09c9627ba2 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Wed, 10 Jun 2026 20:51:32 +0100
+Subject: [PATCH 11/11] Theme: extend brand scale to all remaining palettes +
+ softer paper bg
+
+Replace every remaining hand-picked colour with theme tokens derived from
+the generated --brand-* scale:
+- net-worth category colours, allocation-target palette, rebalance drift,
+  donut/target-rails, preset picker, alt-asset badges: olive/sand/clay
+  hexes -> --chart-*/--primary/--destructive/--chart-stone.
+- retirement-planner + save-up: self-contained olive/amber/red palette ->
+  --primary/--success/--warning/--destructive; neutral ramp now mixes
+  foreground into card so it tracks light AND dark.
+
+Light surface: --flexoki-bg 97%->94% (soft warm paper #F5F2EA), cards
+recede a touch. Remove the metallic gradient washes on the value-strip
+hero (flat, editorial). Chart ramp starts at the brand green (chart-1)
+instead of a near-white/near-black extreme. Breakdown delta column grows
+to max-content so extreme percentages stop overflowing the card.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../components/retirement-coverage-chart.tsx  | 10 ++--
+ .../components/retirement-portfolio-chart.tsx |  6 +--
+ .../components/risk-lab-skeleton.tsx          |  2 +-
+ .../pages/risk-lab-page.tsx                   | 46 ++++++++++---------
+ .../components/save-up-projection-card.tsx    |  4 +-
+ apps/frontend/src/globals.css                 | 45 +++++++++---------
+ .../components/allocation-donut.tsx           |  2 +-
+ .../components/allocation-target-colors.ts    | 40 ++++++++--------
+ .../components/model-preset-picker.tsx        |  5 +-
+ .../components/rebalance-tab.tsx              | 11 +++--
+ .../pages/asset/alternative-asset-content.tsx | 14 +++---
+ .../insights/overview/target-rails-card.tsx   |  6 +--
+ .../pages/insights/overview/value-strip.tsx   |  8 ++--
+ .../net-worth/components/breakdown-table.tsx  |  8 ++--
+ .../src/pages/net-worth/components/utils.ts   | 19 ++++----
+ 15 files changed, 120 insertions(+), 106 deletions(-)
+
+diff --git a/apps/frontend/src/features/goals/retirement-planner/components/retirement-coverage-chart.tsx b/apps/frontend/src/features/goals/retirement-planner/components/retirement-coverage-chart.tsx
+index 120f7e0d..7d19cde7 100644
+--- a/apps/frontend/src/features/goals/retirement-planner/components/retirement-coverage-chart.tsx
++++ b/apps/frontend/src/features/goals/retirement-planner/components/retirement-coverage-chart.tsx
+@@ -15,8 +15,8 @@ import type { ChartValueMode } from "./value-mode-toggle";
+ export const COVERAGE_COLORS = {
+   income: "var(--fi-stream-1)",
+   portfolio: PROJECTED_CHART_COLORS.offTrack.stroke,
+-  shortfall: "hsl(8, 67%, 48%)",
+-  planned: "#888",
++  shortfall: "var(--destructive)",
++  planned: "var(--muted-foreground)",
+ };
+ 
+ export interface CoverageProjectionPoint {
+@@ -56,7 +56,7 @@ function CoverageProjectionTooltip({
+       </p>
+       <div className="flex items-center justify-between gap-5">
+         <div className="flex items-center gap-1.5">
+-          <span className="block h-0 w-3 border-b border-dashed border-[#888]" />
++          <span className="block h-0 w-3 border-b border-dashed border-muted-foreground" />
+           <span className="text-muted-foreground text-xs">Planned spending/yr:</span>
+         </div>
+         <span className="text-xs font-semibold tabular-nums">
+@@ -183,7 +183,7 @@ export function RetirementCoverageChart({
+         />
+         <ReferenceLine
+           x={fireAgeForBudget}
+-          stroke="#888"
++          stroke="var(--muted-foreground)"
+           strokeWidth={1}
+           strokeDasharray="4 3"
+           strokeOpacity={0.5}
+@@ -192,7 +192,7 @@ export function RetirementCoverageChart({
+             position: "top",
+             fontSize: 10,
+             fontWeight: 600,
+-            fill: "#888",
++            fill: "var(--muted-foreground)",
+           }}
+         />
+         <Area
+diff --git a/apps/frontend/src/features/goals/retirement-planner/components/retirement-portfolio-chart.tsx b/apps/frontend/src/features/goals/retirement-planner/components/retirement-portfolio-chart.tsx
+index cf08b95a..b515894c 100644
+--- a/apps/frontend/src/features/goals/retirement-planner/components/retirement-portfolio-chart.tsx
++++ b/apps/frontend/src/features/goals/retirement-planner/components/retirement-portfolio-chart.tsx
+@@ -29,8 +29,8 @@ export interface ChartPoint {
+ }
+ 
+ export const PROJECTED_CHART_COLORS = {
+-  onTrack: { fill: "hsl(92, 24%, 70%)", stroke: "hsl(91, 43%, 29%)" },
+-  offTrack: { fill: "hsl(38, 75%, 50%)", stroke: "hsl(38, 75%, 50%)" },
++  onTrack: { fill: "var(--brand-200)", stroke: "var(--brand-700)" },
++  offTrack: { fill: "var(--warning)", stroke: "var(--warning)" },
+ } as const;
+ 
+ export const CHART_COLORS = {
+@@ -154,7 +154,7 @@ function RetirementChartTooltip({
+       {point.target != null && (
+         <div className="flex items-center justify-between space-x-4">
+           <div className="flex items-center space-x-1.5">
+-            <span className="block h-0 w-3 border-b border-dashed border-[#888]" />
++            <span className="block h-0 w-3 border-b border-dashed border-muted-foreground" />
+             <span className="text-muted-foreground text-xs">What you'll need:</span>
+           </div>
+           <span className="text-xs font-semibold tabular-nums">
+diff --git a/apps/frontend/src/features/goals/retirement-planner/components/risk-lab-skeleton.tsx b/apps/frontend/src/features/goals/retirement-planner/components/risk-lab-skeleton.tsx
+index 907efdae..ddb8c7ff 100644
+--- a/apps/frontend/src/features/goals/retirement-planner/components/risk-lab-skeleton.tsx
++++ b/apps/frontend/src/features/goals/retirement-planner/components/risk-lab-skeleton.tsx
+@@ -97,7 +97,7 @@ export function RiskLabSkeleton() {
+ function CalculatingBanner() {
+   return (
+     <div className="bg-muted/20 flex items-start gap-4 rounded-xl border px-5 py-4 md:px-6">
+-      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[hsl(91,34%,29%)]/10 text-[hsl(91,34%,29%)]">
++      <span className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-full">
+         <Icons.Spinner className="size-5 animate-spin" />
+       </span>
+       <div className="min-w-0 flex-1">
+diff --git a/apps/frontend/src/features/goals/retirement-planner/pages/risk-lab-page.tsx b/apps/frontend/src/features/goals/retirement-planner/pages/risk-lab-page.tsx
+index 15ac8fe5..c082671b 100644
+--- a/apps/frontend/src/features/goals/retirement-planner/pages/risk-lab-page.tsx
++++ b/apps/frontend/src/features/goals/retirement-planner/pages/risk-lab-page.tsx
+@@ -60,10 +60,10 @@ interface Props {
+ }
+ 
+ const CHART = {
+-  portfolio: "hsl(38, 75%, 50%)",
+-  portfolioSoft: "hsla(38, 75%, 50%, 0.16)",
++  portfolio: "var(--primary)",
++  portfolioSoft: "color-mix(in srgb, var(--primary) 16%, transparent)",
+   income: "var(--fi-stream-1)",
+-  risk: "hsl(8, 67%, 48%)",
++  risk: "var(--destructive)",
+   muted: "var(--muted-foreground)",
+   grid: "var(--border)",
+   success: "var(--success)",
+@@ -284,7 +284,7 @@ function HeroMetric({
+       <div
+         className={cn(
+           "mt-1.5 text-xl font-semibold leading-none tracking-tight",
+-          tone === "good" && "text-[hsl(102,32%,39%)]",
++          tone === "good" && "text-success",
+           tone === "bad" && "text-destructive",
+         )}
+       >
+@@ -373,7 +373,7 @@ function PlanResilienceHero({
+           <div
+             className={cn(
+               "mt-2 h-14 w-1.5 shrink-0 rounded-full",
+-              isBaselineHealthy ? "bg-[hsl(111,25%,48%)]" : "bg-destructive",
++              isBaselineHealthy ? "bg-success" : "bg-destructive",
+             )}
+           />
+           <div className="min-w-0 space-y-3">
+@@ -386,7 +386,7 @@ function PlanResilienceHero({
+                 <span
+                   className={cn(
+                     "whitespace-nowrap font-medium",
+-                    isBaselineHealthy ? "text-[hsl(111,25%,43%)]" : "text-destructive",
++                    isBaselineHealthy ? "text-success" : "text-destructive",
+                   )}
+                 >
+                   {status}
+@@ -476,7 +476,7 @@ function severityRailClass(severity: StressSeverity) {
+ function impactTextClass(value: number, badWhenPositive = true) {
+   if (Math.abs(value) < 1) return "text-foreground";
+   const isBad = badWhenPositive ? value > 0 : value < 0;
+-  return isBad ? "text-destructive" : "text-[hsl(102,32%,39%)]";
++  return isBad ? "text-destructive" : "text-success";
+ }
+ 
+ function StressIcon({ id }: { id: StressTestResult["id"] }) {
+@@ -538,7 +538,7 @@ function SimulationMetric({
+       <p
+         className={cn(
+           "mt-2 text-xl font-semibold tabular-nums leading-none",
+-          tone === "good" && "text-[hsl(102,32%,39%)]",
++          tone === "good" && "text-success",
+           tone === "bad" && "text-destructive",
+         )}
+       >
+@@ -932,7 +932,7 @@ function MonteCarloDistributionSection({
+         {running && (
+           <div className="bg-muted/20 m-5 rounded-xl border md:m-6">
+             <div className="flex min-h-44 flex-col items-center justify-center px-5 py-8 text-center">
+-              <span className="flex size-11 items-center justify-center rounded-full bg-[hsl(91,34%,29%)]/10 text-[hsl(91,34%,29%)]">
++              <span className="bg-primary/10 text-primary flex size-11 items-center justify-center rounded-full">
+                 <Icons.Spinner className="size-5 animate-spin" />
+               </span>
+               <p className="mt-4 text-sm font-semibold">Running simulations</p>
+@@ -944,11 +944,11 @@ function MonteCarloDistributionSection({
+           </div>
+         )}
+         {!running && !result && (
+-          <div className="m-5 rounded-xl bg-[hsl(88,45%,84%)] px-4 py-4 text-[hsl(91,31%,24%)] md:m-6 md:px-5">
++          <div className="m-5 rounded-xl bg-[var(--brand-100)] px-4 py-4 text-[var(--brand-900)] md:m-6 md:px-5">
+             <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-left">
+               <div>
+                 <p className="text-sm font-semibold">No market-path run yet.</p>
+-                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-[hsl(91,22%,32%)]">
++                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-[var(--brand-800)]">
+                   {moneyLastsCta}
+                 </p>
+               </div>
+@@ -957,7 +957,7 @@ function MonteCarloDistributionSection({
+                   size="sm"
+                   onClick={() => onRun(10_000)}
+                   disabled={running}
+-                  className="bg-[hsl(91,34%,29%)] text-white hover:bg-[hsl(91,34%,24%)]"
++                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                 >
+                   <Icons.Sparkles className="mr-2 size-3.5" />
+                   {running && activeSims === 10_000 ? "Running…" : "Run 10k paths"}
+@@ -967,7 +967,7 @@ function MonteCarloDistributionSection({
+                   size="sm"
+                   onClick={() => onRun(100_000)}
+                   disabled={running}
+-                  className="text-[hsl(91,31%,24%)] hover:bg-[hsl(91,34%,29%)]/10"
++                  className="hover:bg-primary/10 text-[var(--brand-900)]"
+                 >
+                   {running && activeSims === 100_000 ? "Running…" : "Run 100k paths"}
+                 </Button>
+@@ -1116,7 +1116,9 @@ function tint(color: "success" | "warning" | "destructive", strength: number) {
+ 
+ function neutralRamp(lightStart: number, lightEnd: number, strength: number) {
+   const lightness = lightStart - (lightStart - lightEnd) * Math.max(0, Math.min(1, strength));
+-  return `hsl(70 8% ${lightness}%)`;
++  // Theme-aware neutral: mix foreground into card by inverse lightness, so the
++  // ramp tracks both light and dark modes instead of a fixed warm-grey hue.
++  return `color-mix(in srgb, var(--foreground) ${Math.round(100 - lightness)}%, var(--card))`;
+ }
+ 
+ function isFlatColumn(matrix: DecisionSensitivityMatrix, column: number) {
+@@ -1266,7 +1268,7 @@ function DecisionHeatmap({
+                         <div
+                           className={cn(
+                             "flex h-12 items-center justify-center rounded-[6px] px-2 text-center text-xs font-semibold tabular-nums leading-none transition-shadow sm:h-[52px] sm:px-3 sm:text-[13px]",
+-                            active && "ring-2 ring-[hsl(91,34%,29%)] ring-offset-0",
++                            active && "ring-primary ring-2 ring-offset-0",
+                           )}
+                           style={sensitivityCellStyle({ cell, baseline, range, active })}
+                         >
+@@ -1590,12 +1592,14 @@ function SorrChart({
+   );
+ }
+ 
++// Scenario line colors — theme tokens, kept mutually distinguishable:
++// brand green / red / amber / light brand step / neutral stone.
+ const SORR_COLORS = [
+-  "hsl(91,34%,29%)",
+-  "hsl(8,55%,45%)",
+-  "hsl(38,65%,43%)",
+-  "hsl(191,24%,42%)",
+-  "hsl(50,4%,45%)",
++  "var(--chart-1)",
++  "var(--destructive)",
++  "var(--warning)",
++  "var(--chart-7)",
++  "var(--chart-stone)",
+ ];
+ 
+ function sorrRiskAge(scenario: SorrScenario) {
+@@ -1735,7 +1739,7 @@ function AdvancedSection({
+                   <span
+                     className={cn(
+                       "shrink-0 font-semibold",
+-                      scenario.survived ? "text-[hsl(102,32%,39%)]" : "text-destructive",
++                      scenario.survived ? "text-success" : "text-destructive",
+                     )}
+                   >
+                     {sorrOutcomeText(scenario, plan.currency)}
+diff --git a/apps/frontend/src/features/goals/save-up/components/save-up-projection-card.tsx b/apps/frontend/src/features/goals/save-up/components/save-up-projection-card.tsx
+index 61b96d75..2bb15848 100644
+--- a/apps/frontend/src/features/goals/save-up/components/save-up-projection-card.tsx
++++ b/apps/frontend/src/features/goals/save-up/components/save-up-projection-card.tsx
+@@ -25,8 +25,8 @@ function formatRate(rate: number) {
+ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+ 
+ const COLORS = {
+-  nominal: { fill: "hsl(92, 24%, 70%)", stroke: "var(--success)" },
+-  range: { stroke: "hsl(91, 24%, 46%)" },
++  nominal: { fill: "var(--brand-200)", stroke: "var(--success)" },
++  range: { stroke: "var(--brand-500)" },
+   target: "var(--muted-foreground)",
+ };
+ 
+diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
+index c274984a..6ee1d4e7 100644
+--- a/apps/frontend/src/globals.css
++++ b/apps/frontend/src/globals.css
+@@ -386,8 +386,8 @@
+   --font-size-base: 0.875rem; /* text-sm */
+ 
+   /* Flexoki Light Theme (HSL numeric components) */
+-  --flexoki-bg: 48 100% 97%;
+-  --flexoki-bg-2: 51 59% 95%;
++  --flexoki-bg: 44 36% 94%; /* soft warm paper (#F5F2EA) — calmer than near-white */
++  --flexoki-bg-2: 44 26% 91%; /* cards recede a touch against the paper */
+   --flexoki-ui: 51 21% 88%;
+   --flexoki-ui-2: 50 14% 83%;
+   --flexoki-ui-3: 55 10% 79%;
+@@ -441,17 +441,18 @@
+   --input-bg: hsl(var(--flexoki-bg));
+   --ring: var(--brand-600); /* Donkeyfolio brand green focus */
+ 
+-  /* Charts — single-accent monochrome ramp (steps of the brand scale, dark→light).
+-     chart-1 = most prominent (darkest) on the light surface. */
+-  --chart-1: var(--brand-900);
+-  --chart-2: var(--brand-800);
+-  --chart-3: var(--brand-700);
+-  --chart-4: var(--brand-600);
+-  --chart-5: var(--brand-500);
+-  --chart-6: var(--brand-400);
+-  --chart-7: var(--brand-300);
+-  --chart-8: var(--brand-200);
+-  --chart-9: var(--brand-100);
++  /* Charts — single-accent monochrome ramp. chart-1 (the dominant slice) IS the
++     brand green; the next steps walk darker, and the tail gets the tints. Never
++     starts at a near-white/near-black extreme. */
++  --chart-1: var(--brand-600);
++  --chart-2: var(--brand-700);
++  --chart-3: var(--brand-800);
++  --chart-4: var(--brand-900);
++  --chart-5: var(--brand-950);
++  --chart-6: var(--brand-500);
++  --chart-7: var(--brand-400);
++  --chart-8: var(--brand-300);
++  --chart-9: var(--brand-200);
+   --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
+ 
+   /* Sidebar (full hsl colors) */
+@@ -509,20 +510,20 @@
+   --flexoki-gr: 72 46% 41%;
+   --flexoki-ye: 45 82% 45%;
+ 
+-  /* Dark mode — same brand scale, mapped to lighter steps for the dark surface.
+-     primary/success lifted; charts use a light→dark monochrome ramp so chart-1
+-     (lightest) stays the most prominent against the dark background. */
++  /* Dark mode — same brand scale, lighter steps for the dark surface.
++     primary/success lifted; chart-1 (the dominant slice) is the lifted brand
++     green itself, the next steps brighten, the tail darkens — never near-white. */
+   --primary: var(--brand-500); /* Donkeyfolio brand green (lifted for dark) */
+   --primary-foreground: hsl(0 0% 0%);
+   --ring: var(--brand-500);
+   --success: var(--brand-400); /* gains: brighter green for the dark bg */
+-  --chart-1: var(--brand-100);
+-  --chart-2: var(--brand-200);
++  --chart-1: var(--brand-500);
++  --chart-2: var(--brand-400);
+   --chart-3: var(--brand-300);
+-  --chart-4: var(--brand-400);
+-  --chart-5: var(--brand-500);
+-  --chart-6: var(--brand-600);
+-  --chart-7: var(--brand-700);
++  --chart-4: var(--brand-200);
++  --chart-5: var(--brand-600);
++  --chart-6: var(--brand-700);
++  --chart-7: var(--brand-800);
+   --chart-8: var(--brand-900);
+   --chart-9: var(--brand-950);
+   --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
+diff --git a/apps/frontend/src/pages/allocation-targets/components/allocation-donut.tsx b/apps/frontend/src/pages/allocation-targets/components/allocation-donut.tsx
+index 5689275f..b4f72bbd 100644
+--- a/apps/frontend/src/pages/allocation-targets/components/allocation-donut.tsx
++++ b/apps/frontend/src/pages/allocation-targets/components/allocation-donut.tsx
+@@ -120,7 +120,7 @@ export function AllocationDonut({
+                   color:
+                     hoveredRow.status === "overweight" || hoveredRow.status === "not_targeted"
+                       ? "var(--destructive)"
+-                      : "#2563eb",
++                      : "var(--primary)",
+                 }}
+               >
+                 {hoveredRow.status === "underweight" ? "▼ Below target" : "▲ Above target"}
+diff --git a/apps/frontend/src/pages/allocation-targets/components/allocation-target-colors.ts b/apps/frontend/src/pages/allocation-targets/components/allocation-target-colors.ts
+index bb17171e..3fc4e738 100644
+--- a/apps/frontend/src/pages/allocation-targets/components/allocation-target-colors.ts
++++ b/apps/frontend/src/pages/allocation-targets/components/allocation-target-colors.ts
+@@ -1,26 +1,28 @@
+-// Allocation palette — forest / sage / sand / clay / plum / stone (matches the design + chart tokens).
++// Allocation palette — steps of the theme's single-accent chart ramp (theme-aware
++// in both modes, no hand-picked hexes). Equity gets the dominant brand green,
++// cash the neutral filler — consistent with the net-worth category colors.
+ const CALM_PALETTE = [
+-  "#355c4c", // forest
+-  "#7e9f8c", // sage
+-  "#cbba8c", // sand
+-  "#c08a5f", // clay
+-  "#9a7e92", // plum
+-  "#b1aa9a", // stone
+-  "#5a7d6b", // forest tint
+-  "#a8b89e", // sage tint
+-  "#8a6b49", // muted brown
++  "var(--chart-1)",
++  "var(--chart-2)",
++  "var(--chart-3)",
++  "var(--chart-4)",
++  "var(--chart-5)",
++  "var(--chart-6)",
++  "var(--chart-7)",
++  "var(--chart-8)",
++  "var(--chart-stone)",
+ ];
+ 
+ const NAMED_COLORS: Record<string, string> = {
+-  equity: "#355c4c", // forest
+-  fixed: "#7e9f8c", // sage
+-  cash: "#cbba8c", // sand
+-  commodities: "#c08a5f", // clay
+-  real: "#c08a5f", // clay (real assets / real estate)
+-  property: "#c08a5f", // clay
+-  crypto: "#9a7e92", // plum
+-  digital: "#9a7e92", // plum
+-  alternatives: "#b1aa9a", // stone
++  equity: "var(--chart-1)",
++  fixed: "var(--chart-2)",
++  cash: "var(--chart-stone)",
++  commodities: "var(--chart-3)",
++  real: "var(--chart-4)",
++  property: "var(--chart-4)",
++  crypto: "var(--chart-5)",
++  digital: "var(--chart-5)",
++  alternatives: "var(--chart-6)",
+ };
+ 
+ export interface AllocationTargetColorRow {
+diff --git a/apps/frontend/src/pages/allocation-targets/components/model-preset-picker.tsx b/apps/frontend/src/pages/allocation-targets/components/model-preset-picker.tsx
+index b0981173..db6691f6 100644
+--- a/apps/frontend/src/pages/allocation-targets/components/model-preset-picker.tsx
++++ b/apps/frontend/src/pages/allocation-targets/components/model-preset-picker.tsx
+@@ -53,7 +53,10 @@ function PresetBar({ weights, colorMap }: PresetBarProps) {
+   return (
+     <div className="flex h-3.5 w-full overflow-hidden rounded-sm">
+       {nonZero.map(([key, pct]) => (
+-        <div key={key} style={{ width: `${pct}%`, background: colorMap[key] ?? "#878580" }} />
++        <div
++          key={key}
++          style={{ width: `${pct}%`, background: colorMap[key] ?? "var(--chart-stone)" }}
++        />
+       ))}
+     </div>
+   );
+diff --git a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
+index f117a6ca..d66ad8a4 100644
+--- a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
++++ b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
+@@ -19,10 +19,11 @@ import {
+ import { accountScopeKey } from "./target-scope";
+ import { useRebalancePlan } from "../hooks/use-rebalance";
+ 
+-// Drift direction colors — clay for overweight (+), slate-blue for underweight (−).
+-const DRIFT_OVER = "#b4664a";
+-const DRIFT_UNDER = "#4f6d99";
+-const FOREST = "#355c4c";
++// Drift direction colors — theme tokens: destructive for overweight (+, trim),
++// brand green for underweight (−, room to buy). FOREST = the dominant ramp step.
++const DRIFT_OVER = "var(--destructive)";
++const DRIFT_UNDER = "var(--primary)";
++const FOREST = "var(--chart-1)";
+ 
+ // ── Helpers ───────────────────────────────────────────────────────────────────
+ 
+@@ -554,7 +555,7 @@ function DriftBar({
+             {/* tolerance band: 0 → band */}
+             <div
+               className="absolute inset-y-0 left-0 rounded-full"
+-              style={{ width: `${bandPos}%`, background: "#9db8a8" }}
++              style={{ width: `${bandPos}%`, background: "var(--brand-300)" }}
+             />
+           </>
+         )}
+diff --git a/apps/frontend/src/pages/asset/alternative-asset-content.tsx b/apps/frontend/src/pages/asset/alternative-asset-content.tsx
+index 9bd6560e..df2c3725 100644
+--- a/apps/frontend/src/pages/asset/alternative-asset-content.tsx
++++ b/apps/frontend/src/pages/asset/alternative-asset-content.tsx
+@@ -321,14 +321,14 @@ export const AlternativeAssetContent: React.FC<AlternativeAssetContentProps> = (
+   );
+ };
+ 
+-// Kind labels and colors for badges (subtle/muted colors)
++// Kind labels and colors for badges (subtle/muted — from the theme)
+ const KIND_CONFIG: Record<string, { label: string; color: string }> = {
+-  property: { label: "Property", color: "#6b7280" },
+-  vehicle: { label: "Vehicle", color: "#6b7280" },
+-  collectible: { label: "Collectible", color: "#6b7280" },
+-  precious: { label: "Precious Metal", color: "#6b7280" },
+-  liability: { label: "Liability", color: "#6b7280" },
+-  other: { label: "Other", color: "#6b7280" },
++  property: { label: "Property", color: "var(--muted-foreground)" },
++  vehicle: { label: "Vehicle", color: "var(--muted-foreground)" },
++  collectible: { label: "Collectible", color: "var(--muted-foreground)" },
++  precious: { label: "Precious Metal", color: "var(--muted-foreground)" },
++  liability: { label: "Liability", color: "var(--muted-foreground)" },
++  other: { label: "Other", color: "var(--muted-foreground)" },
+ };
+ 
+ // Type-specific subtype labels
+diff --git a/apps/frontend/src/pages/insights/overview/target-rails-card.tsx b/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
+index 62d32025..0ae631cb 100644
+--- a/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
++++ b/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
+@@ -253,9 +253,9 @@ export function TargetRailsCard({
+             </div>
+             <div className="space-y-3">
+               {[
+-                { width: "72%", target: "64%", color: "bg-success/70" },
+-                { width: "46%", target: "58%", color: "bg-warning/70" },
+-                { width: "28%", target: "36%", color: "bg-primary/65" },
++                { width: "72%", target: "64%", color: "bg-primary/80" },
++                { width: "46%", target: "58%", color: "bg-primary/50" },
++                { width: "28%", target: "36%", color: "bg-primary/30" },
+               ].map((row, index) => (
+                 <div key={index} className="grid grid-cols-[14px_1fr] items-center gap-2">
+                   <span className={cn("h-2.5 w-2.5 rounded-sm", row.color)} />
+diff --git a/apps/frontend/src/pages/insights/overview/value-strip.tsx b/apps/frontend/src/pages/insights/overview/value-strip.tsx
+index 2c7cad2e..1878d6e5 100644
+--- a/apps/frontend/src/pages/insights/overview/value-strip.tsx
++++ b/apps/frontend/src/pages/insights/overview/value-strip.tsx
+@@ -91,7 +91,7 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
+     return (
+       <>
+         <Card className="overflow-hidden sm:hidden">
+-          <div className="from-muted/60 space-y-1.5 bg-gradient-to-b to-transparent px-4 py-3.5">
++          <div className="space-y-1.5 px-4 py-3.5">
+             <Skeleton className="h-3 w-24" />
+             <Skeleton className="h-7 w-40" />
+             <Skeleton className="h-3 w-36" />
+@@ -122,7 +122,7 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
+   return (
+     <>
+       <Card className="overflow-hidden sm:hidden">
+-        <div className="from-muted/60 space-y-1.5 bg-gradient-to-b to-transparent to-[65%] px-4 py-3.5">
++        <div className="space-y-1.5 px-4 py-3.5">
+           <MobileEyebrow>Portfolio value</MobileEyebrow>
+           <div className="text-foreground text-[24px] font-bold leading-7 tracking-tight">
+             <AmountDisplay value={data.total} currency={currency} isHidden={isBalanceHidden} />
+@@ -160,8 +160,8 @@ export function ValueStrip({ data, currency, isLoading, compact }: ValueStripPro
+       </Card>
+ 
+       <Card className="hidden grid-cols-1 divide-y overflow-hidden sm:grid sm:grid-cols-[2.25fr_1.35fr_1fr] sm:divide-x sm:divide-y-0">
+-        {/* Portfolio value — hero cell with a slight top-to-center gradient wash */}
+-        <div className={cn(gap, pad, "from-muted/60 bg-gradient-to-b to-transparent to-[60%]")}>
++        {/* Portfolio value — hero cell, flat (editorial: hairlines, no washes) */}
++        <div className={cn(gap, pad)}>
+           <Eyebrow>Portfolio value</Eyebrow>
+           <div className={cn("text-foreground font-bold tabular-nums tracking-tight", totalSize)}>
+             <AmountDisplay value={data.total} currency={currency} isHidden={isBalanceHidden} />
+diff --git a/apps/frontend/src/pages/net-worth/components/breakdown-table.tsx b/apps/frontend/src/pages/net-worth/components/breakdown-table.tsx
+index 03bf0ea7..fc305124 100644
+--- a/apps/frontend/src/pages/net-worth/components/breakdown-table.tsx
++++ b/apps/frontend/src/pages/net-worth/components/breakdown-table.tsx
+@@ -21,9 +21,11 @@ import {
+ } from "./utils";
+ 
+ // name | % | value | Δ. Fixed widths so columns line up across rows (each row is
+-// its own grid). On mobile the % column and the Δ-percent collapse.
++// its own grid). On mobile the % column and the Δ-percent collapse. The Δ column
++// can grow (max-content) so extreme percentages push inward instead of
++// overflowing the card.
+ const ROW_GRID =
+-  "grid grid-cols-[minmax(0,1fr)_4.5rem_5rem] md:grid-cols-[minmax(0,1fr)_3rem_7rem_8rem] items-center gap-x-3 md:gap-x-4";
++  "grid grid-cols-[minmax(0,1fr)_4.5rem_5rem] md:grid-cols-[minmax(0,1fr)_3rem_7rem_minmax(8rem,max-content)] items-center gap-x-3 md:gap-x-4";
+ 
+ function ChangeCell({ change, currency }: { change: Change; currency: string }) {
+   const isZero = Math.abs(change.amount) < 0.005;
+@@ -39,7 +41,7 @@ function ChangeCell({ change, currency }: { change: Change; currency: string })
+         {sign}
+         <CompactAmount value={Math.abs(change.amount)} currency={currency} />
+       </span>
+-      <span className="text-muted-foreground/60 hidden w-12 text-right text-sm tabular-nums md:block">
++      <span className="text-muted-foreground/60 hidden min-w-12 text-right text-sm tabular-nums md:block">
+         {formatChangePercent(change.percent)}
+       </span>
+     </div>
+diff --git a/apps/frontend/src/pages/net-worth/components/utils.ts b/apps/frontend/src/pages/net-worth/components/utils.ts
+index 9f214698..a912578e 100644
+--- a/apps/frontend/src/pages/net-worth/components/utils.ts
++++ b/apps/frontend/src/pages/net-worth/components/utils.ts
+@@ -25,18 +25,19 @@ export function toneFill(value: number): string {
+ 
+ export const CARD_LABEL = "text-muted-foreground/70 text-xs font-semibold uppercase tracking-wide";
+ 
+-// Muted, semantic category palette (tuned for the warm/cream theme). Used for
++// Category palette derived from the theme's brand chart ramp (single-accent,
++// theme-aware in both modes): investments = the dominant brand green (chart-1),
++// cash = the neutral filler, the rest take distinct steps of the ramp. Used for
+ // the composition bar, breakdown row dots, and the detail-sheet icons so they
+ // stay consistent. Liabilities keep the semantic red.
+-// NOTE: tuned for light mode — dark-mode variants would need theme-aware tokens.
+ export const CATEGORY_CSS_COLORS: Record<string, string> = {
+-  properties: "#4b4137", // warm dark taupe / charcoal
+-  investments: "#6f7544", // muted olive green
+-  cash: "#d8c98f", // pale cream / light gold
+-  vehicles: "#6d7c86", // muted slate
+-  otherAssets: "#928d83", // medium warm gray
+-  preciousMetals: "#b8923a", // soft gold
+-  collectibles: "#8a6b49", // muted brown
++  properties: "var(--chart-4)",
++  investments: "var(--chart-1)",
++  cash: "var(--chart-stone)",
++  vehicles: "var(--chart-6)",
++  otherAssets: "var(--chart-8)",
++  preciousMetals: "var(--chart-7)",
++  collectibles: "var(--chart-5)",
+   liabilities: "var(--destructive)",
+ };
+ 
+-- 
+2.54.0 (Apple Git-156)
+
