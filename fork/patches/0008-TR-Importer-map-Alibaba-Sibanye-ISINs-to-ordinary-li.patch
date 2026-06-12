@@ -1,0 +1,41 @@
+From a567c485fecbefdbe3bca9718fa9fbd6c3d2b3f5 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Tue, 9 Jun 2026 22:23:22 +0100
+Subject: [PATCH 08/11] TR Importer: map Alibaba/Sibanye ISINs to ordinary
+ listings, not ADRs
+
+KYG017191142 is the HK ordinary share (9988.HK, HKD) but was mapped to
+the US ADR BABA - 1 ADR = 8 ordinaries, so the position showed 8x its
+real value. Same bug on ZAE000259701 (Sibanye): JSE ordinary SSW.JO
+(ZAc) was mapped to the ADR SBSW (1 ADR = 4 ordinaries, 4x inflated).
+Verified against OpenFIGI mapping and the user's real TR values.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ fork/addons/tr-importer/src/lib/tr-isin-tickers.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/fork/addons/tr-importer/src/lib/tr-isin-tickers.ts b/fork/addons/tr-importer/src/lib/tr-isin-tickers.ts
+index 4ec1d8de..a80f8a30 100644
+--- a/fork/addons/tr-importer/src/lib/tr-isin-tickers.ts
++++ b/fork/addons/tr-importer/src/lib/tr-isin-tickers.ts
+@@ -311,14 +311,14 @@ const EQUITIES: Record<string, TickerMapping> = {
+   CA13321L1085: { symbol: "CCJ", quoteCcy: "USD", instrumentType: "EQUITY" }, // Cameco
+   US5738741041: { symbol: "MRVL", quoteCcy: "USD", instrumentType: "EQUITY" }, // Marvell
+   US04626A1034: { symbol: "ALAB", quoteCcy: "USD", instrumentType: "EQUITY" }, // Astera Labs
+-  ZAE000259701: { symbol: "SBSW", quoteCcy: "USD", instrumentType: "EQUITY" }, // Sibanye Stillwater ADR
++  ZAE000259701: { symbol: "SSW.JO", quoteCcy: "ZAc", instrumentType: "EQUITY" }, // Sibanye Stillwater JSE ordinary (SSW.JO, quoted in ZAR cents = ZAc, major ZAR). NOT the US ADR (SBSW): 1 ADR = 4 ordinary shares, so SBSW is ~4x too high for this ISIN.
+   US3696043013: { symbol: "GE", quoteCcy: "USD", instrumentType: "EQUITY" }, // GE Aerospace
+   US60937P1066: { symbol: "MDB", quoteCcy: "USD", instrumentType: "EQUITY" }, // MongoDB
+   US1717793095: { symbol: "CIEN", quoteCcy: "USD", instrumentType: "EQUITY" }, // Ciena
+   US50077B2079: { symbol: "KTOS", quoteCcy: "USD", instrumentType: "EQUITY" }, // Kratos
+   US0381692070: { symbol: "APLD", quoteCcy: "USD", instrumentType: "EQUITY" }, // Applied Digital
+   US4385161066: { symbol: "HON", quoteCcy: "USD", instrumentType: "EQUITY" }, // Honeywell
+-  KYG017191142: { symbol: "BABA", quoteCcy: "USD", instrumentType: "EQUITY" }, // Alibaba
++  KYG017191142: { symbol: "9988.HK", quoteCcy: "HKD", instrumentType: "EQUITY" }, // Alibaba HK ordinary (9988.HK, HKD). NOT the US ADR (BABA = ISIN US01609W1027): 1 ADR = 8 ordinary shares, so BABA's price is ~8x too high for this ISIN.
+   AU0000185993: { symbol: "IREN", quoteCcy: "USD", instrumentType: "EQUITY" }, // IREN
+   US6877931096: { symbol: "OSCR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Oscar Health
+   US1491231015: { symbol: "CAT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Caterpillar
+-- 
+2.54.0 (Apple Git-156)
+

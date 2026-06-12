@@ -1,0 +1,58 @@
+From 99bf1ff85e35bed649cf79b5ab1b8a2fb93c7892 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Tue, 9 Jun 2026 10:17:54 +0100
+Subject: [PATCH 07/11] TR Importer: flag spin-off / staking TRANSFER_IN as
+ external
+
+Set metadata.flow.is_external=true on the lone TRANSFER_IN legs the mapper emits
+for CORPORATE_ACTION/SPIN_OFF and DELIVERY/FREE_RECEIPT (crypto staking). They
+have no matching out-leg, so the v3.5.x performance pipeline was warning about
+unpaired transfers. The flag (read by flow_classifier) marks them as intended
+external flows, silencing the warning without changing the (already external)
+treatment. Staking-as-income reclassification left as a future option.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../tr-importer/src/lib/tr-csv-mapper.ts      | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+index 654edd8f..cf5660f8 100644
+--- a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
++++ b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+@@ -524,7 +524,14 @@ function mapSpinOff(row: TrCsvRow, accountId: string): ActivityCreate[] {
+       quantity: shares,
+       currency: row.currency || "EUR",
+       comment: row.description || `SPIN_OFF ${row.symbol}`,
+-      metadata: buildMetadata(row, { tr_corporate_action: "SPIN_OFF" }),
++      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
++      // performance pipeline doesn't warn about a missing pair (flow_classifier
++      // reads metadata.flow.is_external). A spin-off is an external reallocation,
++      // not income, so external is the correct treatment.
++      metadata: buildMetadata(row, {
++        tr_corporate_action: "SPIN_OFF",
++        flow: { is_external: true },
++      }),
+     },
+   ];
+ }
+@@ -586,7 +593,15 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
+       quantity: shares,
+       currency: row.currency || "EUR",
+       comment: row.description || `TR Staking reward (${row.symbol})`,
+-      metadata: buildMetadata(row, { tr_staking: true, tr_fmv_at_receipt: row.price ?? undefined }),
++      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
++      // performance pipeline doesn't warn about a missing pair. (b) Reclassifying
++      // staking as INTEREST/STAKING_REWARD income — using tr_fmv_at_receipt as the
++      // value — remains a future option; impact is negligible (~€0.40/reward).
++      metadata: buildMetadata(row, {
++        tr_staking: true,
++        tr_fmv_at_receipt: row.price ?? undefined,
++        flow: { is_external: true },
++      }),
+     },
+   ];
+ }
+-- 
+2.54.0 (Apple Git-156)
+
