@@ -212,9 +212,9 @@ const CustomizedContent: FC<CustomizedContentProps> = ({
         })}
         style={{
           fill: depth === 1 ? fillColor : undefined,
-          // Soften tiles in dark mode so they blend into the background instead
-          // of reading as bright rectangles on near-black.
-          fillOpacity: depth === 1 && isDark ? 0.45 : undefined,
+          // Slightly soften tiles in dark mode so they don't read as glaring
+          // rectangles on near-black, while keeping the gain/loss colors vivid.
+          fillOpacity: depth === 1 && isDark ? 0.85 : undefined,
           cursor: "pointer",
         }}
       />
