@@ -68,8 +68,9 @@ them; the rebase re-applies them on each update.
 ### C. UX polish — `apps/frontend/`
 
 - Holdings sorted by return %; Net Worth shows cents; percentages 2 decimals;
-  zero drivers hidden; **Wealthfolio Connect hidden** from sidebar; neutral
-  ticker avatars.
+  zero drivers hidden; **Wealthfolio Connect hidden** from sidebar; ticker
+  avatars on a uniform dark chip with near-monochrome logos auto-inverted
+  (measured per-logo from pixel luminance/saturation — no per-asset table).
 
 ### D. TR Importer addon — `fork/addons/tr-importer/` (the biggest piece)
 
@@ -84,7 +85,8 @@ them; the rebase re-applies them on each update.
 
 ### E. Logos — `apps/frontend/public/ticker-logos/`
 
-- `SOL.png` corrected to the real Solana logo (was a wrong orange mark).
+- `SOL.png` corrected to the real Solana logo (was a wrong orange mark);
+  `SOL-EUR.png` variant added.
 
 ### F. Dynamic EUR resolution — `fork/addons/tr-importer/` (NOT base code)
 
@@ -119,6 +121,10 @@ history flows in EUR — **with no hardcoded table and no base-code changes**.
 These are not code; they live on the user's machine and must be re-done if the
 DB/addons are reset.
 
+- **Custom market-data providers** (CoinGecko, Frankfurter-ECB, Onvista-LSX) —
+  live in the DB (`market_data_custom_providers`), lost on a clean rebuild.
+  Re-create from the committed spec `fork/_archive/donkey-custom-providers.md`
+  (full INSERTs in the sibling `.sql`).
 - **DB scripts** (run with the app closed, against
   `~/Library/Application Support/com.luisgoncalves.donkeyfolio/app.db`):
   - `donkey-eu-tickers.sql` — add Yahoo exchange suffixes (SU.PA, ENR.DE, …) so
