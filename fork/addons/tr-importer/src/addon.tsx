@@ -9,7 +9,7 @@ const SIDEBAR_ID = "tr-importer";
 const ROUTE = "/addons/tr-importer";
 
 const enable: AddonEnableFunction = (context: AddonContext) => {
-  context.api.logger.info("TR Importer enabling…");
+  context.api.logger.info("TR Importer enabling… [build: merger no-op fix / v5.3.2]");
 
   const added: Array<{ remove: () => void }> = [];
 
