@@ -1,8 +1,8 @@
 {
   "id": "tr-importer-addon",
   "name": "TR Importer",
-  "version": "5.3.2",
-  "description": "Trade Republic CSV importer. Drop the 'Extrato de transações.csv' export from the TR app, get every trade, dividend, interest, deposit, withdrawal, staking reward, and corporate action mapped to native Wealthfolio activities — with cost basis, FX, and withholding tax preserved. Incremental imports via transaction_id dedup. Replaces tr-pdf-converter v3.x.",
+  "version": "3.5.2",
+  "description": "Import your Trade Republic CSV. Trades, dividends, interest, deposits, withdrawals, staking rewards and corporate actions become Wealthfolio activities — with cost basis, FX and tax preserved. Safe to re-import.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",
   "sdkVersion": "3.0.3",
@@ -53,9 +53,10 @@
     {
       "category": "exchange-rates",
       "functions": [
-        { "name": "getAll", "isDeclared": true, "isDetected": true }
+        { "name": "getAll", "isDeclared": true, "isDetected": true },
+        { "name": "add", "isDeclared": true, "isDetected": true }
       ],
-      "purpose": "EUR View panel uses Wealthfolio's internal FX rates (already maintained for Total Value conversion) to render every column in EUR — Today's Price, Book Cost, Total Value, Avg Cost. No external API, no hardcoded rates."
+      "purpose": "EUR View panel uses Wealthfolio's internal FX rates (already maintained for Total Value conversion) to render every column in EUR — Today's Price, Book Cost, Total Value, Avg Cost. 'add' creates the missing FX:<ccy>/EUR pairs (source YAHOO) so the core can value non-EUR holdings; the daily rate is then synced by the core from Yahoo. Seed value fetched live from the ECB — no hardcoded rates."
     },
     {
       "category": "market-data",

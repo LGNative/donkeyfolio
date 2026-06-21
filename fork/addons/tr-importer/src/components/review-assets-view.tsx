@@ -1,14 +1,4 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Icons,
-  Input,
-} from "@wealthfolio/ui";
+import { Button, Icons, Input } from "@wealthfolio/ui";
 import React from "react";
 
 import type { MapperResult } from "../lib/tr-csv-mapper";
@@ -21,6 +11,7 @@ interface AssetSummary {
   flag?: string;
   defaultQuoteCcy?: string;
   instrumentType?: string;
+  exchangeMic?: string;
   activityCount: number;
 }
 
@@ -39,10 +30,26 @@ interface Props {
 }
 
 const COMMON_CURRENCIES = ["EUR", "USD", "GBP", "GBp", "CHF", "JPY", "CAD", "DKK", "SEK", "NOK"];
+/** ISO ISIN shape — a symbol still in this form means no ticker was resolved. */
+const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{10}$/;
 
 interface AssetActivity {
-  symbol?: { symbol?: string; name?: string; quoteCcy?: string; instrumentType?: string };
+  symbol?: {
+    symbol?: string;
+    name?: string;
+    quoteCcy?: string;
+    instrumentType?: string;
+    exchangeMic?: string;
+  };
+  currency?: string;
+  activityType?: string;
   metadata?: string | Record<string, unknown>;
+}
+
+function classLabel(t?: string): string {
+  if (!t) return "Asset";
+  const lower = t.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 export function ReviewAssetsView({
@@ -53,12 +60,32 @@ export function ReviewAssetsView({
   onContinue,
 }: Props): React.JSX.Element {
   const [filter, setFilter] = React.useState("");
-  const [showOnlyEdited, setShowOnlyEdited] = React.useState(false);
+  const [editing, setEditing] = React.useState<string | null>(null);
+
+  const activities = mapping.activities as AssetActivity[];
+
+  // Conversion target = the dominant activity currency (the cash leg). Derived
+  // from the data, never hardcoded — a USD-account user would see "→ USD".
+  const targetCcy = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of activities) {
+      if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);
+    }
+    let best = "";
+    let bestN = -1;
+    for (const [c, n] of counts) {
+      if (n > bestN) {
+        best = c;
+        bestN = n;
+      }
+    }
+    return best || "EUR";
+  }, [activities]);
 
   // Aggregate unique assets from the mapping output.
   const assets: AssetSummary[] = React.useMemo(() => {
     const map = new Map<string, AssetSummary>();
-    for (const a of mapping.activities as AssetActivity[]) {
+    for (const a of activities) {
       const sym = a.symbol;
       if (!sym?.symbol) continue;
       const key = sym.symbol;
@@ -84,14 +111,20 @@ export function ReviewAssetsView({
           flag: parsedMeta?.tr_country_flag as string | undefined,
           defaultQuoteCcy: sym.quoteCcy,
           instrumentType: sym.instrumentType,
+          exchangeMic: sym.exchangeMic,
           activityCount: 1,
         });
       }
     }
     return [...map.values()].sort((a, b) => b.activityCount - a.activityCount);
-  }, [mapping]);
+  }, [activities]);
 
-  const filtered = React.useMemo(() => {
+  const effectiveCcy = React.useCallback(
+    (a: AssetSummary) => overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy,
+    [overrides],
+  );
+
+  const { unresolved, resolved } = React.useMemo(() => {
     let list = assets;
     if (filter.trim()) {
       const q = filter.trim().toLowerCase();
@@ -102,9 +135,27 @@ export function ReviewAssetsView({
           (a.country ?? "").toLowerCase().includes(q),
       );
     }
-    if (showOnlyEdited) list = list.filter((a) => overrides.has(a.symbol));
-    return list;
-  }, [assets, filter, showOnlyEdited, overrides]);
+    return {
+      unresolved: list.filter((a) => ISIN_RE.test(a.symbol)),
+      resolved: list.filter((a) => !ISIN_RE.test(a.symbol)),
+    };
+  }, [assets, filter]);
+
+  const nativeCount = assets.filter((a) => effectiveCcy(a) === targetCcy).length;
+  const convertedCount = assets.filter(
+    (a) => !ISIN_RE.test(a.symbol) && effectiveCcy(a) && effectiveCcy(a) !== targetCcy,
+  ).length;
+  const unresolvedCount = assets.filter((a) => ISIN_RE.test(a.symbol)).length;
+
+  // Pre-import breakdown by activity type — mirrors the native wizard's
+  // final summary (Buy 3970 · Dividend 195 · …). Counts are derived, not hardcoded.
+  const byType = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of activities) {
+      if (a.activityType) counts.set(a.activityType, (counts.get(a.activityType) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((x, y) => y[1] - x[1]);
+  }, [activities]);
 
   const setOverride = React.useCallback(
     (symbol: string, quoteCcy: string) => {
@@ -116,299 +167,205 @@ export function ReviewAssetsView({
         next.set(symbol, { quoteCcy: quoteCcy.toUpperCase() });
       }
       onChange(next);
+      setEditing(null);
     },
     [overrides, onChange, assets],
   );
 
-  const setAllToEur = React.useCallback(() => {
-    const next = new Map(overrides);
-    for (const a of assets) {
-      if (a.defaultQuoteCcy !== "EUR") {
-        next.set(a.symbol, { quoteCcy: "EUR" });
-      }
-    }
-    onChange(next);
-  }, [assets, overrides, onChange]);
+  const renderRow = (a: AssetSummary, isUnresolved: boolean) => {
+    const effective = effectiveCcy(a) ?? "—";
+    const isEdited = overrides.has(a.symbol);
+    const isNative = effective === targetCcy;
+    const isEditing = editing === a.symbol;
+    const meta = [classLabel(a.instrumentType), a.exchangeMic].filter(Boolean).join(" · ");
 
-  const resetOverrides = React.useCallback(() => {
-    onChange(new Map());
-  }, [onChange]);
+    return (
+      <div
+        key={a.symbol}
+        className="hover:bg-muted/20 flex items-center gap-3 border-t px-4 py-2.5 first:border-t-0"
+      >
+        <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium">
+          {isUnresolved ? "?" : a.symbol.slice(0, 2).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">
+            {isUnresolved ? a.symbol : a.symbol}
+            <span className="text-muted-foreground ml-1.5 text-xs font-normal">
+              · {a.activityCount}×
+            </span>
+          </p>
+          <p className="text-muted-foreground truncate text-xs">
+            {isUnresolved ? "ISIN not resolved to a ticker" : [a.displayName, meta].join(" · ")}
+          </p>
+        </div>
 
-  const editedCount = overrides.size;
-  const eurCount = assets.filter(
-    (a) => (overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy) === "EUR",
-  ).length;
-  const usdCount = assets.filter(
-    (a) => (overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy) === "USD",
-  ).length;
-  const otherCount = assets.length - eurCount - usdCount;
+        {isEditing ? (
+          <select
+            autoFocus
+            value={effective}
+            onChange={(e) => setOverride(a.symbol, e.target.value)}
+            onBlur={() => setEditing(null)}
+            className="bg-background rounded-md border px-2 py-1 text-xs"
+          >
+            {!COMMON_CURRENCIES.includes(effective) && (
+              <option value={effective}>{effective}</option>
+            )}
+            {COMMON_CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            {isUnresolved ? (
+              <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                unresolved
+              </span>
+            ) : isNative ? (
+              <span className="text-success bg-success/10 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium">
+                <Icons.CheckCircle className="h-3 w-3" />
+                {effective} native
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                {effective} → {targetCcy}
+              </span>
+            )}
+            <button
+              onClick={() => setEditing(a.symbol)}
+              className={
+                "text-xs underline-offset-2 hover:underline " +
+                (isEdited ? "text-primary" : "text-muted-foreground")
+              }
+            >
+              {isEdited ? "edited" : "change"}
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <WizardStepIndicator
         steps={[
-          { label: "Carregar", state: "done" },
-          { label: "Mapear", state: "done" },
-          { label: "Rever assets", state: "current" },
-          { label: "Importar", state: "future" },
+          { label: "Upload", state: "done" },
+          { label: "Mapping", state: "done" },
+          { label: "Review assets", state: "current" },
+          { label: "Import", state: "future" },
         ]}
       />
 
-      {/* v4.6.0 — auto-detection banner. The override target currency is
-          NOT hardcoded — it's whatever the trades say. ABCL → EUR for a TR
-          PT user; some other asset on a USD account → USD; etc. */}
-      {editedCount > 0 && <SuggestionsBanner overrides={overrides} assets={assets} />}
-
-      {/* Top KPI strip */}
-      <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
-            <CardTitle className="text-sm font-medium">Assets únicos</CardTitle>
-            <span className="text-xl font-bold tabular-nums sm:text-2xl">{assets.length}</span>
-          </CardHeader>
-          <CardContent className="space-y-2 pt-2">
-            <Row label="Editados" value={editedCount} accent={editedCount > 0 ? "primary" : ""} />
-            <Row label="Default ETF/UCITS" value={eurCount} />
-          </CardContent>
-        </Card>
-
-        <Card className="border-success/10 bg-success/10">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
-            <CardTitle className="text-sm font-medium">Em EUR</CardTitle>
-            <span className="text-success text-xl font-bold tabular-nums sm:text-2xl">
-              {eurCount}
-            </span>
-          </CardHeader>
-          <CardContent className="space-y-2 pt-2">
-            <Row label="Crypto + ETFs Xetra" value={eurCount} />
-            <p className="text-muted-foreground text-xs">
-              Todos os preços vão aparecer em EUR sem conversão.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-amber-500/10 bg-amber-500/10">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
-            <CardTitle className="text-sm font-medium">Em outras moedas</CardTitle>
-            <span className="text-xl font-bold tabular-nums sm:text-2xl">
-              {usdCount + otherCount}
-            </span>
-          </CardHeader>
-          <CardContent className="space-y-2 pt-2">
-            <Row label="USD" value={usdCount} />
-            <Row label="Outras (GBp/CHF/CAD/...)" value={otherCount} />
-            <p className="text-muted-foreground text-xs">
-              Donkeyfolio converte para EUR via FX. Toggle 🌐 no Holdings para mostrar EUR.
-            </p>
-          </CardContent>
-        </Card>
+      {/* Metric strip */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Assets" value={assets.length} />
+        <Metric label={`Native ${targetCcy}`} value={nativeCount} tone="success" />
+        <Metric label="Converted via FX" value={convertedCount} tone="amber" />
+        <Metric label="Unresolved" value={unresolvedCount} tone={unresolvedCount ? "danger" : ""} />
       </div>
 
-      {/* Bulk actions */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Override em massa</CardTitle>
-          <CardDescription>
-            Forçar todos os assets a ter <code>quoteCcy=EUR</code> elimina conversões FX no display.
-            Cuidado: se o provider Yahoo devolver USD para AAPL e disseres EUR, Wealthfolio mostra o
-            número USD com símbolo €. Recomendado: deixa default e usa o toggle 🌐 no Holdings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={setAllToEur}>
-            <Icons.HandCoins className="mr-2 h-4 w-4" />
-            Forçar todos a EUR
-          </Button>
-          <Button variant="ghost" size="sm" onClick={resetOverrides} disabled={editedCount === 0}>
-            <Icons.Refresh className="mr-2 h-4 w-4" />
-            Reverter overrides
-          </Button>
-        </CardContent>
-      </Card>
+      {/* Search */}
+      <Input
+        placeholder="Search by ticker, name or country…"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        className="max-w-sm"
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder="Procurar por ticker, nome ou país..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="max-w-sm"
-        />
-        <label className="text-muted-foreground flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={showOnlyEdited}
-            onChange={(e) => setShowOnlyEdited(e.target.checked)}
-            disabled={editedCount === 0}
-          />
-          Só editados ({editedCount})
-        </label>
-        <span className="text-muted-foreground ml-auto text-xs">
-          {filtered.length} de {assets.length}
-        </span>
+      {/* Por resolver */}
+      {unresolved.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 px-1 text-sm font-medium text-amber-600 dark:text-amber-400">
+            <Icons.AlertCircle className="h-4 w-4" />
+            Unresolved · {unresolved.length}
+            <span className="text-muted-foreground ml-auto text-xs font-normal">
+              imported as ISIN — Yahoo may not have a price
+            </span>
+          </div>
+          <div className="overflow-hidden rounded-lg border">
+            {unresolved.map((a) => renderRow(a, true))}
+          </div>
+        </section>
+      )}
+
+      {/* Resolvidos */}
+      <section className="space-y-2">
+        <div className="flex items-center gap-2 px-1 text-sm font-medium">
+          <Icons.Sparkles className="text-muted-foreground h-4 w-4" />
+          Resolved · {resolved.length}
+          <span className="text-muted-foreground ml-auto text-xs font-normal">
+            auto-resolved by the providers — review if anything looks wrong
+          </span>
+        </div>
+        <div className="max-h-[460px] overflow-auto rounded-lg border">
+          {resolved.map((a) => renderRow(a, false))}
+        </div>
+      </section>
+
+      {/* Pre-import summary by activity type */}
+      {byType.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 px-1 text-sm font-medium">
+            <Icons.FileText className="text-muted-foreground h-4 w-4" />
+            Will import · {mapping.activities.length}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {byType.map(([type, n]) => (
+              <span
+                key={type}
+                className="bg-muted/40 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs"
+              >
+                {classLabel(type.replace(/_/g, " "))}
+                <span className="font-medium tabular-nums">{n}</span>
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between border-t pt-4">
+        <Button variant="outline" onClick={onBack}>
+          <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+          Back
+        </Button>
+        <p className="text-muted-foreground hidden text-xs sm:block">
+          {convertedCount > 0
+            ? `${convertedCount} will be converted to ${targetCcy} via daily FX`
+            : `All assets already in ${targetCcy}`}
+        </p>
+        <Button onClick={onContinue} size="lg">
+          Import {mapping.activities.length} activities
+          <Icons.ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
       </div>
-
-      {/* Asset list */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="max-h-[480px] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/30 sticky top-0">
-                <tr className="text-muted-foreground text-xs uppercase tracking-wider">
-                  <th className="p-3 text-left font-medium">Asset</th>
-                  <th className="p-3 text-left font-medium">Bucket</th>
-                  <th className="p-3 text-right font-medium">Activities</th>
-                  <th className="p-3 text-left font-medium">quoteCcy</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((a) => {
-                  const override = overrides.get(a.symbol);
-                  const effective = override?.quoteCcy ?? a.defaultQuoteCcy ?? "—";
-                  const isEdited = !!override;
-                  return (
-                    <tr key={a.symbol} className="hover:bg-muted/20 border-t">
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{a.flag ?? "🏳️"}</span>
-                          <div>
-                            <p className="font-medium">{a.displayName}</p>
-                            <p className="text-muted-foreground text-xs">
-                              {a.symbol} · {a.country ?? "?"}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <Badge variant="secondary" className="text-xs">
-                          {a.bucket ?? "?"}
-                        </Badge>
-                      </td>
-                      <td className="text-muted-foreground p-3 text-right tabular-nums">
-                        {a.activityCount}
-                      </td>
-                      <td className="p-3">
-                        <select
-                          value={effective}
-                          onChange={(e) => setOverride(a.symbol, e.target.value)}
-                          className={
-                            "bg-background w-24 rounded-md border px-2 py-1 text-xs " +
-                            (isEdited ? "border-primary text-primary" : "")
-                          }
-                        >
-                          {!COMMON_CURRENCIES.includes(effective) && (
-                            <option value={effective}>{effective}</option>
-                          )}
-                          {COMMON_CURRENCIES.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                        {a.defaultQuoteCcy && a.defaultQuoteCcy !== effective && (
-                          <p className="text-muted-foreground mt-1 text-xs">
-                            era {a.defaultQuoteCcy}
-                          </p>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="flex items-center justify-between py-4">
-          <Button variant="outline" onClick={onBack}>
-            ← Voltar
-          </Button>
-          <div className="text-muted-foreground text-xs">
-            {editedCount > 0
-              ? `${editedCount} asset(s) com quoteCcy override aplicado.`
-              : "Sem overrides — todos os assets usam o quoteCcy default do mapper."}
-          </div>
-          <Button onClick={onContinue} size="lg">
-            <Icons.ArrowDownLeft className="mr-2 h-4 w-4" />
-            Importar {mapping.activities.length} activities
-          </Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }
 
-/**
- * Banner shown above the asset list when the wizard pre-populated one or
- * more overrides. The currency labels come from the actual overrides map
- * — no hardcoded "EUR" text. If a USD-account user ends up with USD
- * suggestions, the banner says "USD" instead.
- */
-function SuggestionsBanner({
-  overrides,
-  assets,
-}: {
-  overrides: Map<string, AssetOverride>;
-  assets: AssetSummary[];
-}): React.JSX.Element {
-  // Distribution of override target currencies → "5 → EUR, 1 → USD"
-  const ccyCounts = new Map<string, number>();
-  for (const o of overrides.values()) {
-    ccyCounts.set(o.quoteCcy, (ccyCounts.get(o.quoteCcy) ?? 0) + 1);
-  }
-  const distribution = [...ccyCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([ccy, n]) => `${n} → ${ccy}`)
-    .join(", ");
-
-  // Distinct previous currencies → "USD, CAD"
-  const prevCcys = new Set<string>();
-  for (const sym of overrides.keys()) {
-    const prev = assets.find((a) => a.symbol === sym)?.defaultQuoteCcy;
-    if (prev) prevCcys.add(prev);
-  }
-  const prevList = [...prevCcys].sort().join(", ");
-
-  return (
-    <Card className="border-primary/30 bg-primary/5">
-      <CardContent className="flex items-start gap-3 py-3 text-sm">
-        <Icons.Sparkles className="text-primary mt-0.5 h-5 w-5 shrink-0" />
-        <div className="space-y-1">
-          <p className="font-medium">
-            Pré-marquei {overrides.size} asset(s) com override de <code>quoteCcy</code> (
-            {distribution})
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Para estes assets, todas as transações no CSV foram numa moeda única que difere do{" "}
-            <code>quoteCcy</code> mapeado ({prevList || "—"}). Aplicar o override faz o{" "}
-            <code>Book Cost</code> e <code>Average cost</code> baterem exato com o que foi pago no
-            TR. <code>Today's Price</code> pode ficar desencontrado (Yahoo continua a devolver na
-            moeda nativa do mercado). Podes desmarcar individualmente abaixo ou usar "Reverter
-            overrides".
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Row({
+function Metric({
   label,
   value,
-  accent,
+  tone,
 }: {
   label: string;
   value: number;
-  accent?: string;
+  tone?: "success" | "amber" | "danger" | "";
 }): React.JSX.Element {
+  const color =
+    tone === "success"
+      ? "text-success"
+      : tone === "amber"
+        ? "text-amber-600 dark:text-amber-400"
+        : tone === "danger"
+          ? "text-destructive"
+          : "";
   return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <span className={"font-medium tabular-nums " + (accent === "primary" ? "text-primary" : "")}>
-        {value.toLocaleString("pt-PT")}
-      </span>
+    <div className="bg-muted/40 rounded-lg px-4 py-3">
+      <p className="text-muted-foreground text-xs">{label}</p>
+      <p className={"text-2xl font-semibold tabular-nums " + color}>{value}</p>
     </div>
   );
 }
