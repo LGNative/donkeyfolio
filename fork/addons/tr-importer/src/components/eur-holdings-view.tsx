@@ -33,6 +33,7 @@ import {
   type EurHoldingsTotals,
 } from "../lib/tr-eur-holdings";
 import { loadFxRates, type FxRateMap } from "../lib/tr-fx-rates";
+import { ensureEurFxPairs } from "../lib/tr-fx-pairs";
 
 interface AccountSummary {
   id: string;
@@ -67,6 +68,8 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
   const [filter, setFilter] = React.useState("");
   // null = all accounts aggregated (default). Account id otherwise.
   const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(null);
+  // null = idle; a string is the in-progress message while creating FX pairs.
+  const [fixing, setFixing] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setState({ kind: "loading" });
@@ -117,6 +120,25 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
     }
   }, [ctx]);
 
+  // Fix the EUR conversion: re-align mislabelled asset currencies to native,
+  // create the missing FX:<ccy>/EUR pairs (source YAHOO, ECB-seeded), then sync
+  // + recalculate. Reloads when done. See tr-fx-pairs.ts.
+  const handleCreateMissingRates = React.useCallback(async () => {
+    setFixing("Fixing…");
+    try {
+      const res = await ensureEurFxPairs(ctx, (msg) => setFixing(msg));
+      ctx.api.logger.info(
+        `[TR fx] currencies=${res.currencies.join(",") || "—"} created=${res.created.join(",") || "—"} ` +
+          `skipped=${res.skipped.length} failed=${res.failed.length} sync=${res.synced} recalc=${res.recalculated}`,
+      );
+      await load();
+    } catch (e) {
+      ctx.api.logger.error(`[TR fx] ${(e as Error).message}`);
+    } finally {
+      setFixing(null);
+    }
+  }, [ctx, load]);
+
   React.useEffect(() => {
     void load();
   }, [load]);
@@ -161,9 +183,9 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
       <Card>
         <CardContent className="flex flex-col items-center justify-center py-16">
           <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
-          <p className="text-sm font-medium">A computar holdings em €…</p>
+          <p className="text-sm font-medium">Computing holdings in €…</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            Lê posições, activities e FX rates da DB do Wealthfolio.
+            Reads positions, activities and FX rates from the Wealthfolio DB.
           </p>
         </CardContent>
       </Card>
@@ -176,17 +198,17 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Icons.AlertCircle className="text-destructive h-5 w-5" />
-            Falhou ao carregar Vista EUR
+            Failed to load EUR View
           </CardTitle>
           <CardDescription>{state.message}</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2">
           <Button variant="outline" onClick={load}>
             <Icons.Refresh className="mr-2 h-4 w-4" />
-            Tentar outra vez
+            Try again
           </Button>
           <Button variant="outline" onClick={onClose}>
-            Fechar
+            Close
           </Button>
         </CardContent>
       </Card>
@@ -209,21 +231,39 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Icons.Globe className="text-primary h-5 w-5" />
-              Vista EUR — alinhada com TR
+              EUR View — aligned with TR
             </CardTitle>
             <CardDescription className="mt-1">
-              Today's Price, Book Cost, Avg Cost e Total Value calculados em € usando os FX rates
-              internos do Wealthfolio. Computado em runtime, nada é escrito de volta. Atualizado{" "}
+              Today's Price, Book Cost, Avg Cost and Total Value computed in € using Wealthfolio's
+              internal FX rates. Computed at runtime, nothing is written back. Updated{" "}
               {fmtTime(fetchedAt)}.
             </CardDescription>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              disabled={fixing != null}
+              onClick={handleCreateMissingRates}
+            >
+              {fixing != null ? (
+                <>
+                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                  {fixing}
+                </>
+              ) : (
+                <>
+                  <Icons.Sparkles className="mr-2 h-4 w-4" />
+                  Fix EUR conversion
+                </>
+              )}
+            </Button>
             <Button variant="outline" size="sm" onClick={load}>
               <Icons.Refresh className="mr-2 h-4 w-4" />
-              Refrescar
+              Refresh
             </Button>
             <Button variant="outline" size="sm" onClick={onClose}>
-              Fechar
+              Close
             </Button>
           </div>
         </CardHeader>
@@ -234,7 +274,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
-              Filtrar por conta
+              Filter by account
               {selectedAccount && (
                 <span className="text-muted-foreground ml-2 text-xs font-normal">
                   · {selectedAccount.name}
@@ -242,16 +282,16 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
               )}
             </CardTitle>
             <CardDescription className="text-xs">
-              Por defeito a Vista EUR mostra o portfolio agregado de todas as contas. Clica numa
-              conta para isolar a vista a essa conta — útil quando tens vários brokers e queres ver
-              cada um separadamente.
+              By default the EUR View shows the aggregated portfolio across all accounts. Click an
+              account to isolate the view to that account — useful when you have several brokers and
+              want to see each one separately.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2">
             <div className="flex flex-wrap gap-2">
               <AccountChip
-                label="Todas as contas"
-                sublabel={`${accountsWithData.length}/${accounts.length} com dados`}
+                label="All accounts"
+                sublabel={`${accountsWithData.length}/${accounts.length} with data`}
                 active={selectedAccountId == null}
                 onClick={() => setSelectedAccountId(null)}
               />
@@ -287,13 +327,13 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
       <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
         <Card className="border-blue-500/10 bg-blue-500/10">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
-            <CardTitle className="text-sm font-medium">Posições</CardTitle>
+            <CardTitle className="text-sm font-medium">Positions</CardTitle>
             <span className="text-xl font-bold tabular-nums sm:text-2xl">{rows.length}</span>
           </CardHeader>
           <CardContent className="space-y-2 pt-2">
-            <Row label="Únicas" value={rows.length.toLocaleString("pt-PT")} />
+            <Row label="Unique" value={rows.length.toLocaleString("pt-PT")} />
             <Row
-              label="Com gap FX"
+              label="With FX gap"
               value={totals.positionsWithFxGap.toLocaleString("pt-PT")}
               accent={totals.positionsWithFxGap > 0 ? "warn" : ""}
             />
@@ -325,14 +365,14 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
-            <CardTitle className="text-sm font-medium">Como funciona</CardTitle>
+            <CardTitle className="text-sm font-medium">How it works</CardTitle>
             <Icons.Sparkles className="text-primary h-5 w-5" />
           </CardHeader>
           <CardContent className="space-y-1 pt-2 text-xs">
             <p className="text-muted-foreground">
-              Book Cost = soma dos <code>amount</code> das BUY/SELL na moeda original, convertido
-              para EUR via FX atual. Avg Cost = Book Cost / qty. Today's Price EUR = preço Yahoo ×
-              FX. Sem patches ao core, sem hardcoded.
+              Book Cost = sum of the <code>amount</code> of BUY/SELL in the original currency,
+              converted to EUR via the current FX. Avg Cost = Book Cost / qty. Today's Price EUR =
+              Yahoo price × FX. No core patches, nothing hardcoded.
             </p>
           </CardContent>
         </Card>
@@ -342,13 +382,31 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
         <Card className="border-amber-500/40 bg-amber-500/5">
           <CardContent className="flex items-start gap-3 py-3 text-sm">
             <Icons.AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            <div className="space-y-1">
-              <p className="font-medium">FX rates em falta na DB do Wealthfolio</p>
+            <div className="space-y-2">
+              <p className="font-medium">FX rates missing in the Wealthfolio DB</p>
               <p className="text-muted-foreground text-xs">
-                Não consegui converter: {missingRates.join(", ")}. Posições afectadas mostram "—" em
-                vez de valor EUR. Sync market data ou adiciona o par em Settings → Exchange Rates
-                para resolver.
+                Could not convert: {missingRates.join(", ")}. Affected positions show "—" instead of
+                a EUR value. Create the missing pairs (source Yahoo, seeded live from the ECB —
+                nothing hardcoded); the daily history is then synced by the core.
               </p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={fixing != null}
+                onClick={handleCreateMissingRates}
+              >
+                {fixing != null ? (
+                  <>
+                    <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                    {fixing}
+                  </>
+                ) : (
+                  <>
+                    <Icons.Refresh className="mr-2 h-4 w-4" />
+                    Create missing rates
+                  </>
+                )}
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -357,13 +415,13 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
       {/* Filter */}
       <div className="flex items-center gap-2">
         <Input
-          placeholder="Procurar por ticker ou nome..."
+          placeholder="Search by ticker or name..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="max-w-sm"
         />
         <span className="text-muted-foreground ml-auto text-xs">
-          {filtered.length} de {rows.length}
+          {filtered.length} of {rows.length}
         </span>
       </div>
 
@@ -392,7 +450,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
                         {r.symbol}
                         {r.localCurrency !== "EUR" && (
                           <Badge variant="outline" className="ml-2 text-[10px]">
-                            nativo {r.localCurrency}
+                            native {r.localCurrency}
                           </Badge>
                         )}
                       </p>
@@ -453,7 +511,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={7} className="text-muted-foreground p-8 text-center text-sm">
-                      Sem posições para mostrar.
+                      No positions to show.
                     </td>
                   </tr>
                 )}
