@@ -116,6 +116,31 @@ history flows in EUR — **with no hardcoded table and no base-code changes**.
 
 ---
 
+### G. TR Importer overhaul (v3.5.2 era) — patches 0016-0017
+
+Done after the v3.5 data marathon, all SDK-only (no base-code change):
+
+- **EUR conversion fix** — `src/lib/tr-fx-pairs.ts`: the v3.5 core converts a
+  holding's quote currency to base (EUR) via FX when they differ; it only needs
+  the `FX:<ccy>/EUR` rate to exist. The routine reads each held asset's real
+  quote currency and creates the missing pairs (source YAHOO, ECB-seeded) via
+  `exchangeRates.add`, then syncs + recalculates. This un-inflated the portfolio
+  (USD shown as EUR → real EUR). Button: "Fix EUR conversion" in the EUR view.
+- **MANUAL_CASH_TRANSFER** mapped by amount sign → DEPOSIT / WITHDRAWAL (was
+  skipped as Unknown Type; e.g. a TR goodwill payment).
+- **English UI** — the whole addon translated PT → EN to match the base app
+  (logic strings / codes untouched). See `tr-addon-english-ui` memory.
+- **2 tabs** (Import + Analysis) — removed the Advanced tab (AI expert + SDK
+  test) and deleted the now-dead `expert-panel.tsx`, `tr-ai-expert.ts`,
+  `tr-sdk-test.ts`. Diagnostics live in Analysis.
+- **"Start over"** button — return to the drop zone mid-import without leaving
+  the app.
+- **Review Assets redesign** — urgency-grouped sections, currency badges (USD →
+  EUR), per-asset density, pre-import type breakdown.
+- `manifest.json`: version 5.3.2 → 3.5.2 (match the app), shorter description.
+
+---
+
 ## Operational items (NOT in git — runtime/data)
 
 These are not code; they live on the user's machine and must be re-done if the
