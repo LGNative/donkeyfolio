@@ -237,6 +237,10 @@ function mapRow(row: TrCsvRow, accountId: string, notes: MapperNote[]): Activity
         return mapDeposit(row, accountId);
       case "TRANSFER_INSTANT_OUTBOUND":
         return mapWithdrawal(row, accountId);
+      case "MANUAL_CASH_TRANSFER":
+        // Manual cash movement (e.g. a TR goodwill / compensation payment).
+        // Direction follows the amount sign: positive in → DEPOSIT, negative out → WITHDRAWAL.
+        return (row.amount ?? 0) >= 0 ? mapDeposit(row, accountId) : mapWithdrawal(row, accountId);
       case "CARD_ORDERING_FEE":
         return mapCardOrderingFee(row, accountId);
       // CARD_TRANSACTION* handled by consolidator (caller filtered them)
@@ -1012,13 +1016,13 @@ interface AssetBucket {
 function bucketFromAssetClass(assetClass: string): AssetBucket | undefined {
   switch (assetClass) {
     case "CRYPTO":
-      return { bucket: "CRYPTO", label: "Cripto", instrumentType: "CRYPTO" };
+      return { bucket: "CRYPTO", label: "Crypto", instrumentType: "CRYPTO" };
     case "FUND":
-      return { bucket: "ETF", label: "ETF / Fundo", instrumentType: "ETF" };
+      return { bucket: "ETF", label: "ETF / Fund", instrumentType: "ETF" };
     case "STOCK":
-      return { bucket: "STOCK", label: "Ações", instrumentType: "EQUITY" };
+      return { bucket: "STOCK", label: "Stocks", instrumentType: "EQUITY" };
     case "DERIVATIVE":
-      return { bucket: "DERIVATIVE", label: "Derivado", instrumentType: "OPTION" };
+      return { bucket: "DERIVATIVE", label: "Derivative", instrumentType: "OPTION" };
     case "":
     case undefined:
       return undefined; // cash transactions — no asset
