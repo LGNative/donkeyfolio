@@ -45,9 +45,6 @@ import {
   type ImportHistory,
 } from "../lib/tr-import-history";
 import { diagnose, pickDuplicatesToDelete, type DiagnosticsReport } from "../lib/tr-diagnostics";
-import { buildSamples, type SdkTestResult } from "../lib/tr-sdk-test";
-import { EmptyState } from "../components/empty-state";
-import { ExpertPanel } from "../components/expert-panel";
 import { EurHoldingsView } from "../components/eur-holdings-view";
 import { ReviewAssetsView, type AssetOverride } from "../components/review-assets-view";
 import { WizardStepper, type WizardStep } from "../components/wizard-stepper";
@@ -57,12 +54,10 @@ import { WizardStepper, type WizardStep } from "../components/wizard-stepper";
  * tabs preserves state inside each tab. The Import tab holds the wizard
  * (with its own state machine); other tabs are tools.
  */
-// v5.2.0: simplified to 3 user-facing tabs. The "holdings" tab now also
-// hosts the diagnostics report below the EUR table, and the "expert" tab
-// hosts the SDK-test panel below the AI panel. The old IDs are kept as
-// internal section anchors so the rest of the state machine doesn't have
-// to change.
-type TabId = "import" | "holdings" | "expert";
+// Simplified to 2 user-facing tabs. The "holdings" tab also hosts the
+// diagnostics report below the EUR table. The old IDs are kept as internal
+// section anchors so the rest of the state machine doesn't have to change.
+type TabId = "import" | "holdings";
 
 interface Props {
   ctx: AddonContext;
@@ -115,9 +110,6 @@ type State =
     }
   | { kind: "diagnosing" }
   | { kind: "diagnosed"; report: DiagnosticsReport; cleanupCount?: number }
-  | { kind: "sdk_testing"; current: number; total: number }
-  | { kind: "sdk_tested"; results: SdkTestResult[]; durationMs: number }
-  | { kind: "expert"; lastReport?: DiagnosticsReport }
   | { kind: "eur_view" }
   | { kind: "error"; error: ErrorInfo };
 
@@ -155,7 +147,7 @@ const PREVIEW_ACCOUNT_ID = "tr-preview";
 
 function describeError(err: unknown): { message: string; detail?: string } {
   if (err instanceof Error) {
-    const message = err.message || err.name || "Erro sem mensagem";
+    const message = err.message || err.name || "Error with no message";
     return { message, detail: err.stack };
   }
   if (typeof err === "string") return { message: err };
@@ -166,7 +158,7 @@ function describeError(err: unknown): { message: string; detail?: string } {
       return { message: "Non-serialisable error" };
     }
   }
-  return { message: String(err ?? "Erro desconhecido") };
+  return { message: String(err ?? "Unknown error") };
 }
 
 export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
@@ -576,64 +568,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
     }
   }, [state, ctx]);
 
-  const handleSdkTest = React.useCallback(async () => {
-    try {
-      const account = await ensureTRAccount(ctx);
-      const samples = buildSamples(account.accountId);
-      const startedAt = Date.now();
-      setState({ kind: "sdk_testing", current: 0, total: samples.length });
-
-      const results: SdkTestResult[] = [];
-      const createdIds: string[] = [];
-
-      for (let i = 0; i < samples.length; i++) {
-        const s = samples[i];
-        try {
-          const created = (await ctx.api.activities.create(s.activity)) as { id?: string };
-          results.push({
-            label: s.label,
-            activityType: s.activity.activityType,
-            status: "pass",
-            createdId: created?.id,
-          });
-          if (created?.id) createdIds.push(created.id);
-        } catch (err) {
-          const { message } = describeError(err);
-          results.push({
-            label: s.label,
-            activityType: s.activity.activityType,
-            status: "fail",
-            error: message,
-          });
-        }
-        setState({ kind: "sdk_testing", current: i + 1, total: samples.length });
-      }
-
-      // Cleanup — delete every successfully created test activity.
-      if (createdIds.length > 0) {
-        try {
-          await ctx.api.activities.saveMany({ deleteIds: createdIds });
-        } catch (err) {
-          const { message } = describeError(err);
-          ctx.api.logger.error(`SDK test cleanup falhou: ${message}`);
-        }
-      }
-
-      setState({
-        kind: "sdk_tested",
-        results,
-        durationMs: Date.now() - startedAt,
-      });
-    } catch (err) {
-      const { message, detail } = describeError(err);
-      ctx.api.logger.error(`SDK test setup falhou: ${message}`);
-      setState({
-        kind: "error",
-        error: { origin: "import", title: "SDK test failed", message, detail },
-      });
-    }
-  }, [ctx]);
-
   // v5.0.0 — tab switch with confirmation when leaving in-progress work.
   const wizardInProgress =
     state.kind === "parsing" ||
@@ -662,16 +596,12 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
       importStateRef.current = state;
     }
     setCurrentTab(tab);
-    // v5.2.0: Análise tab loads holdings + auto-runs diagnostics (was its
-    // own tab). Avançado tab opens the Expert (AI) panel and also exposes
-    // the SDK-test panel via a button further down.
+    // Análise tab loads holdings + auto-runs diagnostics (was its own tab).
     if (tab === "import") {
       // Restore the document the user was working on (empty on first visit).
       setState(importStateRef.current);
     } else if (tab === "holdings") {
       handleDiagnose();
-    } else if (tab === "expert") {
-      setState({ kind: "expert" });
     }
   };
 
@@ -685,26 +615,19 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
           className="w-full"
         >
           {/*
-           * v5.2.0 UX simplification: collapsed 5 tabs into 3 so the user
-           * isn't bombarded with developer-flavoured tabs (SDK Test) and
-           * overlapping analysis screens (Holdings + Diagnostics).
+           * Two user-facing tabs:
            *
-           *   Importar  — CSV upload + review wizard (unchanged)
+           *   Importar  — CSV upload + review wizard
            *   Análise   — EUR holdings table + diagnostics (merged)
-           *   Avançado  — Expert (AI) + SDK Test (dev), one click away
            */}
-          <TabsList className="mb-4 grid w-full max-w-md grid-cols-3">
+          <TabsList className="mb-4 grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="import" className="gap-1.5">
               <Icons.Upload className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Importar</span>
+              <span className="hidden sm:inline">Import</span>
             </TabsTrigger>
             <TabsTrigger value="holdings" className="gap-1.5">
               <Icons.Globe className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Análise</span>
-            </TabsTrigger>
-            <TabsTrigger value="expert" className="gap-1.5">
-              <Icons.Sparkles className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Avançado</span>
+              <span className="hidden sm:inline">Analysis</span>
             </TabsTrigger>
           </TabsList>
 
@@ -735,7 +658,7 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <Icons.Spinner className="text-muted-foreground mb-4 h-8 w-8 animate-spin" />
-                    <p className="text-sm font-medium">A ler atividades da conta TR…</p>
+                    <p className="text-sm font-medium">Reading activities from the TR account…</p>
                   </CardContent>
                 </Card>
               )}
@@ -750,59 +673,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
               )}
               {state.kind === "error" && state.error.origin === "import" && (
                 <ErrorView error={state.error} onRetry={handleDiagnose} />
-              )}
-            </div>
-          )}
-
-          {/* TAB: AVANÇADO — AI Expert (top) + SDK contract test (collapsed) */}
-          {currentTab === "expert" && (
-            <div className="space-y-6">
-              <ExpertPanel
-                secrets={ctx.api.secrets}
-                context={undefined}
-                onClose={() => switchTabImmediate("import")}
-              />
-
-              {/* SDK contract test (was a separate top-level tab in <=v5.1.x).
-                  Moved here so developer-flavoured tools don't dominate the
-                  main nav, but still discoverable for diagnostics. */}
-              {state.kind === "sdk_testing" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Icons.Spinner className="h-5 w-5 animate-spin" />
-                      Testing SDK contracts…
-                    </CardTitle>
-                    <CardDescription>
-                      Inserting 1 activity of each type, then deleting them.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Progress value={state.total > 0 ? (state.current / state.total) * 100 : 0} />
-                    <p className="text-muted-foreground text-xs">
-                      {state.current} of {state.total} tested
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-              {state.kind === "sdk_tested" && (
-                <SdkTestView
-                  results={state.results}
-                  durationMs={state.durationMs}
-                  onClose={() => switchTabImmediate("import")}
-                />
-              )}
-              {state.kind !== "sdk_testing" && state.kind !== "sdk_tested" && (
-                <EmptyState
-                  icon={<Icons.CheckCircle className="text-muted-foreground h-8 w-8" />}
-                  title="Teste de contrato SDK"
-                  description="Insere uma atividade de cada tipo via o SDK do addon e apaga-as logo em seguida. Útil para verificar a ponte addon ↔ Donkeyfolio depois de atualizações."
-                  primaryAction={{
-                    label: "Correr teste",
-                    icon: <Icons.CheckCircle className="h-4 w-4" />,
-                    onClick: handleSdkTest,
-                  }}
-                />
               )}
             </div>
           )}
@@ -854,10 +724,28 @@ function ImportTabContent({
   handleCancelImport,
 }: ImportTabContentProps): React.JSX.Element {
   const stepper = renderStepper(state);
+  // Let the user bail out of a loaded import and return to the drop zone
+  // without leaving the app. Re-importing the same CSV is safe (dedup).
+  const canStartOver = state.kind === "parsed" || state.kind === "reviewing_assets";
 
   return (
     <div className="space-y-4">
-      {stepper}
+      {(stepper || canStartOver) && (
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">{stepper}</div>
+          {canStartOver && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground shrink-0"
+              onClick={() => setState({ kind: "empty" })}
+            >
+              <Icons.Refresh className="mr-2 h-4 w-4" />
+              Start over
+            </Button>
+          )}
+        </div>
+      )}
 
       {state.kind === "empty" && (
         <EmptyView
@@ -883,7 +771,7 @@ function ImportTabContent({
             <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
             <p className="text-sm font-medium">
               {state.total
-                ? `A resolver ativos em EUR… ${state.done ?? 0}/${state.total}`
+                ? `Resolving assets in EUR… ${state.done ?? 0}/${state.total}`
                 : `Parsing ${state.filename}…`}
             </p>
           </CardContent>
@@ -1011,28 +899,25 @@ function renderStepper(state: State): React.JSX.Element | null {
 }
 
 function pageSubtitle(state: State, currentTab: TabId): string {
-  // v5.2.0: subtitles match the new 3-tab IA (Importar / Análise / Avançado).
+  // Subtitles match the 2-tab IA (Importar / Análise).
   if (currentTab === "holdings") {
-    return "Posições em EUR + diagnóstico das atividades importadas.";
-  }
-  if (currentTab === "expert") {
-    return "Ferramentas avançadas: assistente AI e teste do SDK.";
+    return "EUR positions + diagnostics of the imported activities.";
   }
 
   // Import tab — subtitle reflects wizard step.
   switch (state.kind) {
     case "parsed":
-      return `${state.data.summary.totalRows.toLocaleString("en-US")} transações em ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} novas para importar.`;
+      return `${state.data.summary.totalRows.toLocaleString("en-US")} transactions in ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} new to import.`;
     case "reviewing_assets":
-      return `Rever ${state.data.mapping.activities.length.toLocaleString("en-US")} atividades · ajustar quoteCcy por ativo antes de importar.`;
+      return `Review ${state.data.mapping.activities.length.toLocaleString("en-US")} activities · adjust quoteCcy per asset before importing.`;
     case "importing":
-      return `A importar ${state.current.toLocaleString("en-US")} de ${state.total.toLocaleString("en-US")} atividades…`;
+      return `Importing ${state.current.toLocaleString("en-US")} of ${state.total.toLocaleString("en-US")} activities…`;
     case "imported":
-      return `Importadas ${state.activitiesCount.toLocaleString("en-US")} atividades em ${(state.durationMs / 1000).toFixed(1)}s.`;
+      return `Imported ${state.activitiesCount.toLocaleString("en-US")} activities in ${(state.durationMs / 1000).toFixed(1)}s.`;
     case "error":
       return state.error.title;
     default:
-      return "Importa todas as transações da Trade Republic para o Donkeyfolio.";
+      return "Import all your Trade Republic transactions into Wealthfolio.";
   }
 }
 
@@ -1825,73 +1710,6 @@ function DistributionList({ items }: { items: Record<string, number> }): React.J
           </div>
         );
       })}
-    </div>
-  );
-}
-
-/* ────────────────────────  SDK test view  ──────────────────────── */
-
-function SdkTestView({
-  results,
-  durationMs,
-  onClose,
-}: {
-  results: SdkTestResult[];
-  durationMs: number;
-  onClose: () => void;
-}): React.JSX.Element {
-  const passes = results.filter((r) => r.status === "pass").length;
-  const fails = results.filter((r) => r.status === "fail").length;
-  const allOk = fails === 0;
-  return (
-    <div className="space-y-4">
-      <Card
-        className={
-          allOk ? "border-success/40 bg-success/5" : "border-destructive/40 bg-destructive/5"
-        }
-      >
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            {allOk ? (
-              <Icons.CheckCircle className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <Icons.AlertCircle className="text-destructive h-5 w-5" />
-            )}
-            {allOk ? "All SDK contracts passed" : `${fails} SDK contract(s) failed`}
-          </CardTitle>
-          <CardDescription>
-            {passes}/{results.length} passed in {(durationMs / 1000).toFixed(1)}s. Test activities
-            were deleted at the end — your account is unaffected.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-1.5">
-          {results.map((r, i) => (
-            <div
-              key={i}
-              className={
-                "flex items-start gap-3 rounded-md border p-2 text-sm " +
-                (r.status === "pass"
-                  ? "bg-success/5 border-success/20"
-                  : "bg-destructive/5 border-destructive/30")
-              }
-            >
-              {r.status === "pass" ? (
-                <Icons.CheckCircle className="text-success mt-0.5 h-4 w-4 shrink-0" />
-              ) : (
-                <Icons.AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">{r.label}</p>
-                <p className="text-muted-foreground font-mono text-xs">{r.activityType}</p>
-                {r.error && <p className="text-destructive mt-1 font-mono text-xs">{r.error}</p>}
-              </div>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-      <Button variant="outline" onClick={onClose}>
-        Close
-      </Button>
     </div>
   );
 }
