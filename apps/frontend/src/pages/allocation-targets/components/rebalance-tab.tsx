@@ -657,7 +657,7 @@ function DriftBar({
                 style={{
                   left: `${toleranceMinPos}%`,
                   width: `${toleranceMaxPos - toleranceMinPos}%`,
-                  background: "#9db8a8",
+                  background: "var(--brand-300)",
                 }}
               />
             )}
