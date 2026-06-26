@@ -31,20 +31,18 @@ const getCashAvatarLabel = (symbol: string): string | null => {
 
 const getFallbackAvatarLabel = (symbol: string): string => symbol.slice(0, 4);
 
-// ── One uniform DARK tile; dark logos inverted to read on it ────────────────
-// Every logo sits on the SAME dark chip in light AND dark mode (uniform look,
-// not a patchwork of circles). On a dark chip, white/light and colourful logos
-// read naturally; the ones that vanish are dark/black near-monochrome marks —
-// so for THOSE we invert the logo (black → white). Coloured logos keep their
-// real colours (we only invert near-monochrome ones).
-const CHIP_BG = "hsl(40 6% 28%)";
-const CHIP_TEXT = "hsl(45 14% 92%)";
-const INVERT_MAX_LUMINANCE = 0.52; // logo this dark or darker is a candidate
-const INVERT_MAX_SATURATION = 0.18; // …but only if near-monochrome (not a colour logo)
+// ── One uniform DARK chip; dark logos are whitened to read on it ────────────
+// Every logo sits on the SAME dark chip (uniform, not a patchwork of tiles).
+// White and colourful logos read on it as-is; the ones that would vanish are
+// dark marks (a navy DELL, the GE Vernova monogram, a black wordmark). For
+// THOSE we whiten the logo to a light silhouette (measured per-logo from pixel
+// luminance) so it reads on the dark chip — the chip itself never changes.
+const CHIP_BG = "hsl(40 6% 28%)"; // the one uniform chip
+const CHIP_TEXT = "hsl(45 14% 92%)"; // initials on the chip
+const DARK_LOGO_MAX_LUMINANCE = 0.45; // avg luminance ≤ this → whiten the logo
 
 interface LogoStats {
   lum: number; // average luminance of opaque pixels, 0..1
-  sat: number; // average (max-min)/255 saturation of opaque pixels, 0..1
 }
 
 // Per-URL cache; null = measured but unreadable (couldn't sample pixels).
@@ -68,7 +66,6 @@ function measureLogo(url: string): Promise<LogoStats | null> {
           ctx.drawImage(img, 0, 0, size, size);
           const { data } = ctx.getImageData(0, 0, size, size);
           let lumSum = 0;
-          let satSum = 0;
           let count = 0;
           for (let i = 0; i < data.length; i += 4) {
             if (data[i + 3] < 24) continue; // skip (near-)transparent pixels
@@ -76,10 +73,9 @@ function measureLogo(url: string): Promise<LogoStats | null> {
             const g = data[i + 1];
             const b = data[i + 2];
             lumSum += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-            satSum += (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
             count += 1;
           }
-          if (count > 0) stats = { lum: lumSum / count, sat: satSum / count };
+          if (count > 0) stats = { lum: lumSum / count };
         }
       } catch {
         stats = null;
@@ -119,7 +115,7 @@ export const TickerAvatar = ({
     setLogoUrl(primaryLogoUrl);
   }, [primaryLogoUrl]);
 
-  // Measure the current logo so we can invert light, near-monochrome marks.
+  // Measure the current logo's luminance so we can pick a contrasting chip.
   const [stats, setStats] = useState<LogoStats | null>(
     () => LOGO_STATS_CACHE.get(primaryLogoUrl) ?? null,
   );
@@ -141,8 +137,7 @@ export const TickerAvatar = ({
     };
   }, [logoUrl]);
 
-  const invertLogo =
-    stats != null && stats.lum <= INVERT_MAX_LUMINANCE && stats.sat < INVERT_MAX_SATURATION;
+  const whitenLogo = stats != null && stats.lum <= DARK_LOGO_MAX_LUMINANCE;
 
   if (cashAvatarLabel) {
     return (
@@ -168,7 +163,7 @@ export const TickerAvatar = ({
         src={logoUrl}
         alt={fullSymbol}
         className={imageClassName}
-        style={invertLogo ? { filter: "invert(1)" } : undefined}
+        style={whitenLogo ? { filter: "brightness(0) invert(1)" } : undefined}
         onLoadingStatusChange={(status) => {
           if (
             status === "error" &&

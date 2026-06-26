@@ -69,8 +69,9 @@ them; the rebase re-applies them on each update.
 
 - Holdings sorted by return %; Net Worth shows cents; percentages 2 decimals;
   zero drivers hidden; **Wealthfolio Connect hidden** from sidebar; ticker
-  avatars on a uniform dark chip with near-monochrome logos auto-inverted
-  (measured per-logo from pixel luminance/saturation — no per-asset table).
+  avatars on a **uniform dark chip** — dark logos are auto-lightened to white
+  (measured per-logo from pixel luminance, no per-asset table) so a navy DELL /
+  GE Vernova mark reads on the dark tile. Light/colourful logos render as-is.
 
 ### D. TR Importer addon — `fork/addons/tr-importer/` (the biggest piece)
 
@@ -87,6 +88,13 @@ them; the rebase re-applies them on each update.
 
 - `SOL.png` corrected to the real Solana logo (was a wrong orange mark);
   `SOL-EUR.png` variant added.
+- **17 missing stock logos added** — fetched by ISIN from Parqet, then
+  background-stripped to transparent PNGs (flood-fill from corners; NOKIA via
+  luminance key): SIE, NOKIA, ABBN, NOVO-B, BAVA, IRE, SSW, PTC, MRCY, 9988,
+  KLAR, UUUU, NVTS, RBRK, CRWV, BMNR, TE.
+- **5 wrong/opaque logos corrected:** MP & VICR (opaque background stripped);
+  **MC→LVMH, ENR→Siemens Energy, SU→Schneider Electric** — these EU tickers
+  collide with US firms, so the old set showed Moelis / Energizer / Suncor.
 
 ### F. Dynamic EUR resolution — `fork/addons/tr-importer/` (NOT base code)
 
@@ -156,6 +164,10 @@ DB/addons are reset.
     EU stocks get price history.
   - `donkey-cleanup.sql` — drop bloated snapshot tables + VACUUM (1 GB → ~50
     MB).
+  - `donkey-orphan-snapshot-cleanup.sql` — delete `holdings_snapshots` /
+    `snapshot_positions` / `daily_account_valuation` rows whose `account_id` is
+    no longer in `accounts` (orphans left by a deleted account) + VACUUM.
+    Generic (no hardcoded ids), re-runnable. Reclaimed ~300 MB (712 → ~400 MB).
 - **Installed-addon patches** — Swingfolio / Fees Tracker
   `TOTAL → portfolio:all` fix, applied to the **built** addon bundles in the
   app-support addons dir. These are third-party addons, not our fork → lost if
