@@ -1,7 +1,7 @@
 From 1e27a352dd49f5b79d02596260306862a6f473ee Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 17 Jun 2026 15:52:51 +0100
-Subject: [PATCH 15/28] fork: preserve custom-providers backup + ignore python
+Subject: [PATCH 15/30] fork: preserve custom-providers backup + ignore python
  bytecode
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
