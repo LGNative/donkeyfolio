@@ -16,6 +16,7 @@
  */
 import type { AddonContext, SymbolSearchResult } from "@wealthfolio/addon-sdk";
 import { lookupTicker } from "./tr-isin-tickers";
+import { isValidIsin } from "./tr-isin-utils";
 
 export interface ResolvedAsset {
   /** Canonical symbol to persist (e.g. "EUNL.DE"). */
@@ -29,12 +30,13 @@ export interface ResolvedAsset {
 }
 
 /**
- * ISIN shape: 2 ISO country letters + 10 alphanumerics. Excludes Trade
- * Republic crypto pseudo-ISINs (XF000…) — "XF" is not an ISO country code and
- * crypto is resolved by the mapper, not by provider search.
+ * Strict ISO-6166 validation (country code + NSIN + Luhn check digit). The
+ * loose `/[A-Z]{2}[A-Z0-9]{10}/` shape matched plain words like "SUBSCRIPTION"
+ * and minted a fake, unpriceable asset; the check digit rules those out.
+ * Excludes Trade Republic crypto pseudo-ISINs (XF000…) — resolved by the mapper.
  */
 export function looksLikeIsin(s: string): boolean {
-  return /^[A-Z]{2}[A-Z0-9]{10}$/.test(s) && !s.startsWith("XF");
+  return isValidIsin(s) && !s.startsWith("XF");
 }
 
 function isEur(r: SymbolSearchResult): boolean {
