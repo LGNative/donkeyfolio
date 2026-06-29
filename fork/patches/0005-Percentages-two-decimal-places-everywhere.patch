@@ -1,7 +1,7 @@
 From a0270cb108b76fed7cafd45afc7d81592debc15b Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 09:37:08 +0100
-Subject: [PATCH 05/26] Percentages: two decimal places everywhere
+Subject: [PATCH 05/28] Percentages: two decimal places everywhere
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ---

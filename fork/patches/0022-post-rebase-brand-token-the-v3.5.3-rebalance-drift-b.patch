@@ -1,7 +1,7 @@
 From 982a8b9c11f193d68b40e431b2bf01fb01547541 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Fri, 26 Jun 2026 22:31:26 +0100
-Subject: [PATCH 22/26] post-rebase: brand-token the v3.5.3 rebalance drift
+Subject: [PATCH 22/28] post-rebase: brand-token the v3.5.3 rebalance drift
  band
 
 v3.5.3 reworked rebalance-tab and reintroduced hardcoded #9db8a8 for the

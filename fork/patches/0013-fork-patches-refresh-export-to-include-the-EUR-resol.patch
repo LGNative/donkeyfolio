@@ -1,7 +1,7 @@
 From 50e8f850ba80f8fecb0d8d50797ecec8e86cef77 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Fri, 12 Jun 2026 16:18:23 +0100
-Subject: [PATCH 13/26] fork/patches: refresh export to include the
+Subject: [PATCH 13/28] fork/patches: refresh export to include the
  EUR-resolution commit
 
 ---
