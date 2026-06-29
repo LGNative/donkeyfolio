@@ -1,7 +1,7 @@
 From 7b3b46b526e0a93fb6f310e134c91797c6ea9a89 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 29 Jun 2026 13:00:30 +0100
-Subject: [PATCH 23/28] TR importer: price crypto staking rewards at FMV (cost
+Subject: [PATCH 23/30] TR importer: price crypto staking rewards at FMV (cost
  basis)
 
 mapFreeReceipt booked Saveback/staking rewards as zero-cost TRANSFER_IN, so

@@ -1,7 +1,7 @@
 From 9660e9e42dd29c0a704339bec5c0100296f15d81 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 17 Jun 2026 15:56:28 +0100
-Subject: [PATCH 17/28] fork/patches: refresh export (dark logo chips +
+Subject: [PATCH 17/30] fork/patches: refresh export (dark logo chips +
  providers backup + docs)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
