@@ -1,7 +1,7 @@
-From 190698dad1a8ee3b1320a47670aabce8ca90f84d Mon Sep 17 00:00:00 2001
+From 1e27a352dd49f5b79d02596260306862a6f473ee Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 17 Jun 2026 15:52:51 +0100
-Subject: [PATCH 14/15] fork: preserve custom-providers backup + ignore python
+Subject: [PATCH 15/24] fork: preserve custom-providers backup + ignore python
  bytecode
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -114,5 +114,5 @@ index dd547095..d00f570c 100644
    const added: Array<{ remove: () => void }> = [];
  
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

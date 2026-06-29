@@ -1,0 +1,90 @@
+From 9dd91bbaa64a032924fd06d0b1a2416070f1b779 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Mon, 29 Jun 2026 15:32:36 +0100
+Subject: [PATCH 24/24] v3.5.3: staking cost-basis backfill script +
+ FORK-CHANGES base->v3.5.3
+
+- fork/_archive/donkey-staking-cost-basis-backfill.sql: backfills crypto
+  staking reward unit_price from the FMV already in metadata (app-closed +
+  Rebuild History); pairs with the mapFreeReceipt importer fix
+- FORK-CHANGES: current base + update procedure now target v3.5.3
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ fork/FORK-CHANGES.md                          | 12 +++++---
+ .../donkey-staking-cost-basis-backfill.sql    | 30 +++++++++++++++++++
+ 2 files changed, 38 insertions(+), 4 deletions(-)
+ create mode 100644 fork/_archive/donkey-staking-cost-basis-backfill.sql
+
+diff --git a/fork/FORK-CHANGES.md b/fork/FORK-CHANGES.md
+index d1649bac..e6be2a58 100644
+--- a/fork/FORK-CHANGES.md
++++ b/fork/FORK-CHANGES.md
+@@ -6,7 +6,7 @@ This file + `fork/patches/` are the record of everything we changed, so nothing
+ is lost when Wealthfolio releases a new version. Read this before any upstream
+ update.
+ 
+-Current base: **Wealthfolio v3.5.2** · fork branch: `donkeyfolio/v3.5.2`
++Current base: **Wealthfolio v3.5.3** · fork branch: `donkeyfolio/v3.5.3`
+ Remotes: `origin` = LGNative/donkeyfolio · `upstream` = afadil/wealthfolio
+ 
+ ---
+@@ -184,12 +184,16 @@ DB/addons are reset.
+ git fetch upstream --tags
+ 
+ # 2. replay our layer onto it (rebase the fork branch)
+-git checkout donkeyfolio/v3.5.2
+-git rebase --onto vNEW v3.5.2          # vNEW = the new tag
++git checkout donkeyfolio/v3.5.3
++git rebase --onto vNEW v3.5.3          # vNEW = the new tag
+ #   ↳ if a hook aborts: GIT_EDITOR=true git -c core.hooksPath=/dev/null rebase --continue
++#   ↳ proven on v3.5.2→v3.5.3 (21 commits, 3 conflicts); back up first:
++#     git branch backup/donkeyfolio-pre-vNEW
+ #   conflicts to expect:
+-#     tauri.conf.json  → keep Donkeyfolio / identifier / fork updater
++#     tauri.conf.json  → keep Donkeyfolio / identifier / fork updater; bump version
+ #     globals.css      → keep the --brand-* scale + derived tokens
++#     reworked components (rebalance-tab, etc.) → take upstream logic + our tokens
++#   ↳ then: pnpm install (new deps), pnpm type-check before the app build
+ 
+ # 3. rebuild shared package dists (else stale type errors)
+ pnpm -r --filter "./packages/*" run build
+diff --git a/fork/_archive/donkey-staking-cost-basis-backfill.sql b/fork/_archive/donkey-staking-cost-basis-backfill.sql
+new file mode 100644
+index 00000000..416ad484
+--- /dev/null
++++ b/fork/_archive/donkey-staking-cost-basis-backfill.sql
+@@ -0,0 +1,30 @@
++-- Donkeyfolio · backfill crypto staking-reward cost basis.
++--
++-- TR ships the FMV of each Saveback / staking reward; the importer kept it in
++-- metadata (tr_fmv_at_receipt) but booked the reward as a zero-cost TRANSFER_IN.
++-- So each reward's whole value read as gain and v3.5.3's data-health check
++-- flags those positions (ADA / ETH / SOL) as "incomplete cost basis".
++--
++-- This sets unit_price = that stored FMV for the existing reward lots, giving
++-- each a real cost basis (~EUR 116 of phantom gain removed). The cost-basis
++-- check reads unit_price (core/health/service.rs).
++--
++-- Safe + re-runnable: only touches tr_staking rows that still have no price.
++-- Run with the Donkeyfolio app CLOSED, then run "Rebuild History" in the app:
++--   sqlite3 "~/Library/Application Support/com.luisgoncalves.donkeyfolio/app.db" \
++--     < fork/_archive/donkey-staking-cost-basis-backfill.sql
++--
++-- The importer itself is already fixed (mapFreeReceipt now sets unitPrice=FMV),
++-- so future imports won't need this.
++
++UPDATE activities
++SET unit_price = CAST(json_extract(metadata, '$.tr_fmv_at_receipt') AS TEXT),
++    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
++WHERE json_extract(metadata, '$.tr_staking') = 1
++  AND json_extract(metadata, '$.tr_fmv_at_receipt') IS NOT NULL
++  AND (unit_price IS NULL OR CAST(unit_price AS REAL) = 0);
++
++-- Verify (optional): should report 0 rows after a successful run.
++-- SELECT COUNT(*) FROM activities
++--  WHERE json_extract(metadata,'$.tr_staking')=1
++--    AND (unit_price IS NULL OR CAST(unit_price AS REAL)=0);
+-- 
+2.54.0 (Apple Git-157)
+

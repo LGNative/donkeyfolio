@@ -1,0 +1,58 @@
+From 7b3b46b526e0a93fb6f310e134c91797c6ea9a89 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Mon, 29 Jun 2026 13:00:30 +0100
+Subject: [PATCH 23/24] TR importer: price crypto staking rewards at FMV (cost
+ basis)
+
+mapFreeReceipt booked Saveback/staking rewards as zero-cost TRANSFER_IN, so
+each reward's full value later read as gain and v3.5.3 flags the position as
+'incomplete cost basis'. The FMV TR ships per reward (row.price) was already
+kept in tr_fmv_at_receipt metadata; now also set as unitPrice so the lot
+carries a real cost basis (unit_price drives the health check). External flow
+unchanged. Applies to new imports; existing rewards need a re-import or backfill.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../addons/tr-importer/src/lib/tr-csv-mapper.ts | 17 ++++++++---------
+ 1 file changed, 8 insertions(+), 9 deletions(-)
+
+diff --git a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+index d927423b..2cd6b7d5 100644
+--- a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
++++ b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+@@ -630,11 +630,13 @@ function mapWorthless(row: TrCsvRow, accountId: string): ActivityCreate[] {
+ /* ─────────────────────────  Delivery (staking)  ───────────────────────── */
+ 
+ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
+-  // TR Crypto Saveback: small SOL/ADA/etc. rewards delivered weekly.
+-  // Per user decision: record qty only (no cost basis, no income event).
+-  // If the user later sells these fractions, the gain shows as the full
+-  // sale price — accepted trade-off (€0.40 per reward, fiscal impact
+-  // negligible).
++  // TR Crypto Saveback / staking: small SOL/ADA/ETH rewards delivered weekly.
++  // Booked as an external TRANSFER_IN priced at the FMV TR ships with each
++  // reward (row.price) so the lot carries a real cost basis. Without it every
++  // reward's whole value later reads as gain and v3.5.3's data-health check
++  // flags the position as "incomplete cost basis" (unit_price drives that
++  // check — core/health/service.rs). External flow keeps the lone leg from
++  // tripping the missing-pair / unknown-boundary check.
+   const shares = row.shares ?? 0;
+   return [
+     {
+@@ -643,12 +645,9 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
+       activityDate: activityDateOf(row),
+       symbol: resolveAsset(row),
+       quantity: shares,
++      unitPrice: row.price ?? undefined,
+       currency: row.currency || "EUR",
+       comment: row.description || `TR Staking reward (${row.symbol})`,
+-      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
+-      // performance pipeline doesn't warn about a missing pair. (b) Reclassifying
+-      // staking as INTEREST/STAKING_REWARD income — using tr_fmv_at_receipt as the
+-      // value — remains a future option; impact is negligible (~€0.40/reward).
+       metadata: buildMetadata(row, {
+         tr_staking: true,
+         tr_fmv_at_receipt: row.price ?? undefined,
+-- 
+2.54.0 (Apple Git-157)
+

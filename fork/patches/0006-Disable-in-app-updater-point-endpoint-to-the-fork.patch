@@ -1,7 +1,7 @@
-From 68dcbee4173fef2681417ede171cff9ebd468ff5 Mon Sep 17 00:00:00 2001
+From 9b035b207fb71d0c62a33e2e3d9615bd36ba3546 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 09:53:04 +0100
-Subject: [PATCH 06/12] Disable in-app updater: point endpoint to the fork
+Subject: [PATCH 06/24] Disable in-app updater: point endpoint to the fork
 
 The upstream endpoint (wealthfolio.app/releases) + retained pubkey let the
 in-app 'Check for Update' install official Wealthfolio over the fork, switching
@@ -14,10 +14,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/apps/tauri/tauri.conf.json b/apps/tauri/tauri.conf.json
-index 0990954c..5b423b7a 100644
+index e2799820..2070f87a 100644
 --- a/apps/tauri/tauri.conf.json
 +++ b/apps/tauri/tauri.conf.json
-@@ -37,7 +37,7 @@
+@@ -45,7 +45,7 @@
    "plugins": {
      "updater": {
        "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RjI4MkRFOUYwRDM3N0QKUldSOU53MmYzb0x5WlBySmErU21wcjVHZFNtMW9zdGcyZTBBRWpVcHRDMkoyKzF1bkQ1VmdKbkYK",
@@ -27,5 +27,5 @@ index 0990954c..5b423b7a 100644
          "installMode": "passive"
        }
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

@@ -1,7 +1,7 @@
-From 49ee2b1265bcaa4457e0e4508f01744ff3c0242b Mon Sep 17 00:00:00 2001
+From a0270cb108b76fed7cafd45afc7d81592debc15b Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 09:37:08 +0100
-Subject: [PATCH 05/12] Percentages: two decimal places everywhere
+Subject: [PATCH 05/24] Percentages: two decimal places everywhere
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ---
@@ -28,10 +28,10 @@ index 6e1ef6af..9f214698 100644
  
  const MS_PER_DAY = 86_400_000;
 diff --git a/packages/ui/src/components/financial/gain-percent.tsx b/packages/ui/src/components/financial/gain-percent.tsx
-index d9b885d9..1043b357 100644
+index ac7e0477..91fdee5c 100644
 --- a/packages/ui/src/components/financial/gain-percent.tsx
 +++ b/packages/ui/src/components/financial/gain-percent.tsx
-@@ -15,7 +15,6 @@ function AnimatedNumber({ value }: { value: number }) {
+@@ -19,7 +19,6 @@ function AnimatedNumber({ value }: { value: number }) {
    const [NumberFlow, setNumberFlow] = React.useState<React.ComponentType<any> | null>(null);
  
    const absValue = Math.abs(value * 100);
@@ -39,7 +39,7 @@ index d9b885d9..1043b357 100644
    React.useEffect(() => {
      import("@number-flow/react").then((module) => {
        setNumberFlow(module.default);
-@@ -31,8 +30,8 @@ function AnimatedNumber({ value }: { value: number }) {
+@@ -42,8 +41,8 @@ function AnimatedNumber({ value }: { value: number }) {
        value={absValue}
        animated={true}
        format={{
@@ -51,7 +51,7 @@ index d9b885d9..1043b357 100644
      />
    );
 diff --git a/packages/ui/src/lib/utils.ts b/packages/ui/src/lib/utils.ts
-index 4cb40d60..5cc82a0f 100644
+index a07423a6..6a40d37b 100644
 --- a/packages/ui/src/lib/utils.ts
 +++ b/packages/ui/src/lib/utils.ts
 @@ -160,15 +160,11 @@ export function formatCompactAmount(
@@ -73,5 +73,5 @@ index 4cb40d60..5cc82a0f 100644
    } catch (error) {
      console.error(`Error formatting percent ${value}: ${error}`);
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

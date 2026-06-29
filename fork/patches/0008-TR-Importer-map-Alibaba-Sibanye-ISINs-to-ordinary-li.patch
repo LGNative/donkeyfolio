@@ -1,7 +1,7 @@
-From a567c485fecbefdbe3bca9718fa9fbd6c3d2b3f5 Mon Sep 17 00:00:00 2001
+From 22ee82d949e8b3011712daaf9d6c82116a0c55cb Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 22:23:22 +0100
-Subject: [PATCH 08/12] TR Importer: map Alibaba/Sibanye ISINs to ordinary
+Subject: [PATCH 08/24] TR Importer: map Alibaba/Sibanye ISINs to ordinary
  listings, not ADRs
 
 KYG017191142 is the HK ordinary share (9988.HK, HKD) but was mapped to
@@ -37,5 +37,5 @@ index 4ec1d8de..a80f8a30 100644
    US6877931096: { symbol: "OSCR", quoteCcy: "USD", instrumentType: "EQUITY" }, // Oscar Health
    US1491231015: { symbol: "CAT", quoteCcy: "USD", instrumentType: "EQUITY" }, // Caterpillar
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

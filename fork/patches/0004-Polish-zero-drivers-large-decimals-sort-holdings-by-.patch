@@ -1,7 +1,7 @@
-From c8ee248ce644a0de27b53eb6194180fc8dbd6476 Mon Sep 17 00:00:00 2001
+From 41f251326266d17331aef881608437fd6b147baf Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 21:00:54 +0100
-Subject: [PATCH 04/12] Polish: zero drivers, large-% decimals, sort holdings
+Subject: [PATCH 04/24] Polish: zero drivers, large-% decimals, sort holdings
  by return %
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -26,10 +26,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  4 files changed, 18 insertions(+), 8 deletions(-)
 
 diff --git a/apps/frontend/src/pages/holdings/components/holdings-table.tsx b/apps/frontend/src/pages/holdings/components/holdings-table.tsx
-index 1685ccb8..69685100 100644
+index 840b7ef2..bbeeba93 100644
 --- a/apps/frontend/src/pages/holdings/components/holdings-table.tsx
 +++ b/apps/frontend/src/pages/holdings/components/holdings-table.tsx
-@@ -395,11 +395,13 @@ const getColumns = (
+@@ -466,11 +466,13 @@ const getColumns = (
        const holdingA = rowA.original;
        const holdingB = rowB.original;
  
@@ -62,10 +62,10 @@ index 02c39286..ea31c6f8 100644
    const share = total > 0 ? (Math.abs(value) / total) * 100 : 0;
    const sign = Math.abs(value) < 0.005 ? "" : value > 0 ? "+" : "-";
 diff --git a/packages/ui/src/components/financial/gain-percent.tsx b/packages/ui/src/components/financial/gain-percent.tsx
-index 1043b357..d9b885d9 100644
+index 91fdee5c..ac7e0477 100644
 --- a/packages/ui/src/components/financial/gain-percent.tsx
 +++ b/packages/ui/src/components/financial/gain-percent.tsx
-@@ -15,6 +15,7 @@ function AnimatedNumber({ value }: { value: number }) {
+@@ -19,6 +19,7 @@ function AnimatedNumber({ value }: { value: number }) {
    const [NumberFlow, setNumberFlow] = React.useState<React.ComponentType<any> | null>(null);
  
    const absValue = Math.abs(value * 100);
@@ -73,7 +73,7 @@ index 1043b357..d9b885d9 100644
    React.useEffect(() => {
      import("@number-flow/react").then((module) => {
        setNumberFlow(module.default);
-@@ -30,8 +31,8 @@ function AnimatedNumber({ value }: { value: number }) {
+@@ -41,8 +42,8 @@ function AnimatedNumber({ value }: { value: number }) {
        value={absValue}
        animated={true}
        format={{
@@ -85,7 +85,7 @@ index 1043b357..d9b885d9 100644
      />
    );
 diff --git a/packages/ui/src/lib/utils.ts b/packages/ui/src/lib/utils.ts
-index 5cc82a0f..4cb40d60 100644
+index 6a40d37b..a07423a6 100644
 --- a/packages/ui/src/lib/utils.ts
 +++ b/packages/ui/src/lib/utils.ts
 @@ -160,11 +160,15 @@ export function formatCompactAmount(
@@ -107,5 +107,5 @@ index 5cc82a0f..4cb40d60 100644
    } catch (error) {
      console.error(`Error formatting percent ${value}: ${error}`);
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 
