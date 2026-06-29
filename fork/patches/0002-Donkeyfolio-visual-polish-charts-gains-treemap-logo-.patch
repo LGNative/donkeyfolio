@@ -1,7 +1,7 @@
-From c85029294554cf7c5091fdec4f50977a3d1ce412 Mon Sep 17 00:00:00 2001
+From 5c31f8a0a9bdd940d4650e64762a309dcd8bf125 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 20:36:13 +0100
-Subject: [PATCH 02/12] =?UTF-8?q?Donkeyfolio:=20visual=20polish=20?=
+Subject: [PATCH 02/24] =?UTF-8?q?Donkeyfolio:=20visual=20polish=20?=
  =?UTF-8?q?=E2=80=94=20charts,=20gains,=20treemap,=20logo,=20avatars?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -32,7 +32,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  5 files changed, 41 insertions(+), 54 deletions(-)
 
 diff --git a/apps/frontend/src/components/history-chart.tsx b/apps/frontend/src/components/history-chart.tsx
-index aab620e8..9d4e344d 100644
+index 5e9976ab..4b39dace 100644
 --- a/apps/frontend/src/components/history-chart.tsx
 +++ b/apps/frontend/src/components/history-chart.tsx
 @@ -83,7 +83,7 @@ const CustomTooltip = ({
@@ -44,7 +44,7 @@ index aab620e8..9d4e344d 100644
  
    return (
      <div className="bg-popover pointer-events-none grid grid-cols-1 gap-1.5 rounded-md border p-2 shadow-md">
-@@ -308,14 +308,14 @@ export function HistoryChart({
+@@ -310,14 +310,14 @@ export function HistoryChart({
                </>
              ) : allPositive ? (
                <>
@@ -64,7 +64,7 @@ index aab620e8..9d4e344d 100644
                  <stop offset={zeroPercent} stopColor="var(--destructive)" stopOpacity={0.05} />
                  <stop offset="100%" stopColor="var(--destructive)" stopOpacity={0.2} />
                </>
-@@ -325,10 +325,10 @@ export function HistoryChart({
+@@ -327,10 +327,10 @@ export function HistoryChart({
              {allNegative ? (
                <stop offset="0%" stopColor="var(--destructive)" />
              ) : allPositive ? (
@@ -77,7 +77,7 @@ index aab620e8..9d4e344d 100644
                  <stop offset={zeroPercent} stopColor="var(--destructive)" />
                </>
              )}
-@@ -363,7 +363,7 @@ export function HistoryChart({
+@@ -365,7 +365,7 @@ export function HistoryChart({
            stroke={`url(#${strokeGradientId})`}
            activeDot={(props: RechartsActiveDotProps & { payload?: HistoryChartData }) =>
              showMarkers && props.payload?.date && markerDateSet.has(props.payload.date) ? null : (
@@ -122,7 +122,7 @@ index 3b5aa8ed..93d964e5 100644
            className={cn(
              "px-0.5 leading-none",
 diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
-index d3b28d11..346d3c67 100644
+index ca9d65b7..103499a7 100644
 --- a/apps/frontend/src/globals.css
 +++ b/apps/frontend/src/globals.css
 @@ -415,7 +415,7 @@
@@ -157,7 +157,7 @@ index d3b28d11..346d3c67 100644
    --chart-stone: #b1aa9a;
  
    /* Sidebar (full hsl colors) */
-@@ -497,15 +497,16 @@
+@@ -499,15 +499,16 @@
    --primary: hsl(150 65% 50%); /* Donkeyfolio brand green (lifted for dark) */
    --primary-foreground: hsl(0 0% 0%);
    --ring: hsl(150 65% 50%);
@@ -267,5 +267,5 @@ index 51202503..91fd72d4 100644
  
                    <span
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

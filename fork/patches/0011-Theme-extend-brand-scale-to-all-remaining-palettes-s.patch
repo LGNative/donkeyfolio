@@ -1,7 +1,7 @@
-From 5e79cfc85e499d034e21c511b5847e09c9627ba2 Mon Sep 17 00:00:00 2001
+From 488a46a6bdb388062627748aa9d457a7e50d8f1f Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 10 Jun 2026 20:51:32 +0100
-Subject: [PATCH 11/12] Theme: extend brand scale to all remaining palettes +
+Subject: [PATCH 11/24] Theme: extend brand scale to all remaining palettes +
  softer paper bg
 
 Replace every remaining hand-picked colour with theme tokens derived from
@@ -286,7 +286,7 @@ index 61b96d75..2bb15848 100644
  };
  
 diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
-index c274984a..6ee1d4e7 100644
+index e8fbafeb..432b126e 100644
 --- a/apps/frontend/src/globals.css
 +++ b/apps/frontend/src/globals.css
 @@ -386,8 +386,8 @@
@@ -330,7 +330,7 @@ index c274984a..6ee1d4e7 100644
    --chart-stone: hsl(var(--flexoki-tx-2)); /* neutral 'Other' filler — from the design system */
  
    /* Sidebar (full hsl colors) */
-@@ -509,20 +510,20 @@
+@@ -511,20 +512,20 @@
    --flexoki-gr: 72 46% 41%;
    --flexoki-ye: 45 82% 45%;
  
@@ -442,7 +442,7 @@ index b0981173..db6691f6 100644
      </div>
    );
 diff --git a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
-index f117a6ca..d66ad8a4 100644
+index bc5b7464..ce3cade9 100644
 --- a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
 +++ b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
 @@ -19,10 +19,11 @@ import {
@@ -461,15 +461,15 @@ index f117a6ca..d66ad8a4 100644
  
  // ── Helpers ───────────────────────────────────────────────────────────────────
  
-@@ -554,7 +555,7 @@ function DriftBar({
-             {/* tolerance band: 0 → band */}
+@@ -594,7 +595,7 @@ function DriftBar({
+             {/* tolerance band: solid to the tightest sleeve, soft to the widest sleeve */}
              <div
                className="absolute inset-y-0 left-0 rounded-full"
--              style={{ width: `${bandPos}%`, background: "#9db8a8" }}
-+              style={{ width: `${bandPos}%`, background: "var(--brand-300)" }}
+-              style={{ width: `${toleranceMinPos}%`, background: "#9db8a8" }}
++              style={{ width: `${toleranceMinPos}%`, background: "var(--brand-300)" }}
              />
-           </>
-         )}
+             {toleranceMaxPos > toleranceMinPos && (
+               <div
 diff --git a/apps/frontend/src/pages/asset/alternative-asset-content.tsx b/apps/frontend/src/pages/asset/alternative-asset-content.tsx
 index 9bd6560e..df2c3725 100644
 --- a/apps/frontend/src/pages/asset/alternative-asset-content.tsx
@@ -497,10 +497,10 @@ index 9bd6560e..df2c3725 100644
  
  // Type-specific subtype labels
 diff --git a/apps/frontend/src/pages/insights/overview/target-rails-card.tsx b/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
-index 62d32025..0ae631cb 100644
+index 5cf2b3ab..bccedf0d 100644
 --- a/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
 +++ b/apps/frontend/src/pages/insights/overview/target-rails-card.tsx
-@@ -253,9 +253,9 @@ export function TargetRailsCard({
+@@ -265,9 +265,9 @@ export function TargetRailsCard({
              </div>
              <div className="space-y-3">
                {[
@@ -607,5 +607,5 @@ index 9f214698..a912578e 100644
  };
  
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

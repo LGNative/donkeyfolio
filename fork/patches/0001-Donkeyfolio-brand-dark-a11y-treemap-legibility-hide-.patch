@@ -1,7 +1,7 @@
-From 25219d4e9cb49a91eb22cac9f6dc9944e9621d42 Mon Sep 17 00:00:00 2001
+From f5180f61ea8950495f3857bdcb79f95a0f5946d4 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 18:33:03 +0100
-Subject: [PATCH 01/12] Donkeyfolio: brand, dark a11y, treemap legibility, hide
+Subject: [PATCH 01/24] Donkeyfolio: brand, dark a11y, treemap legibility, hide
  Connect, repo cleanup
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -26,7 +26,7 @@ clean upstream base.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ---
- README.md                                     |  794 +---
+ README.md                                     |  816 +---
  apps/frontend/index.html                      |    2 +-
  apps/frontend/public/apple-touch-icon.png     |  Bin 4470 -> 6814 bytes
  .../public/button-buy-me-a-coffee.png         |  Bin 26754 -> 0 bytes
@@ -127,7 +127,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  .../src/pages/tr-converter-page.tsx           | 2220 +++++++++++
  fork/addons/tr-importer/tsconfig.json         |   18 +
  fork/addons/tr-importer/vite.config.ts        |   37 +
- 101 files changed, 11050 insertions(+), 836 deletions(-)
+ 101 files changed, 11050 insertions(+), 858 deletions(-)
  delete mode 100644 apps/frontend/public/button-buy-me-a-coffee.png
  delete mode 100644 apps/frontend/public/screenshot.webp
  delete mode 100644 apps/frontend/public/wf-vector.png
@@ -161,10 +161,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  create mode 100644 fork/addons/tr-importer/vite.config.ts
 
 diff --git a/README.md b/README.md
-index 06d307e3..0fd774ee 100644
+index 0c27fc28..0fd774ee 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,783 +1,49 @@
+@@ -1,805 +1,49 @@
 -<div align="center">
 -  <a href="https://github.com/wealthfolio/wealthfolio">
 -    <img src="apps/frontend/public/logo.svg" alt="Logo" width="80" height="80">
@@ -177,10 +177,12 @@ index 06d307e3..0fd774ee 100644
 +on your machine in a local SQLite database; no account, no cloud required.
  
 -  <p align="center">
--    A Beautiful Personal Finance Tracker — investments, net worth, spending, and simulations
+-    The open-source, private portfolio tracker — investments, net worth, spending, and simulations.
+-    <br />
+-    Local-first: your data lives on your device.
 -    <br />
 -    <br />
--    <a href="https://wealthfolio.app">Website</a>
+-    <a href="https://wealthfolio.app?utm_source=github&utm_medium=readme">Website</a>
 -    ·
 -    <a href="https://discord.gg/WDMCY6aPWK">Discord</a>
 -    ·
@@ -188,22 +190,30 @@ index 06d307e3..0fd774ee 100644
 -    ·
 -    <a href="https://github.com/wealthfolio/wealthfolio/releases">Releases</a>
 -  </p>
--</div>
--<div align="center">
 +This fork follows upstream Wealthfolio closely and adds a thin personal layer on
 +top: branding, a Trade Republic CSV importer add-on, and a few small fixes. All
 +credit for the application itself goes to the Wealthfolio authors — see
 +**Credits** below.
  
--[<img src="./apps/frontend/public/button-buy-me-a-coffee.png" width="180" alt="Buy me a coffee button"/>](https://www.buymeacoffee.com/afadil)
+-  <p align="center">
+-    <a href="https://wealthfolio.app/download?utm_source=github&utm_medium=readme&utm_campaign=cta"><strong>⬇️&nbsp;&nbsp;Download for macOS · Windows · Linux</strong></a>
+-    &nbsp;·&nbsp;
+-    <a href="https://apps.apple.com/us/app/wealthfolio-private-finance/id6732888445">📱&nbsp;iOS&nbsp;App</a>
+-    &nbsp;·&nbsp;
+-    <a href="https://wealthfolio.app/docs/guide/self-hosting/docker?utm_source=github&utm_medium=readme">🐳&nbsp;Docker</a>
+-  </p>
+-</div>
+-<div align="center">
 +## Stack
  
--</div>
+-[<img src="./apps/frontend/public/button-buy-me-a-coffee.png" width="180" alt="Buy me a coffee button"/>](https://www.buymeacoffee.com/afadil)
 +- **Frontend** — React + Vite + TypeScript (Tailwind)
 +- **Desktop / mobile** — Tauri (Rust)
 +- **Web mode** — Axum HTTP server
 +- **Storage** — SQLite (Diesel migrations)
  
+-</div>
+-
 -<div align="center">
 -<a href="https://news.ycombinator.com/item?id=41465735">
 -  <img
@@ -221,11 +231,19 @@ index 06d307e3..0fd774ee 100644
 -
 -## Introduction
 -
--**Wealthfolio App** is a Beautiful Personal Finance Tracker — investments, net
--worth, spending, and simulations — with local data storage. No subscriptions, no
--cloud.
+-**Wealthfolio** is an open-source, private portfolio tracker — investments, net
+-worth, spending, and simulations. All your data is stored locally on your
+-device: no cloud database, no account required, free forever.
 -
--Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
+-For automatic brokerage syncing (30+ institutions, read-only) and encrypted
+-multi-device sync, there's
+-**[Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)**
+-— an optional subscription that covers the real cost of the brokerage data
+-connections. The app never requires it: manual tracking and CSV import are free,
+-forever.
+-
+-Visit the website at
+-[wealthfolio.app](https://wealthfolio.app/?utm_source=github&utm_medium=readme).
 -
 -![Screenshot](apps/frontend/public/screenshot.webp)
 -
@@ -233,16 +251,20 @@ index 06d307e3..0fd774ee 100644
 -
 -- **📊 Portfolio Tracking** - Track your investments across multiple accounts
 -  and asset types
--- **📈 Performance Analytics** - Detailed performance metrics and historical
--  analysis
+-- **📈 Performance Analytics** - True time-weighted and money-weighted returns,
+-  benchmark comparison, and historical analysis
 -- **💰 Activity Management** - Import and manage all your trading activities
 -- **🎯 Goal Planning** - Set and track financial goals with allocation
 -  management
 -- **🔒 Local Data** - All data stored locally with no cloud dependencies
+-- **🔄 Optional Broker Sync** - Auto-sync 30+ brokerages with
+-  [Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)
+-  (read-only, entirely optional)
 -- **🧩 Extensible** - Powerful addon system for custom functionality
 -- **🌍 Multi-Currency** - Support for multiple currencies with exchange rate
 -  management
--- **📱 Cross-Platform** - Available on Windows, macOS, and Linux
+-- **📱 Cross-Platform** - Desktop (Windows, macOS, Linux), iOS, and self-hosted
+-  Docker/web
 -
 -### 🧩 Addon System
 -
@@ -601,25 +623,18 @@ index 06d307e3..0fd774ee 100644
 -
 -This publishes the app at `http://localhost:8088` by default. Set `WF_PORT` to
 -change the host port:
+-
+-```bash
+-WF_PORT=8090 docker compose --env-file .env.docker up -d
+-```
+-
+-**Docker Compose behind a reverse proxy**:
 +## Development
  
  ```bash
--WF_PORT=8090 docker compose --env-file .env.docker up -d
--```
-+pnpm install        # install dependencies
- 
--**Docker Compose behind a reverse proxy**:
-+pnpm tauri dev      # desktop app (Tauri)
-+pnpm run dev:web    # browser (web mode)
- 
--```bash
 -docker compose --env-file .env.docker -f compose.yml -f compose.proxy.yml up -d
-+pnpm test           # frontend tests
-+cargo test          # Rust tests
-+pnpm type-check     # TypeScript
-+pnpm lint           # lint
- ```
- 
+-```
+-
 -Use this when the proxy runs on the same Docker network and forwards traffic to
 -`http://wealthfolio:8088`.
 -
@@ -627,9 +642,8 @@ index 06d307e3..0fd774ee 100644
 -
 -Docker CLI `--env-file` keeps `$` characters as-is, so use raw values without
 -Compose escaping:
-+## Build
- 
- ```bash
+-
+-```bash
 -SECRET=$(openssl rand -base64 32)
 -HASH=$(printf 'your-password' | argon2 yoursalt16chars! -id -e)
 -
@@ -666,9 +680,12 @@ index 06d307e3..0fd774ee 100644
 -  -v wealthfolio-data:/data \
 -  wealthfolio/wealthfolio:latest
 -```
--
++pnpm install        # install dependencies
+ 
 -**Development mode** (with CORS for local Vite dev server, no built-in auth):
--
++pnpm tauri dev      # desktop app (Tauri)
++pnpm run dev:web    # browser (web mode)
+ 
 -```bash
 -docker run --rm -it \
 -  --name wealthfolio \
@@ -680,11 +697,16 @@ index 06d307e3..0fd774ee 100644
 -  -p 8088:8088 \
 -  -v wealthfolio-data:/data \
 -  wealthfolio/wealthfolio:latest
--```
--
++pnpm test           # frontend tests
++cargo test          # Rust tests
++pnpm type-check     # TypeScript
++pnpm lint           # lint
+ ```
+ 
 -**Production with encryption** (recommended):
--
--```bash
++## Build
+ 
+ ```bash
 -docker run --rm -d \
 -  --name wealthfolio \
 -  -e WF_LISTEN_ADDR=0.0.0.0:8088 \
@@ -695,8 +717,9 @@ index 06d307e3..0fd774ee 100644
 -  -p 8088:8088 \
 -  -v wealthfolio-data:/data \
 -  wealthfolio/wealthfolio:latest
--```
--
++pnpm tauri build    # production desktop build
+ ```
+ 
 -### Environment Variables
 -
 -The container supports all `WF_*` environment variables documented in the
@@ -904,9 +927,8 @@ index 06d307e3..0fd774ee 100644
 -├── package.json                 # Node.js dependencies
 -├── pnpm-workspace.yaml          # pnpm workspace config
 -└── tsconfig.json                # TypeScript config
-+pnpm tauri build    # production desktop build
- ```
- 
+-```
+-
 -Official and community addon source lives in the separate
 -[wealthfolio-addons](https://github.com/wealthfolio/wealthfolio-addons)
 -repository.
@@ -15116,7 +15138,7 @@ index 24daab41..fd531d79 100644
                engine of your retirement plan.
              </Term>
 diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
-index 9f0e884e..d3b28d11 100644
+index dbcdc2e6..ca9d65b7 100644
 --- a/apps/frontend/src/globals.css
 +++ b/apps/frontend/src/globals.css
 @@ -405,8 +405,8 @@
@@ -15151,7 +15173,7 @@ index 9f0e884e..d3b28d11 100644
    --chart-2: #7e9f8c;
    --chart-3: #cbba8c;
    --chart-4: #c08a5f;
-@@ -485,7 +485,7 @@
+@@ -487,7 +487,7 @@
    --flexoki-ui-2: 40 3% 20%;
    --flexoki-ui-3: 30 3% 24%;
    --flexoki-tx: 55 10% 79%;
@@ -15160,7 +15182,7 @@ index 9f0e884e..d3b28d11 100644
    --flexoki-tx-3: 45 2% 33%;
    --flexoki-re: 5 61% 54%;
    --flexoki-gr: 72 46% 41%;
-@@ -494,7 +494,10 @@
+@@ -496,7 +496,10 @@
    /* Dark chart palette — same semantic hues as light (forest / sage / sand /
       clay / plum + stone), tuned for the dark surface: forest is lifted for
       contrast, the stones are pulled down so they stay calm instead of glaring. */
@@ -15172,7 +15194,7 @@ index 9f0e884e..d3b28d11 100644
    --chart-2: #7e9f8c;
    --chart-3: #cbba8c;
    --chart-4: #c08a5f;
-@@ -523,6 +526,9 @@
+@@ -525,6 +528,9 @@
    --toast-info-border: var(--color-blue-800);
  
    --input: hsl(var(--flexoki-ui-2));
@@ -15266,11 +15288,11 @@ index 51c1bf71..e2ad1d3f 100644
            >
              {gain > 0 ? "+" + formatPercent(gain) : formatPercent(gain)}
 diff --git a/apps/frontend/src/pages/layouts/app-layout.tsx b/apps/frontend/src/pages/layouts/app-layout.tsx
-index 6abcbce7..a1a4a419 100644
+index a485862e..3b378ea6 100644
 --- a/apps/frontend/src/pages/layouts/app-layout.tsx
 +++ b/apps/frontend/src/pages/layouts/app-layout.tsx
-@@ -63,7 +63,7 @@ const AppLayoutContent = () => {
-         className="flex h-screen items-center justify-center supports-[height:100dvh]:h-dvh"
+@@ -66,7 +66,7 @@ const AppLayoutContent = () => {
+         className="flex h-screen items-center justify-center"
          style={{ backgroundColor: "#09090b" }}
        >
 -        <img src="/logo-gold.png" alt="Wealthfolio" className="h-[100px] w-auto" />
@@ -15445,10 +15467,10 @@ index 16579746..f3db54e4 100644
                  </EmptyPlaceholder.Description>
                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:gap-3">
 diff --git a/apps/frontend/src/pages/settings/addons/components/addon-update-card.tsx b/apps/frontend/src/pages/settings/addons/components/addon-update-card.tsx
-index c0c92858..bf521556 100644
+index c7c58e19..0f2d2b47 100644
 --- a/apps/frontend/src/pages/settings/addons/components/addon-update-card.tsx
 +++ b/apps/frontend/src/pages/settings/addons/components/addon-update-card.tsx
-@@ -230,7 +230,7 @@ export function AddonUpdateCard({
+@@ -144,7 +144,7 @@ export function AddonUpdateCard({
          <div className="mt-3 rounded-md bg-amber-100 p-2 dark:bg-amber-900/20">
            <p className="text-xs text-amber-800 dark:text-amber-200">
              <Icons.Info className="mr-1 inline h-3 w-3" />
@@ -15496,7 +15518,7 @@ index 0bd4813b..8b3d1b16 100644
              </p>
            </div>
 diff --git a/apps/frontend/src/pages/settings/settings-layout.tsx b/apps/frontend/src/pages/settings/settings-layout.tsx
-index 36d60559..5a7727d1 100644
+index fcc0dbd6..b0a19450 100644
 --- a/apps/frontend/src/pages/settings/settings-layout.tsx
 +++ b/apps/frontend/src/pages/settings/settings-layout.tsx
 @@ -3,6 +3,7 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -57313,29 +57335,33 @@ z)qwJS{>)ba)f`B^YWH0VW0F=f7&t{DBwHYg1Wu7i;1mg*B9Xu;5;#R7fm0+BI7I@d
 oNF;EI1Wu7i;1r1jPEnxxA67|Ojr+lNn*aa+07*qoM6N<$f|AGwy8r+H
 
 diff --git a/apps/tauri/tauri.conf.json b/apps/tauri/tauri.conf.json
-index d8d5d66f..0990954c 100644
+index 6802c855..e2799820 100644
 --- a/apps/tauri/tauri.conf.json
 +++ b/apps/tauri/tauri.conf.json
-@@ -26,14 +26,14 @@
+@@ -26,7 +26,7 @@
      },
      "macOS": {
        "bundleVersion": "20260301.1",
 -      "signingIdentity": "Apple Distribution: Teymz Inc (DYDJ2RNL5H)",
 +      "signingIdentity": "-",
        "minimumSystemVersion": "10.13"
+     },
+     "linux": {
+@@ -38,10 +38,10 @@
+       }
      }
    },
 -  "productName": "Wealthfolio",
 -  "mainBinaryName": "Wealthfolio",
 +  "productName": "Donkeyfolio",
 +  "mainBinaryName": "Donkeyfolio",
-   "version": "3.5.2",
+   "version": "3.5.3",
 -  "identifier": "com.teymz.wealthfolio",
 +  "identifier": "com.luisgoncalves.donkeyfolio",
    "plugins": {
      "updater": {
        "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RjI4MkRFOUYwRDM3N0QKUldSOU53MmYzb0x5WlBySmErU21wcjVHZFNtMW9zdGcyZTBBRWpVcHRDMkoyKzF1bkQ1VmdKbkYK",
-@@ -63,7 +63,7 @@
+@@ -71,7 +71,7 @@
          "theme": "Light",
          "titleBarStyle": "Overlay",
          "hiddenTitle": true,
@@ -68409,5 +68435,5 @@ index 00000000..e0bb6354
 +  },
 +});
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

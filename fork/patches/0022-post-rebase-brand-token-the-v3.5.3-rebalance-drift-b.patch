@@ -1,0 +1,30 @@
+From 982a8b9c11f193d68b40e431b2bf01fb01547541 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Fri, 26 Jun 2026 22:31:26 +0100
+Subject: [PATCH 22/24] post-rebase: brand-token the v3.5.3 rebalance drift
+ band
+
+v3.5.3 reworked rebalance-tab and reintroduced hardcoded #9db8a8 for the
+soft (widest-sleeve) tolerance band; match the solid band's var(--brand-300).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../src/pages/allocation-targets/components/rebalance-tab.tsx   | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
+index ce3cade9..30fb2948 100644
+--- a/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
++++ b/apps/frontend/src/pages/allocation-targets/components/rebalance-tab.tsx
+@@ -603,7 +603,7 @@ function DriftBar({
+                 style={{
+                   left: `${toleranceMinPos}%`,
+                   width: `${toleranceMaxPos - toleranceMinPos}%`,
+-                  background: "#9db8a8",
++                  background: "var(--brand-300)",
+                 }}
+               />
+             )}
+-- 
+2.54.0 (Apple Git-157)
+

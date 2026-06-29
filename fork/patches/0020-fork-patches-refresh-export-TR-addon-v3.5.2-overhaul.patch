@@ -1,0 +1,2681 @@
+From 5e8897727b75ba40e28a5266d2b0d0068b591bb1 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Sun, 21 Jun 2026 18:16:10 +0100
+Subject: [PATCH 20/24] fork/patches: refresh export (TR addon v3.5.2 overhaul)
+ + docs
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ fork/FORK-CHANGES.md                          |   25 +
+ ...conversion-fix-manual-cash-transfer-.patch |  506 ++++
+ ...ish-UI-2-tab-simplification-Start-ov.patch | 2109 +++++++++++++++++
+ 3 files changed, 2640 insertions(+)
+ create mode 100644 fork/patches/0016-TR-Importer-EUR-conversion-fix-manual-cash-transfer-.patch
+ create mode 100644 fork/patches/0017-TR-Importer-English-UI-2-tab-simplification-Start-ov.patch
+
+diff --git a/fork/FORK-CHANGES.md b/fork/FORK-CHANGES.md
+index f981c0c0..2acd7505 100644
+--- a/fork/FORK-CHANGES.md
++++ b/fork/FORK-CHANGES.md
+@@ -116,6 +116,31 @@ history flows in EUR — **with no hardcoded table and no base-code changes**.
+ 
+ ---
+ 
++### G. TR Importer overhaul (v3.5.2 era) — patches 0016-0017
++
++Done after the v3.5 data marathon, all SDK-only (no base-code change):
++
++- **EUR conversion fix** — `src/lib/tr-fx-pairs.ts`: the v3.5 core converts a
++  holding's quote currency to base (EUR) via FX when they differ; it only needs
++  the `FX:<ccy>/EUR` rate to exist. The routine reads each held asset's real
++  quote currency and creates the missing pairs (source YAHOO, ECB-seeded) via
++  `exchangeRates.add`, then syncs + recalculates. This un-inflated the portfolio
++  (USD shown as EUR → real EUR). Button: "Fix EUR conversion" in the EUR view.
++- **MANUAL_CASH_TRANSFER** mapped by amount sign → DEPOSIT / WITHDRAWAL (was
++  skipped as Unknown Type; e.g. a TR goodwill payment).
++- **English UI** — the whole addon translated PT → EN to match the base app
++  (logic strings / codes untouched). See `tr-addon-english-ui` memory.
++- **2 tabs** (Import + Analysis) — removed the Advanced tab (AI expert + SDK
++  test) and deleted the now-dead `expert-panel.tsx`, `tr-ai-expert.ts`,
++  `tr-sdk-test.ts`. Diagnostics live in Analysis.
++- **"Start over"** button — return to the drop zone mid-import without leaving
++  the app.
++- **Review Assets redesign** — urgency-grouped sections, currency badges (USD →
++  EUR), per-asset density, pre-import type breakdown.
++- `manifest.json`: version 5.3.2 → 3.5.2 (match the app), shorter description.
++
++---
++
+ ## Operational items (NOT in git — runtime/data)
+ 
+ These are not code; they live on the user's machine and must be re-done if the
+diff --git a/fork/patches/0016-TR-Importer-EUR-conversion-fix-manual-cash-transfer-.patch b/fork/patches/0016-TR-Importer-EUR-conversion-fix-manual-cash-transfer-.patch
+new file mode 100644
+index 00000000..d3c1ce9b
+--- /dev/null
++++ b/fork/patches/0016-TR-Importer-EUR-conversion-fix-manual-cash-transfer-.patch
+@@ -0,0 +1,506 @@
++From 6dca8157e9cbe1d2ce9d9709e88662c24bd8b31f Mon Sep 17 00:00:00 2001
++From: LGNative <luis@nativestride.io>
++Date: Sun, 21 Jun 2026 18:14:38 +0100
++Subject: [PATCH 16/17] TR Importer: EUR conversion fix + manual-cash-transfer
++ mapping
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++The v3.5 core converts a holding's quote currency to its base currency via FX
++when they differ — it only needs the FX:<ccy>/EUR rate to exist. New
++tr-fx-pairs.ts reads the actual quote currency of each held asset and creates
++the missing FX pairs (source YAHOO, seeded live from the ECB) via the SDK, then
++syncs + recalculates. Wired to a 'Fix EUR conversion' button in the EUR view.
++This is what un-inflated the portfolio (USD shown as EUR → real EUR).
++
++Also map TR's MANUAL_CASH_TRANSFER (e.g. a goodwill/compensation payment) by
++amount sign → DEPOSIT / WITHDRAWAL, so it's no longer skipped as Unknown Type.
++
++Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
++---
++ .../src/components/eur-holdings-view.tsx      | 122 ++++++++----
++ .../tr-importer/src/lib/tr-csv-mapper.ts      |  12 +-
++ .../addons/tr-importer/src/lib/tr-fx-pairs.ts | 174 ++++++++++++++++++
++ 3 files changed, 272 insertions(+), 36 deletions(-)
++ create mode 100644 fork/addons/tr-importer/src/lib/tr-fx-pairs.ts
++
++diff --git a/fork/addons/tr-importer/src/components/eur-holdings-view.tsx b/fork/addons/tr-importer/src/components/eur-holdings-view.tsx
++index 0fcf7d7a..0db8c9b7 100644
++--- a/fork/addons/tr-importer/src/components/eur-holdings-view.tsx
+++++ b/fork/addons/tr-importer/src/components/eur-holdings-view.tsx
++@@ -33,6 +33,7 @@ import {
++   type EurHoldingsTotals,
++ } from "../lib/tr-eur-holdings";
++ import { loadFxRates, type FxRateMap } from "../lib/tr-fx-rates";
+++import { ensureEurFxPairs } from "../lib/tr-fx-pairs";
++ 
++ interface AccountSummary {
++   id: string;
++@@ -67,6 +68,8 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++   const [filter, setFilter] = React.useState("");
++   // null = all accounts aggregated (default). Account id otherwise.
++   const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(null);
+++  // null = idle; a string is the in-progress message while creating FX pairs.
+++  const [fixing, setFixing] = React.useState<string | null>(null);
++ 
++   const load = React.useCallback(async () => {
++     setState({ kind: "loading" });
++@@ -117,6 +120,25 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++     }
++   }, [ctx]);
++ 
+++  // Fix the EUR conversion: re-align mislabelled asset currencies to native,
+++  // create the missing FX:<ccy>/EUR pairs (source YAHOO, ECB-seeded), then sync
+++  // + recalculate. Reloads when done. See tr-fx-pairs.ts.
+++  const handleCreateMissingRates = React.useCallback(async () => {
+++    setFixing("Fixing…");
+++    try {
+++      const res = await ensureEurFxPairs(ctx, (msg) => setFixing(msg));
+++      ctx.api.logger.info(
+++        `[TR fx] currencies=${res.currencies.join(",") || "—"} created=${res.created.join(",") || "—"} ` +
+++          `skipped=${res.skipped.length} failed=${res.failed.length} sync=${res.synced} recalc=${res.recalculated}`,
+++      );
+++      await load();
+++    } catch (e) {
+++      ctx.api.logger.error(`[TR fx] ${(e as Error).message}`);
+++    } finally {
+++      setFixing(null);
+++    }
+++  }, [ctx, load]);
+++
++   React.useEffect(() => {
++     void load();
++   }, [load]);
++@@ -161,9 +183,9 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++       <Card>
++         <CardContent className="flex flex-col items-center justify-center py-16">
++           <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
++-          <p className="text-sm font-medium">A computar holdings em €…</p>
+++          <p className="text-sm font-medium">Computing holdings in €…</p>
++           <p className="text-muted-foreground mt-1 text-xs">
++-            Lê posições, activities e FX rates da DB do Wealthfolio.
+++            Reads positions, activities and FX rates from the Wealthfolio DB.
++           </p>
++         </CardContent>
++       </Card>
++@@ -176,17 +198,17 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++         <CardHeader>
++           <CardTitle className="flex items-center gap-2">
++             <Icons.AlertCircle className="text-destructive h-5 w-5" />
++-            Falhou ao carregar Vista EUR
+++            Failed to load EUR View
++           </CardTitle>
++           <CardDescription>{state.message}</CardDescription>
++         </CardHeader>
++         <CardContent className="flex gap-2">
++           <Button variant="outline" onClick={load}>
++             <Icons.Refresh className="mr-2 h-4 w-4" />
++-            Tentar outra vez
+++            Try again
++           </Button>
++           <Button variant="outline" onClick={onClose}>
++-            Fechar
+++            Close
++           </Button>
++         </CardContent>
++       </Card>
++@@ -209,21 +231,39 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++           <div>
++             <CardTitle className="flex items-center gap-2">
++               <Icons.Globe className="text-primary h-5 w-5" />
++-              Vista EUR — alinhada com TR
+++              EUR View — aligned with TR
++             </CardTitle>
++             <CardDescription className="mt-1">
++-              Today's Price, Book Cost, Avg Cost e Total Value calculados em € usando os FX rates
++-              internos do Wealthfolio. Computado em runtime, nada é escrito de volta. Atualizado{" "}
+++              Today's Price, Book Cost, Avg Cost and Total Value computed in € using Wealthfolio's
+++              internal FX rates. Computed at runtime, nothing is written back. Updated{" "}
++               {fmtTime(fetchedAt)}.
++             </CardDescription>
++           </div>
++           <div className="flex gap-2">
+++            <Button
+++              variant="default"
+++              size="sm"
+++              disabled={fixing != null}
+++              onClick={handleCreateMissingRates}
+++            >
+++              {fixing != null ? (
+++                <>
+++                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+++                  {fixing}
+++                </>
+++              ) : (
+++                <>
+++                  <Icons.Sparkles className="mr-2 h-4 w-4" />
+++                  Fix EUR conversion
+++                </>
+++              )}
+++            </Button>
++             <Button variant="outline" size="sm" onClick={load}>
++               <Icons.Refresh className="mr-2 h-4 w-4" />
++-              Refrescar
+++              Refresh
++             </Button>
++             <Button variant="outline" size="sm" onClick={onClose}>
++-              Fechar
+++              Close
++             </Button>
++           </div>
++         </CardHeader>
++@@ -234,7 +274,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++         <Card>
++           <CardHeader className="pb-2">
++             <CardTitle className="text-sm font-medium">
++-              Filtrar por conta
+++              Filter by account
++               {selectedAccount && (
++                 <span className="text-muted-foreground ml-2 text-xs font-normal">
++                   · {selectedAccount.name}
++@@ -242,16 +282,16 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++               )}
++             </CardTitle>
++             <CardDescription className="text-xs">
++-              Por defeito a Vista EUR mostra o portfolio agregado de todas as contas. Clica numa
++-              conta para isolar a vista a essa conta — útil quando tens vários brokers e queres ver
++-              cada um separadamente.
+++              By default the EUR View shows the aggregated portfolio across all accounts. Click an
+++              account to isolate the view to that account — useful when you have several brokers and
+++              want to see each one separately.
++             </CardDescription>
++           </CardHeader>
++           <CardContent className="pt-2">
++             <div className="flex flex-wrap gap-2">
++               <AccountChip
++-                label="Todas as contas"
++-                sublabel={`${accountsWithData.length}/${accounts.length} com dados`}
+++                label="All accounts"
+++                sublabel={`${accountsWithData.length}/${accounts.length} with data`}
++                 active={selectedAccountId == null}
++                 onClick={() => setSelectedAccountId(null)}
++               />
++@@ -287,13 +327,13 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++       <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
++         <Card className="border-blue-500/10 bg-blue-500/10">
++           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
++-            <CardTitle className="text-sm font-medium">Posições</CardTitle>
+++            <CardTitle className="text-sm font-medium">Positions</CardTitle>
++             <span className="text-xl font-bold tabular-nums sm:text-2xl">{rows.length}</span>
++           </CardHeader>
++           <CardContent className="space-y-2 pt-2">
++-            <Row label="Únicas" value={rows.length.toLocaleString("pt-PT")} />
+++            <Row label="Unique" value={rows.length.toLocaleString("pt-PT")} />
++             <Row
++-              label="Com gap FX"
+++              label="With FX gap"
++               value={totals.positionsWithFxGap.toLocaleString("pt-PT")}
++               accent={totals.positionsWithFxGap > 0 ? "warn" : ""}
++             />
++@@ -325,14 +365,14 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++ 
++         <Card>
++           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
++-            <CardTitle className="text-sm font-medium">Como funciona</CardTitle>
+++            <CardTitle className="text-sm font-medium">How it works</CardTitle>
++             <Icons.Sparkles className="text-primary h-5 w-5" />
++           </CardHeader>
++           <CardContent className="space-y-1 pt-2 text-xs">
++             <p className="text-muted-foreground">
++-              Book Cost = soma dos <code>amount</code> das BUY/SELL na moeda original, convertido
++-              para EUR via FX atual. Avg Cost = Book Cost / qty. Today's Price EUR = preço Yahoo ×
++-              FX. Sem patches ao core, sem hardcoded.
+++              Book Cost = sum of the <code>amount</code> of BUY/SELL in the original currency,
+++              converted to EUR via the current FX. Avg Cost = Book Cost / qty. Today's Price EUR =
+++              Yahoo price × FX. No core patches, nothing hardcoded.
++             </p>
++           </CardContent>
++         </Card>
++@@ -342,13 +382,31 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++         <Card className="border-amber-500/40 bg-amber-500/5">
++           <CardContent className="flex items-start gap-3 py-3 text-sm">
++             <Icons.AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
++-            <div className="space-y-1">
++-              <p className="font-medium">FX rates em falta na DB do Wealthfolio</p>
+++            <div className="space-y-2">
+++              <p className="font-medium">FX rates missing in the Wealthfolio DB</p>
++               <p className="text-muted-foreground text-xs">
++-                Não consegui converter: {missingRates.join(", ")}. Posições afectadas mostram "—" em
++-                vez de valor EUR. Sync market data ou adiciona o par em Settings → Exchange Rates
++-                para resolver.
+++                Could not convert: {missingRates.join(", ")}. Affected positions show "—" instead of
+++                a EUR value. Create the missing pairs (source Yahoo, seeded live from the ECB —
+++                nothing hardcoded); the daily history is then synced by the core.
++               </p>
+++              <Button
+++                variant="outline"
+++                size="sm"
+++                disabled={fixing != null}
+++                onClick={handleCreateMissingRates}
+++              >
+++                {fixing != null ? (
+++                  <>
+++                    <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+++                    {fixing}
+++                  </>
+++                ) : (
+++                  <>
+++                    <Icons.Refresh className="mr-2 h-4 w-4" />
+++                    Create missing rates
+++                  </>
+++                )}
+++              </Button>
++             </div>
++           </CardContent>
++         </Card>
++@@ -357,13 +415,13 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++       {/* Filter */}
++       <div className="flex items-center gap-2">
++         <Input
++-          placeholder="Procurar por ticker ou nome..."
+++          placeholder="Search by ticker or name..."
++           value={filter}
++           onChange={(e) => setFilter(e.target.value)}
++           className="max-w-sm"
++         />
++         <span className="text-muted-foreground ml-auto text-xs">
++-          {filtered.length} de {rows.length}
+++          {filtered.length} of {rows.length}
++         </span>
++       </div>
++ 
++@@ -392,7 +450,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++                         {r.symbol}
++                         {r.localCurrency !== "EUR" && (
++                           <Badge variant="outline" className="ml-2 text-[10px]">
++-                            nativo {r.localCurrency}
+++                            native {r.localCurrency}
++                           </Badge>
++                         )}
++                       </p>
++@@ -453,7 +511,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
++                 {filtered.length === 0 && (
++                   <tr>
++                     <td colSpan={7} className="text-muted-foreground p-8 text-center text-sm">
++-                      Sem posições para mostrar.
+++                      No positions to show.
++                     </td>
++                   </tr>
++                 )}
++diff --git a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
++index 8d622d90..d927423b 100644
++--- a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+++++ b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
++@@ -237,6 +237,10 @@ function mapRow(row: TrCsvRow, accountId: string, notes: MapperNote[]): Activity
++         return mapDeposit(row, accountId);
++       case "TRANSFER_INSTANT_OUTBOUND":
++         return mapWithdrawal(row, accountId);
+++      case "MANUAL_CASH_TRANSFER":
+++        // Manual cash movement (e.g. a TR goodwill / compensation payment).
+++        // Direction follows the amount sign: positive in → DEPOSIT, negative out → WITHDRAWAL.
+++        return (row.amount ?? 0) >= 0 ? mapDeposit(row, accountId) : mapWithdrawal(row, accountId);
++       case "CARD_ORDERING_FEE":
++         return mapCardOrderingFee(row, accountId);
++       // CARD_TRANSACTION* handled by consolidator (caller filtered them)
++@@ -1012,13 +1016,13 @@ interface AssetBucket {
++ function bucketFromAssetClass(assetClass: string): AssetBucket | undefined {
++   switch (assetClass) {
++     case "CRYPTO":
++-      return { bucket: "CRYPTO", label: "Cripto", instrumentType: "CRYPTO" };
+++      return { bucket: "CRYPTO", label: "Crypto", instrumentType: "CRYPTO" };
++     case "FUND":
++-      return { bucket: "ETF", label: "ETF / Fundo", instrumentType: "ETF" };
+++      return { bucket: "ETF", label: "ETF / Fund", instrumentType: "ETF" };
++     case "STOCK":
++-      return { bucket: "STOCK", label: "Ações", instrumentType: "EQUITY" };
+++      return { bucket: "STOCK", label: "Stocks", instrumentType: "EQUITY" };
++     case "DERIVATIVE":
++-      return { bucket: "DERIVATIVE", label: "Derivado", instrumentType: "OPTION" };
+++      return { bucket: "DERIVATIVE", label: "Derivative", instrumentType: "OPTION" };
++     case "":
++     case undefined:
++       return undefined; // cash transactions — no asset
++diff --git a/fork/addons/tr-importer/src/lib/tr-fx-pairs.ts b/fork/addons/tr-importer/src/lib/tr-fx-pairs.ts
++new file mode 100644
++index 00000000..864fd2bf
++--- /dev/null
+++++ b/fork/addons/tr-importer/src/lib/tr-fx-pairs.ts
++@@ -0,0 +1,174 @@
+++/**
+++ * Create the missing FX-rate assets so the core can value non-base holdings.
+++ *
+++ * Why this is all that's needed
+++ * -----------------------------
+++ * The v3.5 core ALREADY handles a holding whose asset currency differs from its
+++ * quote currency — the valuation log says:
+++ *   "Holding currency (EUR) differs from quote currency (USD).
+++ *    Using quote currency FX for market value conversion."
+++ * i.e. it converts the quote (USD) to the holding currency (EUR) via an FX
+++ * rate — it just needs `FX:USD/EUR` to exist. There is no need to touch the
+++ * asset's quote_ccy; we only create the missing FX pairs.
+++ *
+++ * For every distinct non-base currency the HELD quotes are actually in (read
+++ * from the quotes, not the asset label), create an `FX:<ccy>/<base>` asset with
+++ * source YAHOO, seeded live from the ECB, then sync + recalculate so the core's
+++ * daily Yahoo rates land and the valuations convert.
+++ *
+++ * Constraints honoured: SDK-only (no DB surgery, no base-code change), no
+++ * hardcoded rates or currency lists, reversible (delete the rate).
+++ */
+++import type { AddonContext, ExchangeRate, Holding, Quote } from "@wealthfolio/addon-sdk";
+++
+++/** The only provider the core syncs daily for FX assets. */
+++const FX_SOURCE = "YAHOO";
+++/** ECB reference rates, open + CORS-friendly. Seed only; Yahoo owns the daily history. */
+++const ECB_URL = "https://api.frankfurter.dev/v1/latest";
+++const CONCURRENCY = 6;
+++
+++export interface FxPairResult {
+++  base: string;
+++  /** Distinct non-base quote currencies found among the held assets. */
+++  currencies: string[];
+++  /** FX pairs created this run, e.g. "USD→EUR". */
+++  created: string[];
+++  /** FX pairs that already existed. */
+++  skipped: string[];
+++  /** FX pairs we could not seed (no rate invented). */
+++  failed: { pair: string; reason: string }[];
+++  synced: boolean;
+++  recalculated: boolean;
+++}
+++
+++/** 1 unit of `from` expressed in `to`, fetched live from the ECB. No hardcoded value. */
+++async function fetchEcbRate(from: string, to: string): Promise<number> {
+++  const url = `${ECB_URL}?base=${encodeURIComponent(from)}&symbols=${encodeURIComponent(to)}`;
+++  const res = await fetch(url);
+++  if (!res.ok) throw new Error(`ECB HTTP ${res.status}`);
+++  const data = (await res.json()) as { rates?: Record<string, number> };
+++  const rate = data?.rates?.[to];
+++  if (typeof rate !== "number" || !isFinite(rate) || rate <= 0) {
+++    throw new Error("sem taxa na resposta do ECB");
+++  }
+++  return rate;
+++}
+++
+++/** Currency of the asset's most recent quote, or "" when it has none. */
+++async function quoteCurrencyOf(ctx: AddonContext, assetId: string): Promise<string> {
+++  try {
+++    const quotes = (await ctx.api.quotes.getHistory(assetId)) as Quote[];
+++    if (!quotes?.length) return "";
+++    const latest = quotes.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b));
+++    return latest.currency || "";
+++  } catch {
+++    return "";
+++  }
+++}
+++
+++/**
+++ * Distinct non-base currencies the HELD quotes are actually in. Read from the
+++ * quotes (the source of truth) rather than the asset label, which a past import
+++ * may have force-set to the base currency. Minor-unit codes (e.g. "ZAc") are
+++ * skipped — they have no Yahoo FX pair. No hardcoded currency list.
+++ */
+++async function collectForeignQuoteCurrencies(
+++  ctx: AddonContext,
+++  onProgress?: (msg: string) => void,
+++): Promise<{ base: string; foreign: string[] }> {
+++  const accounts = await ctx.api.accounts.getAll();
+++  const holdings: Holding[] = [];
+++  for (const acc of accounts) {
+++    holdings.push(...((await ctx.api.portfolio.getHoldings(acc.id)) as Holding[]));
+++  }
+++  const base = holdings.find((h) => h.baseCurrency)?.baseCurrency ?? "EUR";
+++
+++  const ids: string[] = [];
+++  const seen = new Set<string>();
+++  for (const h of holdings) {
+++    const id = h.instrument?.id;
+++    if (id && !seen.has(id)) {
+++      seen.add(id);
+++      ids.push(id);
+++    }
+++  }
+++
+++  const foreign = new Set<string>();
+++  let cursor = 0;
+++  async function worker(): Promise<void> {
+++    while (cursor < ids.length) {
+++      const ccy = await quoteCurrencyOf(ctx, ids[cursor++]);
+++      if (ccy && ccy !== base && /^[A-Z]{3}$/.test(ccy)) foreign.add(ccy);
+++    }
+++  }
+++  onProgress?.("Analysing quote currencies…");
+++  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, () => worker()));
+++  return { base, foreign: [...foreign].sort() };
+++}
+++
+++/**
+++ * Create the missing `FX:<ccy>/<base>` pairs (source YAHOO, ECB-seeded) for the
+++ * currencies the held quotes are in, then sync + recalculate.
+++ */
+++export async function ensureEurFxPairs(
+++  ctx: AddonContext,
+++  onProgress?: (msg: string) => void,
+++): Promise<FxPairResult> {
+++  const { base, foreign } = await collectForeignQuoteCurrencies(ctx, onProgress);
+++  const result: FxPairResult = {
+++    base,
+++    currencies: foreign,
+++    created: [],
+++    skipped: [],
+++    failed: [],
+++    synced: false,
+++    recalculated: false,
+++  };
+++  if (!base) throw new Error("Could not determine the base currency.");
+++
+++  const existing = new Set(
+++    ((await ctx.api.exchangeRates.getAll()) as ExchangeRate[]).map(
+++      (r) => `${r.fromCurrency}→${r.toCurrency}`,
+++    ),
+++  );
+++
+++  for (const ccy of foreign) {
+++    const pair = `${ccy}→${base}`;
+++    if (existing.has(pair)) {
+++      result.skipped.push(pair);
+++      continue;
+++    }
+++    try {
+++      onProgress?.(`Creating ${pair}…`);
+++      const rate = await fetchEcbRate(ccy, base);
+++      await ctx.api.exchangeRates.add({
+++        fromCurrency: ccy,
+++        toCurrency: base,
+++        rate,
+++        source: FX_SOURCE,
+++        timestamp: new Date().toISOString(),
+++      });
+++      result.created.push(pair);
+++    } catch (e) {
+++      result.failed.push({ pair, reason: (e as Error).message });
+++    }
+++  }
+++
+++  // The core converts quote→holding currency once the FX pair exists. Sync so
+++  // Yahoo fills the daily rate, then recalculate so the valuations update.
+++  onProgress?.("Syncing and recalculating…");
+++  try {
+++    await ctx.api.market.syncHistory();
+++    result.synced = true;
+++  } catch (e) {
+++    ctx.api.logger.warn(`[TR fx] syncHistory failed: ${(e as Error).message}`);
+++  }
+++  try {
+++    await ctx.api.portfolio.recalculate();
+++    result.recalculated = true;
+++  } catch (e) {
+++    ctx.api.logger.warn(`[TR fx] recalculate failed: ${(e as Error).message}`);
+++  }
+++
+++  return result;
+++}
++-- 
++2.54.0 (Apple Git-156)
++
+diff --git a/fork/patches/0017-TR-Importer-English-UI-2-tab-simplification-Start-ov.patch b/fork/patches/0017-TR-Importer-English-UI-2-tab-simplification-Start-ov.patch
+new file mode 100644
+index 00000000..7ba7f68c
+--- /dev/null
++++ b/fork/patches/0017-TR-Importer-English-UI-2-tab-simplification-Start-ov.patch
+@@ -0,0 +1,2109 @@
++From a4924eca72aaa1a2c8b110c2e346c66cfd1a2772 Mon Sep 17 00:00:00 2001
++From: LGNative <luis@nativestride.io>
++Date: Sun, 21 Jun 2026 18:14:59 +0100
++Subject: [PATCH 17/17] TR Importer: English UI, 2-tab simplification, Start
++ over, v3.5.2
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++- Translate the whole addon UI to English to match the base app (the PT/EN mix
++  was confusing). Logic strings, currency/provider codes and identifiers
++  untouched.
++- Collapse to 2 tabs (Import + Analysis): remove the Advanced tab (AI expert +
++  SDK test) the user didn't use, and delete the now-dead expert-panel.tsx,
++  tr-ai-expert.ts, tr-sdk-test.ts. Diagnostics stay in Analysis.
++- Add a 'Start over' button so the user can return to the drop zone mid-import
++  without leaving the app.
++- Review Assets redesign: urgency-grouped sections, currency badges
++  (USD → EUR), per-asset density, pre-import type breakdown.
++- manifest: version 5.3.2 → 3.5.2 (match the app), shorter description.
++
++Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
++---
++ fork/addons/tr-importer/manifest.json         |   9 +-
++ .../src/components/expert-panel.tsx           | 281 ----------
++ .../src/components/review-assets-view.tsx     | 519 ++++++++----------
++ .../tr-importer/src/lib/tr-ai-expert.ts       | 300 ----------
++ .../tr-importer/src/lib/tr-geography.ts       | 120 ++--
++ .../addons/tr-importer/src/lib/tr-sdk-test.ts | 272 ---------
++ .../src/pages/tr-converter-page.tsx           | 262 ++-------
++ 7 files changed, 343 insertions(+), 1420 deletions(-)
++ delete mode 100644 fork/addons/tr-importer/src/components/expert-panel.tsx
++ delete mode 100644 fork/addons/tr-importer/src/lib/tr-ai-expert.ts
++ delete mode 100644 fork/addons/tr-importer/src/lib/tr-sdk-test.ts
++
++diff --git a/fork/addons/tr-importer/manifest.json b/fork/addons/tr-importer/manifest.json
++index a49c20a6..df7be89b 100644
++--- a/fork/addons/tr-importer/manifest.json
+++++ b/fork/addons/tr-importer/manifest.json
++@@ -1,8 +1,8 @@
++ {
++   "id": "tr-importer-addon",
++   "name": "TR Importer",
++-  "version": "5.3.2",
++-  "description": "Trade Republic CSV importer. Drop the 'Extrato de transações.csv' export from the TR app, get every trade, dividend, interest, deposit, withdrawal, staking reward, and corporate action mapped to native Wealthfolio activities — with cost basis, FX, and withholding tax preserved. Incremental imports via transaction_id dedup. Replaces tr-pdf-converter v3.x.",
+++  "version": "3.5.2",
+++  "description": "Import your Trade Republic CSV. Trades, dividends, interest, deposits, withdrawals, staking rewards and corporate actions become Wealthfolio activities — with cost basis, FX and tax preserved. Safe to re-import.",
++   "author": "Donkeyfolio",
++   "main": "dist/addon.js",
++   "sdkVersion": "3.0.3",
++@@ -53,9 +53,10 @@
++     {
++       "category": "exchange-rates",
++       "functions": [
++-        { "name": "getAll", "isDeclared": true, "isDetected": true }
+++        { "name": "getAll", "isDeclared": true, "isDetected": true },
+++        { "name": "add", "isDeclared": true, "isDetected": true }
++       ],
++-      "purpose": "EUR View panel uses Wealthfolio's internal FX rates (already maintained for Total Value conversion) to render every column in EUR — Today's Price, Book Cost, Total Value, Avg Cost. No external API, no hardcoded rates."
+++      "purpose": "EUR View panel uses Wealthfolio's internal FX rates (already maintained for Total Value conversion) to render every column in EUR — Today's Price, Book Cost, Total Value, Avg Cost. 'add' creates the missing FX:<ccy>/EUR pairs (source YAHOO) so the core can value non-EUR holdings; the daily rate is then synced by the core from Yahoo. Seed value fetched live from the ECB — no hardcoded rates."
++     },
++     {
++       "category": "market-data",
++diff --git a/fork/addons/tr-importer/src/components/expert-panel.tsx b/fork/addons/tr-importer/src/components/expert-panel.tsx
++deleted file mode 100644
++index b4b8abcb..00000000
++--- a/fork/addons/tr-importer/src/components/expert-panel.tsx
+++++ /dev/null
++@@ -1,281 +0,0 @@
++-import {
++-  Badge,
++-  Button,
++-  Card,
++-  CardContent,
++-  CardDescription,
++-  CardHeader,
++-  CardTitle,
++-  Icons,
++-  Input,
++-} from "@wealthfolio/ui";
++-import React from "react";
++-
++-import {
++-  ask,
++-  clearApiKey,
++-  ExpertError,
++-  getApiKey,
++-  setApiKey,
++-  type ExpertContext,
++-  type ExpertResponse,
++-} from "../lib/tr-ai-expert";
++-
++-interface SecretsApi {
++-  set: (key: string, value: string) => Promise<void>;
++-  get: (key: string) => Promise<string | null>;
++-  delete: (key: string) => Promise<void>;
++-}
++-
++-interface Props {
++-  secrets: SecretsApi;
++-  context?: ExpertContext;
++-  onClose: () => void;
++-}
++-
++-const SUGGESTED_QUESTIONS = [
++-  "Como funciona o idempotency_key no Wealthfolio?",
++-  "Porque é que alguns assets aparecem em USD em vez de EUR?",
++-  "Como declaro dividendos US no Anexo J do IRS?",
++-  "Que provider devo usar para preços em EUR de US stocks?",
++-  "Qual a diferença entre BUY com unitPrice=0 e ADJUSTMENT?",
++-  "Porque é que o Cash Balance não bate com o esperado?",
++-];
++-
++-export function ExpertPanel({ secrets, context, onClose }: Props): React.JSX.Element {
++-  const [keyState, setKeyState] = React.useState<"loading" | "missing" | "present">("loading");
++-  const [keyDraft, setKeyDraft] = React.useState("");
++-  const [question, setQuestion] = React.useState("");
++-  const [pending, setPending] = React.useState(false);
++-  const [response, setResponse] = React.useState<ExpertResponse | null>(null);
++-  const [error, setError] = React.useState<string | null>(null);
++-  const [includeContext, setIncludeContext] = React.useState(true);
++-
++-  React.useEffect(() => {
++-    let cancelled = false;
++-    (async () => {
++-      const key = await getApiKey(secrets);
++-      if (cancelled) return;
++-      setKeyState(key ? "present" : "missing");
++-    })();
++-    return () => {
++-      cancelled = true;
++-    };
++-  }, [secrets]);
++-
++-  const handleSaveKey = React.useCallback(async () => {
++-    const trimmed = keyDraft.trim();
++-    if (!trimmed.startsWith("sk-ant-")) {
++-      setError("API key inválida — deve começar por 'sk-ant-'.");
++-      return;
++-    }
++-    try {
++-      await setApiKey(secrets, trimmed);
++-      setKeyState("present");
++-      setKeyDraft("");
++-      setError(null);
++-    } catch (err) {
++-      setError(`Não consegui guardar a key: ${(err as Error).message}`);
++-    }
++-  }, [keyDraft, secrets]);
++-
++-  const handleClearKey = React.useCallback(async () => {
++-    await clearApiKey(secrets);
++-    setKeyState("missing");
++-    setResponse(null);
++-  }, [secrets]);
++-
++-  const handleAsk = React.useCallback(
++-    async (q: string) => {
++-      const trimmed = q.trim();
++-      if (!trimmed) return;
++-      setPending(true);
++-      setError(null);
++-      try {
++-        const res = await ask(secrets, trimmed, includeContext ? context : undefined);
++-        setResponse(res);
++-      } catch (err) {
++-        if (err instanceof ExpertError && err.kind === "no_key") {
++-          setKeyState("missing");
++-        }
++-        setError((err as Error).message);
++-      } finally {
++-        setPending(false);
++-      }
++-    },
++-    [secrets, context, includeContext],
++-  );
++-
++-  if (keyState === "loading") {
++-    return (
++-      <Card>
++-        <CardContent className="flex items-center justify-center py-12">
++-          <Icons.Spinner className="text-muted-foreground h-6 w-6 animate-spin" />
++-        </CardContent>
++-      </Card>
++-    );
++-  }
++-
++-  if (keyState === "missing") {
++-    return (
++-      <Card>
++-        <CardHeader>
++-          <CardTitle className="flex items-center gap-2">
++-            <Icons.Sparkles className="h-5 w-5" />
++-            Configurar Wealthfolio Expert
++-          </CardTitle>
++-          <CardDescription>
++-            Cola a tua Anthropic API key (BYOK). É guardada encriptada no keyring do macOS — fica só
++-            no teu computador. Cria uma em <code className="text-xs">console.anthropic.com</code>.
++-          </CardDescription>
++-        </CardHeader>
++-        <CardContent className="space-y-3">
++-          <Input
++-            type="password"
++-            placeholder="sk-ant-api03-..."
++-            value={keyDraft}
++-            onChange={(e) => setKeyDraft(e.target.value)}
++-            onKeyDown={(e) => {
++-              if (e.key === "Enter") handleSaveKey();
++-            }}
++-          />
++-          {error && <p className="text-destructive text-sm">{error}</p>}
++-          <div className="flex gap-2">
++-            <Button onClick={handleSaveKey} disabled={!keyDraft.trim()}>
++-              <Icons.CheckCircle className="mr-2 h-4 w-4" />
++-              Guardar key
++-            </Button>
++-            <Button variant="outline" onClick={onClose}>
++-              Cancelar
++-            </Button>
++-          </div>
++-          <p className="text-muted-foreground text-xs">
++-            Custo estimado: ~€0.05–0.15 por pergunta (Claude Sonnet 4.5). Respostas idênticas vêm do
++-            cache local — zero custo em re-perguntas. Tu controlas, tu pagas.
++-          </p>
++-        </CardContent>
++-      </Card>
++-    );
++-  }
++-
++-  return (
++-    <div className="space-y-4">
++-      <Card>
++-        <CardHeader>
++-          <CardTitle className="flex items-center gap-2">
++-            <Icons.Sparkles className="h-5 w-5" />
++-            Wealthfolio Expert
++-            {context && includeContext && (
++-              <Badge variant="outline" className="border-emerald-500/40 text-emerald-500">
++-                contexto anexado
++-              </Badge>
++-            )}
++-          </CardTitle>
++-          <CardDescription>
++-            Pergunta sobre o Donkeyfolio, este addon, mapping ou IRS PT. Respostas em PT, com
++-            referências a ficheiros quando aplicável.
++-          </CardDescription>
++-        </CardHeader>
++-        <CardContent className="space-y-3">
++-          <textarea
++-            value={question}
++-            onChange={(e) => setQuestion(e.target.value)}
++-            onKeyDown={(e) => {
++-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
++-                handleAsk(question);
++-              }
++-            }}
++-            placeholder="Ex: Porque o ADA aparece com 5368 quando devia ser 5683?"
++-            className="bg-background min-h-24 w-full rounded-md border p-3 text-sm"
++-          />
++-          <div className="flex flex-wrap items-center justify-between gap-2">
++-            <label className="text-muted-foreground flex items-center gap-2 text-xs">
++-              <input
++-                type="checkbox"
++-                checked={includeContext}
++-                onChange={(e) => setIncludeContext(e.target.checked)}
++-                disabled={!context}
++-              />
++-              {context ? "Anexar contexto actual (diagnóstico, erros)" : "Sem contexto disponível"}
++-            </label>
++-            <div className="flex gap-2">
++-              <Button onClick={() => handleAsk(question)} disabled={pending || !question.trim()}>
++-                {pending ? (
++-                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
++-                ) : (
++-                  <Icons.Sparkles className="mr-2 h-4 w-4" />
++-                )}
++-                Perguntar
++-              </Button>
++-            </div>
++-          </div>
++-
++-          {/* Suggestions */}
++-          {!response && !pending && (
++-            <div className="space-y-1.5 pt-2">
++-              <p className="text-muted-foreground text-xs font-medium uppercase">Sugestões</p>
++-              <div className="flex flex-wrap gap-1.5">
++-                {SUGGESTED_QUESTIONS.map((q) => (
++-                  <button
++-                    key={q}
++-                    onClick={() => {
++-                      setQuestion(q);
++-                      handleAsk(q);
++-                    }}
++-                    className="bg-muted/50 hover:bg-muted rounded-md border px-2 py-1 text-xs transition-colors"
++-                  >
++-                    {q}
++-                  </button>
++-                ))}
++-              </div>
++-            </div>
++-          )}
++-
++-          {error && (
++-            <div className="bg-destructive/10 border-destructive/40 rounded-md border p-3 text-sm">
++-              <p className="font-medium">Erro</p>
++-              <p className="font-mono text-xs">{error}</p>
++-            </div>
++-          )}
++-        </CardContent>
++-      </Card>
++-
++-      {response && (
++-        <Card>
++-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
++-            <CardTitle className="text-base">Resposta</CardTitle>
++-            <div className="text-muted-foreground flex items-center gap-2 text-xs">
++-              {response.cached ? (
++-                <Badge variant="outline" className="border-emerald-500/40 text-emerald-500">
++-                  cache · €0
++-                </Badge>
++-              ) : (
++-                <Badge variant="outline">
++-                  {response.inputTokens} in · {response.outputTokens} out · €
++-                  {(response.costEur ?? 0).toFixed(4)}
++-                </Badge>
++-              )}
++-            </div>
++-          </CardHeader>
++-          <CardContent>
++-            <div className="prose prose-sm dark:prose-invert max-w-none">
++-              <pre className="bg-muted/30 overflow-auto whitespace-pre-wrap rounded-md border p-3 font-sans text-sm">
++-                {response.answer}
++-              </pre>
++-            </div>
++-          </CardContent>
++-        </Card>
++-      )}
++-
++-      <div className="flex justify-between">
++-        <Button variant="outline" onClick={onClose}>
++-          Fechar
++-        </Button>
++-        <Button variant="ghost" size="sm" onClick={handleClearKey}>
++-          <Icons.Trash className="mr-2 h-3 w-3" />
++-          Remover API key
++-        </Button>
++-      </div>
++-    </div>
++-  );
++-}
++diff --git a/fork/addons/tr-importer/src/components/review-assets-view.tsx b/fork/addons/tr-importer/src/components/review-assets-view.tsx
++index 3d2c5fda..c9a13e1f 100644
++--- a/fork/addons/tr-importer/src/components/review-assets-view.tsx
+++++ b/fork/addons/tr-importer/src/components/review-assets-view.tsx
++@@ -1,14 +1,4 @@
++-import {
++-  Badge,
++-  Button,
++-  Card,
++-  CardContent,
++-  CardDescription,
++-  CardHeader,
++-  CardTitle,
++-  Icons,
++-  Input,
++-} from "@wealthfolio/ui";
+++import { Button, Icons, Input } from "@wealthfolio/ui";
++ import React from "react";
++ 
++ import type { MapperResult } from "../lib/tr-csv-mapper";
++@@ -21,6 +11,7 @@ interface AssetSummary {
++   flag?: string;
++   defaultQuoteCcy?: string;
++   instrumentType?: string;
+++  exchangeMic?: string;
++   activityCount: number;
++ }
++ 
++@@ -39,12 +30,28 @@ interface Props {
++ }
++ 
++ const COMMON_CURRENCIES = ["EUR", "USD", "GBP", "GBp", "CHF", "JPY", "CAD", "DKK", "SEK", "NOK"];
+++/** ISO ISIN shape — a symbol still in this form means no ticker was resolved. */
+++const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{10}$/;
++ 
++ interface AssetActivity {
++-  symbol?: { symbol?: string; name?: string; quoteCcy?: string; instrumentType?: string };
+++  symbol?: {
+++    symbol?: string;
+++    name?: string;
+++    quoteCcy?: string;
+++    instrumentType?: string;
+++    exchangeMic?: string;
+++  };
+++  currency?: string;
+++  activityType?: string;
++   metadata?: string | Record<string, unknown>;
++ }
++ 
+++function classLabel(t?: string): string {
+++  if (!t) return "Asset";
+++  const lower = t.toLowerCase();
+++  return lower.charAt(0).toUpperCase() + lower.slice(1);
+++}
+++
++ export function ReviewAssetsView({
++   mapping,
++   overrides,
++@@ -53,12 +60,32 @@ export function ReviewAssetsView({
++   onContinue,
++ }: Props): React.JSX.Element {
++   const [filter, setFilter] = React.useState("");
++-  const [showOnlyEdited, setShowOnlyEdited] = React.useState(false);
+++  const [editing, setEditing] = React.useState<string | null>(null);
+++
+++  const activities = mapping.activities as AssetActivity[];
+++
+++  // Conversion target = the dominant activity currency (the cash leg). Derived
+++  // from the data, never hardcoded — a USD-account user would see "→ USD".
+++  const targetCcy = React.useMemo(() => {
+++    const counts = new Map<string, number>();
+++    for (const a of activities) {
+++      if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);
+++    }
+++    let best = "";
+++    let bestN = -1;
+++    for (const [c, n] of counts) {
+++      if (n > bestN) {
+++        best = c;
+++        bestN = n;
+++      }
+++    }
+++    return best || "EUR";
+++  }, [activities]);
++ 
++   // Aggregate unique assets from the mapping output.
++   const assets: AssetSummary[] = React.useMemo(() => {
++     const map = new Map<string, AssetSummary>();
++-    for (const a of mapping.activities as AssetActivity[]) {
+++    for (const a of activities) {
++       const sym = a.symbol;
++       if (!sym?.symbol) continue;
++       const key = sym.symbol;
++@@ -84,14 +111,20 @@ export function ReviewAssetsView({
++           flag: parsedMeta?.tr_country_flag as string | undefined,
++           defaultQuoteCcy: sym.quoteCcy,
++           instrumentType: sym.instrumentType,
+++          exchangeMic: sym.exchangeMic,
++           activityCount: 1,
++         });
++       }
++     }
++     return [...map.values()].sort((a, b) => b.activityCount - a.activityCount);
++-  }, [mapping]);
+++  }, [activities]);
++ 
++-  const filtered = React.useMemo(() => {
+++  const effectiveCcy = React.useCallback(
+++    (a: AssetSummary) => overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy,
+++    [overrides],
+++  );
+++
+++  const { unresolved, resolved } = React.useMemo(() => {
++     let list = assets;
++     if (filter.trim()) {
++       const q = filter.trim().toLowerCase();
++@@ -102,9 +135,27 @@ export function ReviewAssetsView({
++           (a.country ?? "").toLowerCase().includes(q),
++       );
++     }
++-    if (showOnlyEdited) list = list.filter((a) => overrides.has(a.symbol));
++-    return list;
++-  }, [assets, filter, showOnlyEdited, overrides]);
+++    return {
+++      unresolved: list.filter((a) => ISIN_RE.test(a.symbol)),
+++      resolved: list.filter((a) => !ISIN_RE.test(a.symbol)),
+++    };
+++  }, [assets, filter]);
+++
+++  const nativeCount = assets.filter((a) => effectiveCcy(a) === targetCcy).length;
+++  const convertedCount = assets.filter(
+++    (a) => !ISIN_RE.test(a.symbol) && effectiveCcy(a) && effectiveCcy(a) !== targetCcy,
+++  ).length;
+++  const unresolvedCount = assets.filter((a) => ISIN_RE.test(a.symbol)).length;
+++
+++  // Pre-import breakdown by activity type — mirrors the native wizard's
+++  // final summary (Buy 3970 · Dividend 195 · …). Counts are derived, not hardcoded.
+++  const byType = React.useMemo(() => {
+++    const counts = new Map<string, number>();
+++    for (const a of activities) {
+++      if (a.activityType) counts.set(a.activityType, (counts.get(a.activityType) ?? 0) + 1);
+++    }
+++    return [...counts.entries()].sort((x, y) => y[1] - x[1]);
+++  }, [activities]);
++ 
++   const setOverride = React.useCallback(
++     (symbol: string, quoteCcy: string) => {
++@@ -116,299 +167,205 @@ export function ReviewAssetsView({
++         next.set(symbol, { quoteCcy: quoteCcy.toUpperCase() });
++       }
++       onChange(next);
+++      setEditing(null);
++     },
++     [overrides, onChange, assets],
++   );
++ 
++-  const setAllToEur = React.useCallback(() => {
++-    const next = new Map(overrides);
++-    for (const a of assets) {
++-      if (a.defaultQuoteCcy !== "EUR") {
++-        next.set(a.symbol, { quoteCcy: "EUR" });
++-      }
++-    }
++-    onChange(next);
++-  }, [assets, overrides, onChange]);
+++  const renderRow = (a: AssetSummary, isUnresolved: boolean) => {
+++    const effective = effectiveCcy(a) ?? "—";
+++    const isEdited = overrides.has(a.symbol);
+++    const isNative = effective === targetCcy;
+++    const isEditing = editing === a.symbol;
+++    const meta = [classLabel(a.instrumentType), a.exchangeMic].filter(Boolean).join(" · ");
++ 
++-  const resetOverrides = React.useCallback(() => {
++-    onChange(new Map());
++-  }, [onChange]);
+++    return (
+++      <div
+++        key={a.symbol}
+++        className="hover:bg-muted/20 flex items-center gap-3 border-t px-4 py-2.5 first:border-t-0"
+++      >
+++        <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium">
+++          {isUnresolved ? "?" : a.symbol.slice(0, 2).toUpperCase()}
+++        </div>
+++        <div className="min-w-0 flex-1">
+++          <p className="truncate text-sm font-medium">
+++            {isUnresolved ? a.symbol : a.symbol}
+++            <span className="text-muted-foreground ml-1.5 text-xs font-normal">
+++              · {a.activityCount}×
+++            </span>
+++          </p>
+++          <p className="text-muted-foreground truncate text-xs">
+++            {isUnresolved ? "ISIN not resolved to a ticker" : [a.displayName, meta].join(" · ")}
+++          </p>
+++        </div>
++ 
++-  const editedCount = overrides.size;
++-  const eurCount = assets.filter(
++-    (a) => (overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy) === "EUR",
++-  ).length;
++-  const usdCount = assets.filter(
++-    (a) => (overrides.get(a.symbol)?.quoteCcy ?? a.defaultQuoteCcy) === "USD",
++-  ).length;
++-  const otherCount = assets.length - eurCount - usdCount;
+++        {isEditing ? (
+++          <select
+++            autoFocus
+++            value={effective}
+++            onChange={(e) => setOverride(a.symbol, e.target.value)}
+++            onBlur={() => setEditing(null)}
+++            className="bg-background rounded-md border px-2 py-1 text-xs"
+++          >
+++            {!COMMON_CURRENCIES.includes(effective) && (
+++              <option value={effective}>{effective}</option>
+++            )}
+++            {COMMON_CURRENCIES.map((c) => (
+++              <option key={c} value={c}>
+++                {c}
+++              </option>
+++            ))}
+++          </select>
+++        ) : (
+++          <>
+++            {isUnresolved ? (
+++              <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+++                unresolved
+++              </span>
+++            ) : isNative ? (
+++              <span className="text-success bg-success/10 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium">
+++                <Icons.CheckCircle className="h-3 w-3" />
+++                {effective} native
+++              </span>
+++            ) : (
+++              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+++                {effective} → {targetCcy}
+++              </span>
+++            )}
+++            <button
+++              onClick={() => setEditing(a.symbol)}
+++              className={
+++                "text-xs underline-offset-2 hover:underline " +
+++                (isEdited ? "text-primary" : "text-muted-foreground")
+++              }
+++            >
+++              {isEdited ? "edited" : "change"}
+++            </button>
+++          </>
+++        )}
+++      </div>
+++    );
+++  };
++ 
++   return (
++-    <div className="space-y-4">
+++    <div className="space-y-5">
++       <WizardStepIndicator
++         steps={[
++-          { label: "Carregar", state: "done" },
++-          { label: "Mapear", state: "done" },
++-          { label: "Rever assets", state: "current" },
++-          { label: "Importar", state: "future" },
+++          { label: "Upload", state: "done" },
+++          { label: "Mapping", state: "done" },
+++          { label: "Review assets", state: "current" },
+++          { label: "Import", state: "future" },
++         ]}
++       />
++ 
++-      {/* v4.6.0 — auto-detection banner. The override target currency is
++-          NOT hardcoded — it's whatever the trades say. ABCL → EUR for a TR
++-          PT user; some other asset on a USD account → USD; etc. */}
++-      {editedCount > 0 && <SuggestionsBanner overrides={overrides} assets={assets} />}
++-
++-      {/* Top KPI strip */}
++-      <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
++-        <Card>
++-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
++-            <CardTitle className="text-sm font-medium">Assets únicos</CardTitle>
++-            <span className="text-xl font-bold tabular-nums sm:text-2xl">{assets.length}</span>
++-          </CardHeader>
++-          <CardContent className="space-y-2 pt-2">
++-            <Row label="Editados" value={editedCount} accent={editedCount > 0 ? "primary" : ""} />
++-            <Row label="Default ETF/UCITS" value={eurCount} />
++-          </CardContent>
++-        </Card>
++-
++-        <Card className="border-success/10 bg-success/10">
++-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
++-            <CardTitle className="text-sm font-medium">Em EUR</CardTitle>
++-            <span className="text-success text-xl font-bold tabular-nums sm:text-2xl">
++-              {eurCount}
++-            </span>
++-          </CardHeader>
++-          <CardContent className="space-y-2 pt-2">
++-            <Row label="Crypto + ETFs Xetra" value={eurCount} />
++-            <p className="text-muted-foreground text-xs">
++-              Todos os preços vão aparecer em EUR sem conversão.
++-            </p>
++-          </CardContent>
++-        </Card>
++-
++-        <Card className="border-amber-500/10 bg-amber-500/10">
++-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-4">
++-            <CardTitle className="text-sm font-medium">Em outras moedas</CardTitle>
++-            <span className="text-xl font-bold tabular-nums sm:text-2xl">
++-              {usdCount + otherCount}
++-            </span>
++-          </CardHeader>
++-          <CardContent className="space-y-2 pt-2">
++-            <Row label="USD" value={usdCount} />
++-            <Row label="Outras (GBp/CHF/CAD/...)" value={otherCount} />
++-            <p className="text-muted-foreground text-xs">
++-              Donkeyfolio converte para EUR via FX. Toggle 🌐 no Holdings para mostrar EUR.
++-            </p>
++-          </CardContent>
++-        </Card>
+++      {/* Metric strip */}
+++      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+++        <Metric label="Assets" value={assets.length} />
+++        <Metric label={`Native ${targetCcy}`} value={nativeCount} tone="success" />
+++        <Metric label="Converted via FX" value={convertedCount} tone="amber" />
+++        <Metric label="Unresolved" value={unresolvedCount} tone={unresolvedCount ? "danger" : ""} />
++       </div>
++ 
++-      {/* Bulk actions */}
++-      <Card>
++-        <CardHeader className="pb-3">
++-          <CardTitle className="text-base">Override em massa</CardTitle>
++-          <CardDescription>
++-            Forçar todos os assets a ter <code>quoteCcy=EUR</code> elimina conversões FX no display.
++-            Cuidado: se o provider Yahoo devolver USD para AAPL e disseres EUR, Wealthfolio mostra o
++-            número USD com símbolo €. Recomendado: deixa default e usa o toggle 🌐 no Holdings.
++-          </CardDescription>
++-        </CardHeader>
++-        <CardContent className="flex flex-wrap gap-2">
++-          <Button variant="outline" size="sm" onClick={setAllToEur}>
++-            <Icons.HandCoins className="mr-2 h-4 w-4" />
++-            Forçar todos a EUR
++-          </Button>
++-          <Button variant="ghost" size="sm" onClick={resetOverrides} disabled={editedCount === 0}>
++-            <Icons.Refresh className="mr-2 h-4 w-4" />
++-            Reverter overrides
++-          </Button>
++-        </CardContent>
++-      </Card>
++-
++-      {/* Filters */}
++-      <div className="flex flex-wrap items-center gap-2">
++-        <Input
++-          placeholder="Procurar por ticker, nome ou país..."
++-          value={filter}
++-          onChange={(e) => setFilter(e.target.value)}
++-          className="max-w-sm"
++-        />
++-        <label className="text-muted-foreground flex items-center gap-2 text-xs">
++-          <input
++-            type="checkbox"
++-            checked={showOnlyEdited}
++-            onChange={(e) => setShowOnlyEdited(e.target.checked)}
++-            disabled={editedCount === 0}
++-          />
++-          Só editados ({editedCount})
++-        </label>
++-        <span className="text-muted-foreground ml-auto text-xs">
++-          {filtered.length} de {assets.length}
++-        </span>
++-      </div>
+++      {/* Search */}
+++      <Input
+++        placeholder="Search by ticker, name or country…"
+++        value={filter}
+++        onChange={(e) => setFilter(e.target.value)}
+++        className="max-w-sm"
+++      />
++ 
++-      {/* Asset list */}
++-      <Card>
++-        <CardContent className="p-0">
++-          <div className="max-h-[480px] overflow-auto">
++-            <table className="w-full text-sm">
++-              <thead className="bg-muted/30 sticky top-0">
++-                <tr className="text-muted-foreground text-xs uppercase tracking-wider">
++-                  <th className="p-3 text-left font-medium">Asset</th>
++-                  <th className="p-3 text-left font-medium">Bucket</th>
++-                  <th className="p-3 text-right font-medium">Activities</th>
++-                  <th className="p-3 text-left font-medium">quoteCcy</th>
++-                </tr>
++-              </thead>
++-              <tbody>
++-                {filtered.map((a) => {
++-                  const override = overrides.get(a.symbol);
++-                  const effective = override?.quoteCcy ?? a.defaultQuoteCcy ?? "—";
++-                  const isEdited = !!override;
++-                  return (
++-                    <tr key={a.symbol} className="hover:bg-muted/20 border-t">
++-                      <td className="p-3">
++-                        <div className="flex items-center gap-2">
++-                          <span className="text-base">{a.flag ?? "🏳️"}</span>
++-                          <div>
++-                            <p className="font-medium">{a.displayName}</p>
++-                            <p className="text-muted-foreground text-xs">
++-                              {a.symbol} · {a.country ?? "?"}
++-                            </p>
++-                          </div>
++-                        </div>
++-                      </td>
++-                      <td className="p-3">
++-                        <Badge variant="secondary" className="text-xs">
++-                          {a.bucket ?? "?"}
++-                        </Badge>
++-                      </td>
++-                      <td className="text-muted-foreground p-3 text-right tabular-nums">
++-                        {a.activityCount}
++-                      </td>
++-                      <td className="p-3">
++-                        <select
++-                          value={effective}
++-                          onChange={(e) => setOverride(a.symbol, e.target.value)}
++-                          className={
++-                            "bg-background w-24 rounded-md border px-2 py-1 text-xs " +
++-                            (isEdited ? "border-primary text-primary" : "")
++-                          }
++-                        >
++-                          {!COMMON_CURRENCIES.includes(effective) && (
++-                            <option value={effective}>{effective}</option>
++-                          )}
++-                          {COMMON_CURRENCIES.map((c) => (
++-                            <option key={c} value={c}>
++-                              {c}
++-                            </option>
++-                          ))}
++-                        </select>
++-                        {a.defaultQuoteCcy && a.defaultQuoteCcy !== effective && (
++-                          <p className="text-muted-foreground mt-1 text-xs">
++-                            era {a.defaultQuoteCcy}
++-                          </p>
++-                        )}
++-                      </td>
++-                    </tr>
++-                  );
++-                })}
++-              </tbody>
++-            </table>
+++      {/* Por resolver */}
+++      {unresolved.length > 0 && (
+++        <section className="space-y-2">
+++          <div className="flex items-center gap-2 px-1 text-sm font-medium text-amber-600 dark:text-amber-400">
+++            <Icons.AlertCircle className="h-4 w-4" />
+++            Unresolved · {unresolved.length}
+++            <span className="text-muted-foreground ml-auto text-xs font-normal">
+++              imported as ISIN — Yahoo may not have a price
+++            </span>
++           </div>
++-        </CardContent>
++-      </Card>
++-
++-      <Card>
++-        <CardContent className="flex items-center justify-between py-4">
++-          <Button variant="outline" onClick={onBack}>
++-            ← Voltar
++-          </Button>
++-          <div className="text-muted-foreground text-xs">
++-            {editedCount > 0
++-              ? `${editedCount} asset(s) com quoteCcy override aplicado.`
++-              : "Sem overrides — todos os assets usam o quoteCcy default do mapper."}
+++          <div className="overflow-hidden rounded-lg border">
+++            {unresolved.map((a) => renderRow(a, true))}
++           </div>
++-          <Button onClick={onContinue} size="lg">
++-            <Icons.ArrowDownLeft className="mr-2 h-4 w-4" />
++-            Importar {mapping.activities.length} activities
++-          </Button>
++-        </CardContent>
++-      </Card>
++-    </div>
++-  );
++-}
+++        </section>
+++      )}
++ 
++-/**
++- * Banner shown above the asset list when the wizard pre-populated one or
++- * more overrides. The currency labels come from the actual overrides map
++- * — no hardcoded "EUR" text. If a USD-account user ends up with USD
++- * suggestions, the banner says "USD" instead.
++- */
++-function SuggestionsBanner({
++-  overrides,
++-  assets,
++-}: {
++-  overrides: Map<string, AssetOverride>;
++-  assets: AssetSummary[];
++-}): React.JSX.Element {
++-  // Distribution of override target currencies → "5 → EUR, 1 → USD"
++-  const ccyCounts = new Map<string, number>();
++-  for (const o of overrides.values()) {
++-    ccyCounts.set(o.quoteCcy, (ccyCounts.get(o.quoteCcy) ?? 0) + 1);
++-  }
++-  const distribution = [...ccyCounts.entries()]
++-    .sort((a, b) => b[1] - a[1])
++-    .map(([ccy, n]) => `${n} → ${ccy}`)
++-    .join(", ");
+++      {/* Resolvidos */}
+++      <section className="space-y-2">
+++        <div className="flex items-center gap-2 px-1 text-sm font-medium">
+++          <Icons.Sparkles className="text-muted-foreground h-4 w-4" />
+++          Resolved · {resolved.length}
+++          <span className="text-muted-foreground ml-auto text-xs font-normal">
+++            auto-resolved by the providers — review if anything looks wrong
+++          </span>
+++        </div>
+++        <div className="max-h-[460px] overflow-auto rounded-lg border">
+++          {resolved.map((a) => renderRow(a, false))}
+++        </div>
+++      </section>
++ 
++-  // Distinct previous currencies → "USD, CAD"
++-  const prevCcys = new Set<string>();
++-  for (const sym of overrides.keys()) {
++-    const prev = assets.find((a) => a.symbol === sym)?.defaultQuoteCcy;
++-    if (prev) prevCcys.add(prev);
++-  }
++-  const prevList = [...prevCcys].sort().join(", ");
+++      {/* Pre-import summary by activity type */}
+++      {byType.length > 0 && (
+++        <section className="space-y-2">
+++          <div className="flex items-center gap-2 px-1 text-sm font-medium">
+++            <Icons.FileText className="text-muted-foreground h-4 w-4" />
+++            Will import · {mapping.activities.length}
+++          </div>
+++          <div className="flex flex-wrap gap-2">
+++            {byType.map(([type, n]) => (
+++              <span
+++                key={type}
+++                className="bg-muted/40 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs"
+++              >
+++                {classLabel(type.replace(/_/g, " "))}
+++                <span className="font-medium tabular-nums">{n}</span>
+++              </span>
+++            ))}
+++          </div>
+++        </section>
+++      )}
++ 
++-  return (
++-    <Card className="border-primary/30 bg-primary/5">
++-      <CardContent className="flex items-start gap-3 py-3 text-sm">
++-        <Icons.Sparkles className="text-primary mt-0.5 h-5 w-5 shrink-0" />
++-        <div className="space-y-1">
++-          <p className="font-medium">
++-            Pré-marquei {overrides.size} asset(s) com override de <code>quoteCcy</code> (
++-            {distribution})
++-          </p>
++-          <p className="text-muted-foreground text-xs">
++-            Para estes assets, todas as transações no CSV foram numa moeda única que difere do{" "}
++-            <code>quoteCcy</code> mapeado ({prevList || "—"}). Aplicar o override faz o{" "}
++-            <code>Book Cost</code> e <code>Average cost</code> baterem exato com o que foi pago no
++-            TR. <code>Today's Price</code> pode ficar desencontrado (Yahoo continua a devolver na
++-            moeda nativa do mercado). Podes desmarcar individualmente abaixo ou usar "Reverter
++-            overrides".
++-          </p>
++-        </div>
++-      </CardContent>
++-    </Card>
+++      {/* Footer */}
+++      <div className="flex items-center justify-between border-t pt-4">
+++        <Button variant="outline" onClick={onBack}>
+++          <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+++          Back
+++        </Button>
+++        <p className="text-muted-foreground hidden text-xs sm:block">
+++          {convertedCount > 0
+++            ? `${convertedCount} will be converted to ${targetCcy} via daily FX`
+++            : `All assets already in ${targetCcy}`}
+++        </p>
+++        <Button onClick={onContinue} size="lg">
+++          Import {mapping.activities.length} activities
+++          <Icons.ArrowRight className="ml-2 h-4 w-4" />
+++        </Button>
+++      </div>
+++    </div>
++   );
++ }
++ 
++-function Row({
+++function Metric({
++   label,
++   value,
++-  accent,
+++  tone,
++ }: {
++   label: string;
++   value: number;
++-  accent?: string;
+++  tone?: "success" | "amber" | "danger" | "";
++ }): React.JSX.Element {
+++  const color =
+++    tone === "success"
+++      ? "text-success"
+++      : tone === "amber"
+++        ? "text-amber-600 dark:text-amber-400"
+++        : tone === "danger"
+++          ? "text-destructive"
+++          : "";
++   return (
++-    <div className="flex items-center justify-between text-sm">
++-      <span className="text-muted-foreground text-xs">{label}</span>
++-      <span className={"font-medium tabular-nums " + (accent === "primary" ? "text-primary" : "")}>
++-        {value.toLocaleString("pt-PT")}
++-      </span>
+++    <div className="bg-muted/40 rounded-lg px-4 py-3">
+++      <p className="text-muted-foreground text-xs">{label}</p>
+++      <p className={"text-2xl font-semibold tabular-nums " + color}>{value}</p>
++     </div>
++   );
++ }
++diff --git a/fork/addons/tr-importer/src/lib/tr-ai-expert.ts b/fork/addons/tr-importer/src/lib/tr-ai-expert.ts
++deleted file mode 100644
++index 7e28e179..00000000
++--- a/fork/addons/tr-importer/src/lib/tr-ai-expert.ts
+++++ /dev/null
++@@ -1,300 +0,0 @@
++-/**
++- * Wealthfolio Expert — AI assistant specialized in Donkeyfolio internals,
++- * the TR Importer addon, and PT IRS for portfolio investors.
++- *
++- * Architecture:
++- *   - Bring-your-own-key (BYOK) Anthropic API key, stored encrypted via
++- *     the addon SDK's `secrets` API (system keyring on macOS).
++- *   - Calls api.anthropic.com directly via fetch() (no Anthropic SDK
++- *     dependency — keeps bundle small).
++- *   - Caches responses in localStorage by SHA-256 hash of (system, user)
++- *     for 7 days. Repeated identical questions cost zero.
++- *   - System prompt baked with knowledge collected during the v4.x
++- *     development cycle (architecture, bugs, fixes, conventions).
++- *
++- * Cost: ~€0.05–0.15 per question with Claude Sonnet 4.5 (input ~5K
++- * tokens of system prompt + question, output ~500–2000 tokens).
++- */
++-
++-const SECRET_KEY = "tr-importer:anthropic-api-key";
++-const CACHE_PREFIX = "tr-importer:v1:expert:";
++-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
++-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
++-const MODEL = "claude-sonnet-4-5";
++-
++-export interface ExpertContext {
++-  /** Optional structured context to inject (current diagnostic, recent
++-   *  errors, CSV summary). Stringified into the user message. */
++-  diagnostics?: unknown;
++-  recentErrors?: string[];
++-  csvSummary?: unknown;
++-}
++-
++-export interface ExpertResponse {
++-  answer: string;
++-  /** True when served from local cache (no API call made). */
++-  cached: boolean;
++-  /** Approximate cost in EUR for the API call. ~0 when cached. */
++-  costEur?: number;
++-  /** Token usage from API. */
++-  inputTokens?: number;
++-  outputTokens?: number;
++-}
++-
++-export class ExpertError extends Error {
++-  constructor(
++-    message: string,
++-    readonly kind: "no_key" | "api_error" | "network" | "parse",
++-  ) {
++-    super(message);
++-    this.name = "ExpertError";
++-  }
++-}
++-
++-const SYSTEM_PROMPT = `És um assistente especializado em **Donkeyfolio** (fork de Wealthfolio) — uma app desktop de tracking de portfolio em Tauri/Rust + React. O utilizador é português, investidor, e usa o addon **TR Importer** que importa CSVs da Trade Republic para o Donkeyfolio.
++-
++-Responde sempre em **português europeu**, conciso e técnico. Cita ficheiros e linhas quando aplicável (formato \`crates/core/src/file.rs:123\`). Se a pergunta for ambígua, faz 1 pergunta de clarificação. Se não souberes, diz "não tenho a certeza" — não inventes.
++-
++-## Arquitetura Donkeyfolio
++-
++-- **Backend Rust** em \`crates/\`: core (lógica de negócio), storage-sqlite (DB), market-data (providers), sync, etc.
++-- **Frontend React/Vite** em \`apps/frontend/\`.
++-- **Tauri shell** em \`apps/tauri/\` com comandos IPC mapeando para o core.
++-- **Servidor HTTP** opcional em \`apps/server/\` (Axum) para uso web.
++-- **Addons** em \`addons/\` carregados como bundles JS no renderer; comunicam via SDK \`@wealthfolio/addon-sdk\`.
++-- **DB SQLite** com migrations em \`crates/storage-sqlite/migrations/\`.
++-
++-## Comportamentos críticos do backend que afetam addons
++-
++-1. **\`bulk_mutate_activities\` (saveMany) é TRANSACIONAL**. Em \`crates/storage-sqlite/src/activities/repository.rs:621-742\`, todos os \`INSERT\` correm dentro de \`exec_tx\`. Se 1 falha, o \`?\` propaga e dá rollback do CHUNK INTEIRO. Mitigação: bisect-on-failure (split chunk em 2 quando falha; recursivo até size=1).
++-
++-2. **\`idempotency_key\` explícito é honrado** se não vazio (\`activities_service.rs:4441-4470\`). O constraint UNIQUE em SQLite é a fonte de verdade — sem race condition. Se em branco, fallback para SHA-256 de (account, type, date, asset, qty, unit_price, amount, currency, source_record_id, notes).
++-
++-3. **Asset profile dedup por ISIN** — \`quoteCcy\` set na criação NÃO é atualizado em re-imports. Para mudar quoteCcy de assets existentes, usar \`update_asset_profile\` Tauri command (o backend Rust aceita \`quote_ccy\` em \`UpdateAssetProfile\` apesar de a SDK TS não o expor — usar cast \`as unknown\`).
++-
++-4. **Activity types fechados** (14): BUY, SELL, SPLIT, DIVIDEND, INTEREST, DEPOSIT, WITHDRAWAL, TRANSFER_IN, TRANSFER_OUT, FEE, TAX, CREDIT, ADJUSTMENT, UNKNOWN. Subtypes conhecidos em \`packages/addon-sdk/src/data-types.ts\` (DRIP, QUALIFIED, STAKING_REWARD, REBATE, BONUS, WITHHOLDING, etc.).
++-
++-5. **\`metadata\` no ActivityCreate é \`Option<String>\` no Rust**, JSON-stringified. Passar como objeto provoca \`invalid type: map, expected a string\`. SDK TS aceita \`string | Record<string, unknown>\` mas só strings funcionam.
++-
++-6. **Market data routing** por \`instrumentType\` + provider priority. Custom providers (CoinGecko, Stooq, Frankfurter, ExchangeRate) configuráveis em Settings → Market Data → Custom. ExchangeRate só para FIAT — falha em crypto/stocks com \`Could not extract price from path '$.rates.EUR' for symbol 'X'\`.
++-
++-## Conhecimento sobre o TR Importer addon (v4.x)
++-
++-- **Mapper** (\`tr-csv-mapper.ts\`): regra \`cash = amount + fee + tax\` valida ao cêntimo contra PDF Account Statement TR.
++-- **Idempotency keys**: \`tr-importer:v4:<TR_transaction_id>\` (UUID TR globalmente único, 4222/4222 únicos no test set).
++-- **Geography**: extraído do prefix do ISIN (ISO 3166-1). UCITS umbrellas (IE/LU) e offshore (KY/BMU/JE) flagged.
++-- **Buckets**: STOCK / ETF / CRYPTO / DERIVATIVE — derivado do \`asset_class\` do CSV, pinned no \`instrumentType\`.
++-- **Card consolidation**: 113 CARD_TRANSACTION → ~24 WITHDRAWAL mensais.
++-- **Cancelled-pair resolution**: STOCK_DIVIDEND/SPIN_OFF + cancellation = 1 occurrence net.
++-- **Crypto**: BTC/ETH/SOL/ADA/XRP normalizados para BTC-EUR/ETH-EUR/etc.
++-- **DCA detection**: prefix "Savings plan execution" no CSV description.
++-- **Bisect-on-failure**: CHUNK_SIZE=50, splits ao meio quando backend aborta.
++-
++-## Bugs históricos (já corrigidos)
++-
++-- v4.0 → v4.1.1: silent failures de chunk não detetados (faltava captura de \`result.errors\`).
++-- v4.1.0: metadata como objeto rejeitada pelo Rust (fix: JSON.stringify).
++-- v4.1.0: SPLIT activity sem campo \`currency\` obrigatório (fix: adicionar \`currency: "EUR"\`).
++-- v4.0.x: idempotency conflicts em DCA same-day (fix: explicit \`idempotencyKey\` por TR uuid).
++-- Manifest \`functions\` como string em vez de \`FunctionPermission\` struct: addon não carrega.
++-
++-## Pitfalls / "what can fail"
++-
++-- **Re-import com state misto**: 400 silent fails se chunks falham em runs anteriores.
++-- **PNG mostra CAD em vez de EUR**: asset profile criado com Yahoo native currency; usar update_asset_profile com quote_ccy.
++-- **Yahoo Finance rate limit (HTTP 429)**: providers fall through para custom providers (Stooq).
++-- **Volatility absurda (>100%)**: preços maus por sync incompleto.
++-- **"Duplicate activity detected"**: idempotency key colidiu OU SHA-256 fallback colidiu (DCA same date/asset/amount/qty).
++-- **Holdings €0.00**: market data não syncou para esse asset; clicar "Sync All" em Settings → Market Data.
++-
++-## IRS Portugal (para perguntas fiscais)
++-
++-- **Anexo G**: mais-valias mobiliárias (BUY-SELL FIFO, em EUR após FX).
++-- **Anexo J**: rendimentos obtidos no estrangeiro (dividendos, juros). Reportar gross + retenção na fonte (WHT).
++-- **Crypto**: regime fiscal específico desde 2023; <1 ano = mais-valia, >=1 ano = isento.
++-- **TR retém** WHT US (15% via tratado), DE (26.375%), FR (12.8%), etc. Reportar bruto e creditar a retenção.
++-
++-## Roadmap upstream Wealthfolio (até v3.3.0)
++-
++-- v3.3.0: \`AssetResolutionInput\` substitui \`SymbolInput\`, ActivityCreate aceita \`.asset\` (com alias \`.symbol\`); ISIN editing no asset profile; account snapshot history tab; mobile sync improvements.
++-- Próximas: device sync improvements, asset auto-discovery via OpenFIGI.
++-
++----
++-
++-**Ao responder**, se o utilizador anexar contexto (diagnóstico JSON, erros recentes), USA-O. Aponta números concretos. Se não bate certo, identifica a causa raiz mais provável + 1 fix de 1 linha quando aplicável.`;
++-
++-/* ─────────────────────────  Public API  ───────────────────────── */
++-
++-interface SecretsApi {
++-  set: (key: string, value: string) => Promise<void>;
++-  get: (key: string) => Promise<string | null>;
++-  delete: (key: string) => Promise<void>;
++-}
++-
++-export async function setApiKey(secrets: SecretsApi, key: string): Promise<void> {
++-  await secrets.set(SECRET_KEY, key);
++-}
++-
++-export async function getApiKey(secrets: SecretsApi): Promise<string | null> {
++-  try {
++-    return await secrets.get(SECRET_KEY);
++-  } catch {
++-    return null;
++-  }
++-}
++-
++-export async function clearApiKey(secrets: SecretsApi): Promise<void> {
++-  try {
++-    await secrets.delete(SECRET_KEY);
++-  } catch {
++-    // ignore
++-  }
++-}
++-
++-export async function ask(
++-  secrets: SecretsApi,
++-  question: string,
++-  context?: ExpertContext,
++-): Promise<ExpertResponse> {
++-  const apiKey = await getApiKey(secrets);
++-  if (!apiKey) throw new ExpertError("API key not set", "no_key");
++-
++-  const userMessage = buildUserMessage(question, context);
++-  const cacheKey = await cacheKeyFor(SYSTEM_PROMPT, userMessage);
++-  const cached = readCache(cacheKey);
++-  if (cached) return { ...cached, cached: true };
++-
++-  let resp: Response;
++-  try {
++-    resp = await fetch(ANTHROPIC_URL, {
++-      method: "POST",
++-      headers: {
++-        "x-api-key": apiKey,
++-        "anthropic-version": "2023-06-01",
++-        "content-type": "application/json",
++-      },
++-      body: JSON.stringify({
++-        model: MODEL,
++-        max_tokens: 2000,
++-        system: SYSTEM_PROMPT,
++-        messages: [{ role: "user", content: userMessage }],
++-      }),
++-    });
++-  } catch (err) {
++-    throw new ExpertError(`Network error: ${(err as Error).message}`, "network");
++-  }
++-
++-  if (!resp.ok) {
++-    let body = "";
++-    try {
++-      body = await resp.text();
++-    } catch {
++-      /* ignore */
++-    }
++-    throw new ExpertError(`Anthropic API ${resp.status}: ${body.slice(0, 300)}`, "api_error");
++-  }
++-
++-  let parsed: AnthropicResponse;
++-  try {
++-    parsed = (await resp.json()) as AnthropicResponse;
++-  } catch (err) {
++-    throw new ExpertError(`Failed to parse Anthropic response: ${(err as Error).message}`, "parse");
++-  }
++-
++-  const answer = parsed.content?.find((c) => c.type === "text")?.text ?? "";
++-  const inputTokens = parsed.usage?.input_tokens ?? 0;
++-  const outputTokens = parsed.usage?.output_tokens ?? 0;
++-  // Sonnet 4.5: $3/Mtok input, $15/Mtok output. EUR ≈ USD here.
++-  const costEur = (inputTokens / 1_000_000) * 3 + (outputTokens / 1_000_000) * 15;
++-
++-  const result: ExpertResponse = {
++-    answer,
++-    cached: false,
++-    costEur,
++-    inputTokens,
++-    outputTokens,
++-  };
++-  writeCache(cacheKey, result);
++-  return result;
++-}
++-
++-/* ─────────────────────────  Helpers  ───────────────────────── */
++-
++-interface AnthropicResponse {
++-  content?: { type: string; text?: string }[];
++-  usage?: { input_tokens?: number; output_tokens?: number };
++-}
++-
++-function buildUserMessage(question: string, context?: ExpertContext): string {
++-  const parts: string[] = [];
++-  if (context?.diagnostics) {
++-    parts.push(
++-      "## Diagnóstico actual (TR Importer addon)\n```json\n" +
++-        JSON.stringify(context.diagnostics, null, 2).slice(0, 12_000) +
++-        "\n```",
++-    );
++-  }
++-  if (context?.csvSummary) {
++-    parts.push(
++-      "## CSV summary\n```json\n" +
++-        JSON.stringify(context.csvSummary, null, 2).slice(0, 4_000) +
++-        "\n```",
++-    );
++-  }
++-  if (context?.recentErrors && context.recentErrors.length > 0) {
++-    parts.push(
++-      "## Erros recentes do log\n" +
++-        context.recentErrors
++-          .slice(0, 10)
++-          .map((e) => `- ${e}`)
++-          .join("\n"),
++-    );
++-  }
++-  parts.push("## Pergunta\n" + question);
++-  return parts.join("\n\n");
++-}
++-
++-async function cacheKeyFor(system: string, user: string): Promise<string> {
++-  const data = new TextEncoder().encode(system + "\n---\n" + user);
++-  const buf = await crypto.subtle.digest("SHA-256", data);
++-  const bytes = new Uint8Array(buf);
++-  let hex = "";
++-  for (let i = 0; i < bytes.length; i++) {
++-    hex += bytes[i].toString(16).padStart(2, "0");
++-  }
++-  return CACHE_PREFIX + hex;
++-}
++-
++-interface CacheEntry {
++-  expiresAt: number;
++-  response: ExpertResponse;
++-}
++-
++-function readCache(key: string): ExpertResponse | null {
++-  if (typeof localStorage === "undefined") return null;
++-  try {
++-    const raw = localStorage.getItem(key);
++-    if (!raw) return null;
++-    const entry = JSON.parse(raw) as CacheEntry;
++-    if (Date.now() > entry.expiresAt) {
++-      localStorage.removeItem(key);
++-      return null;
++-    }
++-    return entry.response;
++-  } catch {
++-    return null;
++-  }
++-}
++-
++-function writeCache(key: string, response: ExpertResponse): void {
++-  if (typeof localStorage === "undefined") return;
++-  try {
++-    const entry: CacheEntry = {
++-      expiresAt: Date.now() + CACHE_TTL_MS,
++-      response,
++-    };
++-    localStorage.setItem(key, JSON.stringify(entry));
++-  } catch {
++-    // Quota exceeded or unavailable — fail silently
++-  }
++-}
++diff --git a/fork/addons/tr-importer/src/lib/tr-geography.ts b/fork/addons/tr-importer/src/lib/tr-geography.ts
++index f5d06a03..81b993c0 100644
++--- a/fork/addons/tr-importer/src/lib/tr-geography.ts
+++++ b/fork/addons/tr-importer/src/lib/tr-geography.ts
++@@ -36,88 +36,88 @@ export interface CountryInfo {
++   isOffshore?: boolean;
++ }
++ 
++-const UNKNOWN_REGION = "Desconhecido";
+++const UNKNOWN_REGION = "Unknown";
++ 
++ const COUNTRIES: Record<string, CountryInfo> = {
++   // North America
++-  US: { code: "US", name: "Estados Unidos", flag: "🇺🇸", region: "América do Norte" },
++-  CA: { code: "CA", name: "Canadá", flag: "🇨🇦", region: "América do Norte" },
++-  MX: { code: "MX", name: "México", flag: "🇲🇽", region: "América do Norte" },
+++  US: { code: "US", name: "United States", flag: "🇺🇸", region: "North America" },
+++  CA: { code: "CA", name: "Canada", flag: "🇨🇦", region: "North America" },
+++  MX: { code: "MX", name: "Mexico", flag: "🇲🇽", region: "North America" },
++   // Offshore (typically US-listed)
++   KY: {
++     code: "KY",
++-    name: "Ilhas Caimão",
+++    name: "Cayman Islands",
++     flag: "🇰🇾",
++-    region: "América do Norte",
+++    region: "North America",
++     isOffshore: true,
++   },
++-  BM: { code: "BM", name: "Bermudas", flag: "🇧🇲", region: "América do Norte", isOffshore: true },
+++  BM: { code: "BM", name: "Bermuda", flag: "🇧🇲", region: "North America", isOffshore: true },
++   VG: {
++     code: "VG",
++-    name: "Ilhas Virgens Britânicas",
+++    name: "British Virgin Islands",
++     flag: "🇻🇬",
++-    region: "América do Norte",
+++    region: "North America",
++     isOffshore: true,
++   },
++-  PA: { code: "PA", name: "Panamá", flag: "🇵🇦", region: "América do Norte", isOffshore: true },
+++  PA: { code: "PA", name: "Panama", flag: "🇵🇦", region: "North America", isOffshore: true },
++ 
++   // Europe — UCITS umbrellas
++-  IE: { code: "IE", name: "Irlanda (UCITS ETFs)", flag: "🇮🇪", region: "Europa", isUmbrella: true },
++-  LU: { code: "LU", name: "Luxemburgo (Funds)", flag: "🇱🇺", region: "Europa", isUmbrella: true },
++-  JE: { code: "JE", name: "Jersey", flag: "🇯🇪", region: "Europa", isOffshore: true },
+++  IE: { code: "IE", name: "Ireland (UCITS ETFs)", flag: "🇮🇪", region: "Europe", isUmbrella: true },
+++  LU: { code: "LU", name: "Luxembourg (Funds)", flag: "🇱🇺", region: "Europe", isUmbrella: true },
+++  JE: { code: "JE", name: "Jersey", flag: "🇯🇪", region: "Europe", isOffshore: true },
++ 
++   // Europe — operating
++-  DE: { code: "DE", name: "Alemanha", flag: "🇩🇪", region: "Europa" },
++-  FR: { code: "FR", name: "França", flag: "🇫🇷", region: "Europa" },
++-  GB: { code: "GB", name: "Reino Unido", flag: "🇬🇧", region: "Europa" },
++-  NL: { code: "NL", name: "Holanda", flag: "🇳🇱", region: "Europa" },
++-  CH: { code: "CH", name: "Suíça", flag: "🇨🇭", region: "Europa" },
++-  IT: { code: "IT", name: "Itália", flag: "🇮🇹", region: "Europa" },
++-  ES: { code: "ES", name: "Espanha", flag: "🇪🇸", region: "Europa" },
++-  PT: { code: "PT", name: "Portugal", flag: "🇵🇹", region: "Europa" },
++-  BE: { code: "BE", name: "Bélgica", flag: "🇧🇪", region: "Europa" },
++-  AT: { code: "AT", name: "Áustria", flag: "🇦🇹", region: "Europa" },
++-  SE: { code: "SE", name: "Suécia", flag: "🇸🇪", region: "Europa" },
++-  NO: { code: "NO", name: "Noruega", flag: "🇳🇴", region: "Europa" },
++-  FI: { code: "FI", name: "Finlândia", flag: "🇫🇮", region: "Europa" },
++-  DK: { code: "DK", name: "Dinamarca", flag: "🇩🇰", region: "Europa" },
++-  PL: { code: "PL", name: "Polónia", flag: "🇵🇱", region: "Europa" },
++-  CZ: { code: "CZ", name: "Chéquia", flag: "🇨🇿", region: "Europa" },
++-  GR: { code: "GR", name: "Grécia", flag: "🇬🇷", region: "Europa" },
++-  HU: { code: "HU", name: "Hungria", flag: "🇭🇺", region: "Europa" },
++-  IS: { code: "IS", name: "Islândia", flag: "🇮🇸", region: "Europa" },
+++  DE: { code: "DE", name: "Germany", flag: "🇩🇪", region: "Europe" },
+++  FR: { code: "FR", name: "France", flag: "🇫🇷", region: "Europe" },
+++  GB: { code: "GB", name: "United Kingdom", flag: "🇬🇧", region: "Europe" },
+++  NL: { code: "NL", name: "Netherlands", flag: "🇳🇱", region: "Europe" },
+++  CH: { code: "CH", name: "Switzerland", flag: "🇨🇭", region: "Europe" },
+++  IT: { code: "IT", name: "Italy", flag: "🇮🇹", region: "Europe" },
+++  ES: { code: "ES", name: "Spain", flag: "🇪🇸", region: "Europe" },
+++  PT: { code: "PT", name: "Portugal", flag: "🇵🇹", region: "Europe" },
+++  BE: { code: "BE", name: "Belgium", flag: "🇧🇪", region: "Europe" },
+++  AT: { code: "AT", name: "Austria", flag: "🇦🇹", region: "Europe" },
+++  SE: { code: "SE", name: "Sweden", flag: "🇸🇪", region: "Europe" },
+++  NO: { code: "NO", name: "Norway", flag: "🇳🇴", region: "Europe" },
+++  FI: { code: "FI", name: "Finland", flag: "🇫🇮", region: "Europe" },
+++  DK: { code: "DK", name: "Denmark", flag: "🇩🇰", region: "Europe" },
+++  PL: { code: "PL", name: "Poland", flag: "🇵🇱", region: "Europe" },
+++  CZ: { code: "CZ", name: "Czechia", flag: "🇨🇿", region: "Europe" },
+++  GR: { code: "GR", name: "Greece", flag: "🇬🇷", region: "Europe" },
+++  HU: { code: "HU", name: "Hungary", flag: "🇭🇺", region: "Europe" },
+++  IS: { code: "IS", name: "Iceland", flag: "🇮🇸", region: "Europe" },
++ 
++   // Asia-Pacific
++-  JP: { code: "JP", name: "Japão", flag: "🇯🇵", region: "Ásia-Pacífico" },
++-  CN: { code: "CN", name: "China", flag: "🇨🇳", region: "Ásia-Pacífico" },
++-  HK: { code: "HK", name: "Hong Kong", flag: "🇭🇰", region: "Ásia-Pacífico" },
++-  TW: { code: "TW", name: "Taiwan", flag: "🇹🇼", region: "Ásia-Pacífico" },
++-  KR: { code: "KR", name: "Coreia do Sul", flag: "🇰🇷", region: "Ásia-Pacífico" },
++-  SG: { code: "SG", name: "Singapura", flag: "🇸🇬", region: "Ásia-Pacífico" },
++-  IN: { code: "IN", name: "Índia", flag: "🇮🇳", region: "Ásia-Pacífico" },
++-  AU: { code: "AU", name: "Austrália", flag: "🇦🇺", region: "Ásia-Pacífico" },
++-  NZ: { code: "NZ", name: "Nova Zelândia", flag: "🇳🇿", region: "Ásia-Pacífico" },
++-  TH: { code: "TH", name: "Tailândia", flag: "🇹🇭", region: "Ásia-Pacífico" },
++-  VN: { code: "VN", name: "Vietname", flag: "🇻🇳", region: "Ásia-Pacífico" },
++-  ID: { code: "ID", name: "Indonésia", flag: "🇮🇩", region: "Ásia-Pacífico" },
++-  MY: { code: "MY", name: "Malásia", flag: "🇲🇾", region: "Ásia-Pacífico" },
++-  PH: { code: "PH", name: "Filipinas", flag: "🇵🇭", region: "Ásia-Pacífico" },
+++  JP: { code: "JP", name: "Japan", flag: "🇯🇵", region: "Asia-Pacific" },
+++  CN: { code: "CN", name: "China", flag: "🇨🇳", region: "Asia-Pacific" },
+++  HK: { code: "HK", name: "Hong Kong", flag: "🇭🇰", region: "Asia-Pacific" },
+++  TW: { code: "TW", name: "Taiwan", flag: "🇹🇼", region: "Asia-Pacific" },
+++  KR: { code: "KR", name: "South Korea", flag: "🇰🇷", region: "Asia-Pacific" },
+++  SG: { code: "SG", name: "Singapore", flag: "🇸🇬", region: "Asia-Pacific" },
+++  IN: { code: "IN", name: "India", flag: "🇮🇳", region: "Asia-Pacific" },
+++  AU: { code: "AU", name: "Australia", flag: "🇦🇺", region: "Asia-Pacific" },
+++  NZ: { code: "NZ", name: "New Zealand", flag: "🇳🇿", region: "Asia-Pacific" },
+++  TH: { code: "TH", name: "Thailand", flag: "🇹🇭", region: "Asia-Pacific" },
+++  VN: { code: "VN", name: "Vietnam", flag: "🇻🇳", region: "Asia-Pacific" },
+++  ID: { code: "ID", name: "Indonesia", flag: "🇮🇩", region: "Asia-Pacific" },
+++  MY: { code: "MY", name: "Malaysia", flag: "🇲🇾", region: "Asia-Pacific" },
+++  PH: { code: "PH", name: "Philippines", flag: "🇵🇭", region: "Asia-Pacific" },
++ 
++   // South America
++-  BR: { code: "BR", name: "Brasil", flag: "🇧🇷", region: "América do Sul" },
++-  AR: { code: "AR", name: "Argentina", flag: "🇦🇷", region: "América do Sul" },
++-  CL: { code: "CL", name: "Chile", flag: "🇨🇱", region: "América do Sul" },
++-  CO: { code: "CO", name: "Colômbia", flag: "🇨🇴", region: "América do Sul" },
++-  PE: { code: "PE", name: "Peru", flag: "🇵🇪", region: "América do Sul" },
+++  BR: { code: "BR", name: "Brazil", flag: "🇧🇷", region: "South America" },
+++  AR: { code: "AR", name: "Argentina", flag: "🇦🇷", region: "South America" },
+++  CL: { code: "CL", name: "Chile", flag: "🇨🇱", region: "South America" },
+++  CO: { code: "CO", name: "Colombia", flag: "🇨🇴", region: "South America" },
+++  PE: { code: "PE", name: "Peru", flag: "🇵🇪", region: "South America" },
++ 
++   // Middle East / Africa
++-  IL: { code: "IL", name: "Israel", flag: "🇮🇱", region: "Médio Oriente" },
++-  AE: { code: "AE", name: "Emirados Árabes Unidos", flag: "🇦🇪", region: "Médio Oriente" },
++-  SA: { code: "SA", name: "Arábia Saudita", flag: "🇸🇦", region: "Médio Oriente" },
++-  TR: { code: "TR", name: "Turquia", flag: "🇹🇷", region: "Médio Oriente" },
++-  ZA: { code: "ZA", name: "África do Sul", flag: "🇿🇦", region: "África" },
++-  EG: { code: "EG", name: "Egito", flag: "🇪🇬", region: "África" },
++-  NG: { code: "NG", name: "Nigéria", flag: "🇳🇬", region: "África" },
+++  IL: { code: "IL", name: "Israel", flag: "🇮🇱", region: "Middle East" },
+++  AE: { code: "AE", name: "United Arab Emirates", flag: "🇦🇪", region: "Middle East" },
+++  SA: { code: "SA", name: "Saudi Arabia", flag: "🇸🇦", region: "Middle East" },
+++  TR: { code: "TR", name: "Turkey", flag: "🇹🇷", region: "Middle East" },
+++  ZA: { code: "ZA", name: "South Africa", flag: "🇿🇦", region: "Africa" },
+++  EG: { code: "EG", name: "Egypt", flag: "🇪🇬", region: "Africa" },
+++  NG: { code: "NG", name: "Nigeria", flag: "🇳🇬", region: "Africa" },
++ };
++ 
++ const CRYPTO_INFO: CountryInfo = {
++@@ -134,11 +134,11 @@ const CRYPTO_INFO: CountryInfo = {
++ export function resolveCountry(symbol: string, assetClass: string): CountryInfo {
++   if (assetClass === "CRYPTO") return CRYPTO_INFO;
++   if (!symbol || symbol.length < 2) {
++-    return { code: "??", name: "Desconhecido", flag: "🏳️", region: UNKNOWN_REGION };
+++    return { code: "??", name: "Unknown", flag: "🏳️", region: UNKNOWN_REGION };
++   }
++   const cc = symbol.slice(0, 2).toUpperCase();
++   if (!/^[A-Z]{2}$/.test(cc)) {
++-    return { code: "??", name: "Desconhecido", flag: "🏳️", region: UNKNOWN_REGION };
+++    return { code: "??", name: "Unknown", flag: "🏳️", region: UNKNOWN_REGION };
++   }
++   const info = COUNTRIES[cc];
++   if (info) return info;
++diff --git a/fork/addons/tr-importer/src/lib/tr-sdk-test.ts b/fork/addons/tr-importer/src/lib/tr-sdk-test.ts
++deleted file mode 100644
++index 60854e3e..00000000
++--- a/fork/addons/tr-importer/src/lib/tr-sdk-test.ts
+++++ /dev/null
++@@ -1,272 +0,0 @@
++-/**
++- * SDK contract test for the TR Importer.
++- *
++- * Builds one sample activity per type that we emit (BUY, SELL, DIVIDEND,
++- * INTEREST, DEPOSIT, WITHDRAWAL, TRANSFER_IN, FEE, CREDIT, ADJUSTMENT,
++- * SPLIT, SELL@0 = worthless), inserts each via `activities.create()`,
++- * captures per-type pass/fail, and deletes the inserted ones at the end
++- * so the user's account is left untouched.
++- *
++- * Goal: detect Wealthfolio backend rejections (missing fields, invalid
++- * subtypes, etc.) BEFORE the user does a full re-import of 4126 rows.
++- *
++- * No CSV needed — synthetic samples mirror our mapper's output shape.
++- */
++-
++-import type { ActivityCreate } from "@wealthfolio/addon-sdk";
++-
++-export interface SdkTestSample {
++-  label: string;
++-  activity: ActivityCreate;
++-}
++-
++-export interface SdkTestResult {
++-  label: string;
++-  activityType: string;
++-  status: "pass" | "fail";
++-  error?: string;
++-  /** ID assigned by the backend if it succeeded — used for cleanup. */
++-  createdId?: string;
++-}
++-
++-/** Build samples that mirror what our mapper emits — same fields, same
++- *  metadata shape, same idempotency convention. */
++-export function buildSamples(accountId: string): SdkTestSample[] {
++-  const today = new Date().toISOString();
++-  const meta = (extras: Record<string, unknown>) =>
++-    JSON.stringify({
++-      tr_source_system: "TR_CSV",
++-      tr_test: true,
++-      ...extras,
++-    });
++-
++-  // Use a unique idempotency key per test run so retries don't collide
++-  const runId = Date.now().toString(36);
++-  const idem = (kind: string) => `tr-importer:test:${runId}:${kind}`;
++-
++-  return [
++-    {
++-      label: "BUY (stock, EUR)",
++-      activity: {
++-        accountId,
++-        activityType: "BUY",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        quantity: 0.001,
++-        unitPrice: 1,
++-        currency: "EUR",
++-        fee: 0.01,
++-        comment: "TR Importer SDK test — BUY",
++-        metadata: meta({ tr_kind: "test_buy" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("buy"),
++-        idempotencyKey: idem("buy"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "SELL (stock, EUR)",
++-      activity: {
++-        accountId,
++-        activityType: "SELL",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        quantity: 0.001,
++-        unitPrice: 1,
++-        currency: "EUR",
++-        fee: 0.01,
++-        comment: "TR Importer SDK test — SELL",
++-        metadata: meta({ tr_kind: "test_sell" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("sell"),
++-        idempotencyKey: idem("sell"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "DIVIDEND (net amount)",
++-      activity: {
++-        accountId,
++-        activityType: "DIVIDEND",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — DIVIDEND",
++-        metadata: meta({ tr_kind: "test_dividend", tr_gross: 0.012, tr_wht: 0.002 }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("dividend"),
++-        idempotencyKey: idem("dividend"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "INTEREST (cash)",
++-      activity: {
++-        accountId,
++-        activityType: "INTEREST",
++-        activityDate: today,
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — INTEREST",
++-        metadata: meta({ tr_kind: "test_interest" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("interest"),
++-        idempotencyKey: idem("interest"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "CREDIT/REBATE (saveback)",
++-      activity: {
++-        accountId,
++-        activityType: "CREDIT",
++-        subtype: "REBATE",
++-        activityDate: today,
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — CREDIT/REBATE",
++-        metadata: meta({ tr_kind: "test_credit_rebate" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("credit-rebate"),
++-        idempotencyKey: idem("credit-rebate"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "DEPOSIT (cash inbound)",
++-      activity: {
++-        accountId,
++-        activityType: "DEPOSIT",
++-        activityDate: today,
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — DEPOSIT",
++-        metadata: meta({ tr_kind: "test_deposit" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("deposit"),
++-        idempotencyKey: idem("deposit"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "WITHDRAWAL (cash out)",
++-      activity: {
++-        accountId,
++-        activityType: "WITHDRAWAL",
++-        activityDate: today,
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — WITHDRAWAL",
++-        metadata: meta({ tr_kind: "test_withdrawal" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("withdrawal"),
++-        idempotencyKey: idem("withdrawal"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "TRANSFER_IN (staking, qty only)",
++-      activity: {
++-        accountId,
++-        activityType: "TRANSFER_IN",
++-        activityDate: today,
++-        symbol: {
++-          symbol: "SOL-EUR",
++-          kind: "INVESTMENT",
++-          quoteCcy: "EUR",
++-          instrumentType: "CRYPTO",
++-        },
++-        quantity: 0.001,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — TRANSFER_IN",
++-        metadata: meta({ tr_kind: "test_transfer_in", tr_staking: true }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("transfer-in"),
++-        idempotencyKey: idem("transfer-in"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "FEE (TR card)",
++-      activity: {
++-        accountId,
++-        activityType: "FEE",
++-        activityDate: today,
++-        amount: 0.01,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — FEE",
++-        metadata: meta({ tr_kind: "test_fee" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("fee"),
++-        idempotencyKey: idem("fee"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "ADJUSTMENT (merger pair)",
++-      activity: {
++-        accountId,
++-        activityType: "ADJUSTMENT",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        quantity: 0.001,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — ADJUSTMENT",
++-        metadata: meta({ tr_kind: "test_adjustment" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("adjustment"),
++-        idempotencyKey: idem("adjustment"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "SPLIT (ratio 2:1)",
++-      activity: {
++-        accountId,
++-        activityType: "SPLIT",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        amount: 2,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — SPLIT",
++-        metadata: meta({ tr_kind: "test_split" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("split"),
++-        idempotencyKey: idem("split"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "DIVIDEND/DIVIDEND_IN_KIND (stock dividend)",
++-      activity: {
++-        accountId,
++-        activityType: "DIVIDEND",
++-        subtype: "DIVIDEND_IN_KIND",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        quantity: 0.001,
++-        // Wealthfolio v3.4.0 hardened validation: asset-backed income
++-        // (DIVIDEND_IN_KIND, SPIN_OFF, etc.) now requires `unitPrice`
++-        // (FMV per unit) so the back-end can value the granted shares.
++-        // Real TR imports already carry it; this synthetic test row
++-        // needs the same to pass the SDK contract.
++-        amount: 0,
++-        unitPrice: 1,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — DIVIDEND_IN_KIND",
++-        metadata: meta({ tr_kind: "test_dividend_in_kind" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("dividend-in-kind"),
++-        idempotencyKey: idem("dividend-in-kind"),
++-      } as ActivityCreate,
++-    },
++-    {
++-      label: "SELL @ 0 (worthless write-off)",
++-      activity: {
++-        accountId,
++-        activityType: "SELL",
++-        activityDate: today,
++-        symbol: { symbol: "AAPL", kind: "INVESTMENT", quoteCcy: "EUR", instrumentType: "EQUITY" },
++-        quantity: 0.001,
++-        unitPrice: 0,
++-        amount: 0,
++-        currency: "EUR",
++-        comment: "TR Importer SDK test — WORTHLESS",
++-        metadata: meta({ tr_kind: "test_worthless" }),
++-        sourceSystem: "TR_CSV",
++-        sourceRecordId: idem("worthless"),
++-        idempotencyKey: idem("worthless"),
++-      } as ActivityCreate,
++-    },
++-  ];
++-}
++diff --git a/fork/addons/tr-importer/src/pages/tr-converter-page.tsx b/fork/addons/tr-importer/src/pages/tr-converter-page.tsx
++index aadfa4dd..847282f7 100644
++--- a/fork/addons/tr-importer/src/pages/tr-converter-page.tsx
+++++ b/fork/addons/tr-importer/src/pages/tr-converter-page.tsx
++@@ -45,9 +45,6 @@ import {
++   type ImportHistory,
++ } from "../lib/tr-import-history";
++ import { diagnose, pickDuplicatesToDelete, type DiagnosticsReport } from "../lib/tr-diagnostics";
++-import { buildSamples, type SdkTestResult } from "../lib/tr-sdk-test";
++-import { EmptyState } from "../components/empty-state";
++-import { ExpertPanel } from "../components/expert-panel";
++ import { EurHoldingsView } from "../components/eur-holdings-view";
++ import { ReviewAssetsView, type AssetOverride } from "../components/review-assets-view";
++ import { WizardStepper, type WizardStep } from "../components/wizard-stepper";
++@@ -57,12 +54,10 @@ import { WizardStepper, type WizardStep } from "../components/wizard-stepper";
++  * tabs preserves state inside each tab. The Import tab holds the wizard
++  * (with its own state machine); other tabs are tools.
++  */
++-// v5.2.0: simplified to 3 user-facing tabs. The "holdings" tab now also
++-// hosts the diagnostics report below the EUR table, and the "expert" tab
++-// hosts the SDK-test panel below the AI panel. The old IDs are kept as
++-// internal section anchors so the rest of the state machine doesn't have
++-// to change.
++-type TabId = "import" | "holdings" | "expert";
+++// Simplified to 2 user-facing tabs. The "holdings" tab also hosts the
+++// diagnostics report below the EUR table. The old IDs are kept as internal
+++// section anchors so the rest of the state machine doesn't have to change.
+++type TabId = "import" | "holdings";
++ 
++ interface Props {
++   ctx: AddonContext;
++@@ -115,9 +110,6 @@ type State =
++     }
++   | { kind: "diagnosing" }
++   | { kind: "diagnosed"; report: DiagnosticsReport; cleanupCount?: number }
++-  | { kind: "sdk_testing"; current: number; total: number }
++-  | { kind: "sdk_tested"; results: SdkTestResult[]; durationMs: number }
++-  | { kind: "expert"; lastReport?: DiagnosticsReport }
++   | { kind: "eur_view" }
++   | { kind: "error"; error: ErrorInfo };
++ 
++@@ -155,7 +147,7 @@ const PREVIEW_ACCOUNT_ID = "tr-preview";
++ 
++ function describeError(err: unknown): { message: string; detail?: string } {
++   if (err instanceof Error) {
++-    const message = err.message || err.name || "Erro sem mensagem";
+++    const message = err.message || err.name || "Error with no message";
++     return { message, detail: err.stack };
++   }
++   if (typeof err === "string") return { message: err };
++@@ -166,7 +158,7 @@ function describeError(err: unknown): { message: string; detail?: string } {
++       return { message: "Non-serialisable error" };
++     }
++   }
++-  return { message: String(err ?? "Erro desconhecido") };
+++  return { message: String(err ?? "Unknown error") };
++ }
++ 
++ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++@@ -576,64 +568,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++     }
++   }, [state, ctx]);
++ 
++-  const handleSdkTest = React.useCallback(async () => {
++-    try {
++-      const account = await ensureTRAccount(ctx);
++-      const samples = buildSamples(account.accountId);
++-      const startedAt = Date.now();
++-      setState({ kind: "sdk_testing", current: 0, total: samples.length });
++-
++-      const results: SdkTestResult[] = [];
++-      const createdIds: string[] = [];
++-
++-      for (let i = 0; i < samples.length; i++) {
++-        const s = samples[i];
++-        try {
++-          const created = (await ctx.api.activities.create(s.activity)) as { id?: string };
++-          results.push({
++-            label: s.label,
++-            activityType: s.activity.activityType,
++-            status: "pass",
++-            createdId: created?.id,
++-          });
++-          if (created?.id) createdIds.push(created.id);
++-        } catch (err) {
++-          const { message } = describeError(err);
++-          results.push({
++-            label: s.label,
++-            activityType: s.activity.activityType,
++-            status: "fail",
++-            error: message,
++-          });
++-        }
++-        setState({ kind: "sdk_testing", current: i + 1, total: samples.length });
++-      }
++-
++-      // Cleanup — delete every successfully created test activity.
++-      if (createdIds.length > 0) {
++-        try {
++-          await ctx.api.activities.saveMany({ deleteIds: createdIds });
++-        } catch (err) {
++-          const { message } = describeError(err);
++-          ctx.api.logger.error(`SDK test cleanup falhou: ${message}`);
++-        }
++-      }
++-
++-      setState({
++-        kind: "sdk_tested",
++-        results,
++-        durationMs: Date.now() - startedAt,
++-      });
++-    } catch (err) {
++-      const { message, detail } = describeError(err);
++-      ctx.api.logger.error(`SDK test setup falhou: ${message}`);
++-      setState({
++-        kind: "error",
++-        error: { origin: "import", title: "SDK test failed", message, detail },
++-      });
++-    }
++-  }, [ctx]);
++-
++   // v5.0.0 — tab switch with confirmation when leaving in-progress work.
++   const wizardInProgress =
++     state.kind === "parsing" ||
++@@ -662,16 +596,12 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++       importStateRef.current = state;
++     }
++     setCurrentTab(tab);
++-    // v5.2.0: Análise tab loads holdings + auto-runs diagnostics (was its
++-    // own tab). Avançado tab opens the Expert (AI) panel and also exposes
++-    // the SDK-test panel via a button further down.
+++    // Análise tab loads holdings + auto-runs diagnostics (was its own tab).
++     if (tab === "import") {
++       // Restore the document the user was working on (empty on first visit).
++       setState(importStateRef.current);
++     } else if (tab === "holdings") {
++       handleDiagnose();
++-    } else if (tab === "expert") {
++-      setState({ kind: "expert" });
++     }
++   };
++ 
++@@ -685,26 +615,19 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++           className="w-full"
++         >
++           {/*
++-           * v5.2.0 UX simplification: collapsed 5 tabs into 3 so the user
++-           * isn't bombarded with developer-flavoured tabs (SDK Test) and
++-           * overlapping analysis screens (Holdings + Diagnostics).
+++           * Two user-facing tabs:
++            *
++-           *   Importar  — CSV upload + review wizard (unchanged)
+++           *   Importar  — CSV upload + review wizard
++            *   Análise   — EUR holdings table + diagnostics (merged)
++-           *   Avançado  — Expert (AI) + SDK Test (dev), one click away
++            */}
++-          <TabsList className="mb-4 grid w-full max-w-md grid-cols-3">
+++          <TabsList className="mb-4 grid w-full max-w-md grid-cols-2">
++             <TabsTrigger value="import" className="gap-1.5">
++               <Icons.Upload className="h-3.5 w-3.5" />
++-              <span className="hidden sm:inline">Importar</span>
+++              <span className="hidden sm:inline">Import</span>
++             </TabsTrigger>
++             <TabsTrigger value="holdings" className="gap-1.5">
++               <Icons.Globe className="h-3.5 w-3.5" />
++-              <span className="hidden sm:inline">Análise</span>
++-            </TabsTrigger>
++-            <TabsTrigger value="expert" className="gap-1.5">
++-              <Icons.Sparkles className="h-3.5 w-3.5" />
++-              <span className="hidden sm:inline">Avançado</span>
+++              <span className="hidden sm:inline">Analysis</span>
++             </TabsTrigger>
++           </TabsList>
++ 
++@@ -735,7 +658,7 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++                 <Card>
++                   <CardContent className="flex flex-col items-center justify-center py-12">
++                     <Icons.Spinner className="text-muted-foreground mb-4 h-8 w-8 animate-spin" />
++-                    <p className="text-sm font-medium">A ler atividades da conta TR…</p>
+++                    <p className="text-sm font-medium">Reading activities from the TR account…</p>
++                   </CardContent>
++                 </Card>
++               )}
++@@ -753,59 +676,6 @@ export default function TrImporterPage({ ctx }: Props): React.JSX.Element {
++               )}
++             </div>
++           )}
++-
++-          {/* TAB: AVANÇADO — AI Expert (top) + SDK contract test (collapsed) */}
++-          {currentTab === "expert" && (
++-            <div className="space-y-6">
++-              <ExpertPanel
++-                secrets={ctx.api.secrets}
++-                context={undefined}
++-                onClose={() => switchTabImmediate("import")}
++-              />
++-
++-              {/* SDK contract test (was a separate top-level tab in <=v5.1.x).
++-                  Moved here so developer-flavoured tools don't dominate the
++-                  main nav, but still discoverable for diagnostics. */}
++-              {state.kind === "sdk_testing" && (
++-                <Card>
++-                  <CardHeader>
++-                    <CardTitle className="flex items-center gap-2">
++-                      <Icons.Spinner className="h-5 w-5 animate-spin" />
++-                      Testing SDK contracts…
++-                    </CardTitle>
++-                    <CardDescription>
++-                      Inserting 1 activity of each type, then deleting them.
++-                    </CardDescription>
++-                  </CardHeader>
++-                  <CardContent className="space-y-3">
++-                    <Progress value={state.total > 0 ? (state.current / state.total) * 100 : 0} />
++-                    <p className="text-muted-foreground text-xs">
++-                      {state.current} of {state.total} tested
++-                    </p>
++-                  </CardContent>
++-                </Card>
++-              )}
++-              {state.kind === "sdk_tested" && (
++-                <SdkTestView
++-                  results={state.results}
++-                  durationMs={state.durationMs}
++-                  onClose={() => switchTabImmediate("import")}
++-                />
++-              )}
++-              {state.kind !== "sdk_testing" && state.kind !== "sdk_tested" && (
++-                <EmptyState
++-                  icon={<Icons.CheckCircle className="text-muted-foreground h-8 w-8" />}
++-                  title="Teste de contrato SDK"
++-                  description="Insere uma atividade de cada tipo via o SDK do addon e apaga-as logo em seguida. Útil para verificar a ponte addon ↔ Donkeyfolio depois de atualizações."
++-                  primaryAction={{
++-                    label: "Correr teste",
++-                    icon: <Icons.CheckCircle className="h-4 w-4" />,
++-                    onClick: handleSdkTest,
++-                  }}
++-                />
++-              )}
++-            </div>
++-          )}
++         </Tabs>
++ 
++         <input
++@@ -854,10 +724,28 @@ function ImportTabContent({
++   handleCancelImport,
++ }: ImportTabContentProps): React.JSX.Element {
++   const stepper = renderStepper(state);
+++  // Let the user bail out of a loaded import and return to the drop zone
+++  // without leaving the app. Re-importing the same CSV is safe (dedup).
+++  const canStartOver = state.kind === "parsed" || state.kind === "reviewing_assets";
++ 
++   return (
++     <div className="space-y-4">
++-      {stepper}
+++      {(stepper || canStartOver) && (
+++        <div className="flex items-center justify-between gap-3">
+++          <div className="min-w-0 flex-1">{stepper}</div>
+++          {canStartOver && (
+++            <Button
+++              variant="ghost"
+++              size="sm"
+++              className="text-muted-foreground shrink-0"
+++              onClick={() => setState({ kind: "empty" })}
+++            >
+++              <Icons.Refresh className="mr-2 h-4 w-4" />
+++              Start over
+++            </Button>
+++          )}
+++        </div>
+++      )}
++ 
++       {state.kind === "empty" && (
++         <EmptyView
++@@ -883,7 +771,7 @@ function ImportTabContent({
++             <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
++             <p className="text-sm font-medium">
++               {state.total
++-                ? `A resolver ativos em EUR… ${state.done ?? 0}/${state.total}`
+++                ? `Resolving assets in EUR… ${state.done ?? 0}/${state.total}`
++                 : `Parsing ${state.filename}…`}
++             </p>
++           </CardContent>
++@@ -1011,28 +899,25 @@ function renderStepper(state: State): React.JSX.Element | null {
++ }
++ 
++ function pageSubtitle(state: State, currentTab: TabId): string {
++-  // v5.2.0: subtitles match the new 3-tab IA (Importar / Análise / Avançado).
+++  // Subtitles match the 2-tab IA (Importar / Análise).
++   if (currentTab === "holdings") {
++-    return "Posições em EUR + diagnóstico das atividades importadas.";
++-  }
++-  if (currentTab === "expert") {
++-    return "Ferramentas avançadas: assistente AI e teste do SDK.";
+++    return "EUR positions + diagnostics of the imported activities.";
++   }
++ 
++   // Import tab — subtitle reflects wizard step.
++   switch (state.kind) {
++     case "parsed":
++-      return `${state.data.summary.totalRows.toLocaleString("en-US")} transações em ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} novas para importar.`;
+++      return `${state.data.summary.totalRows.toLocaleString("en-US")} transactions in ${state.data.filename} · ${state.data.newRows.length.toLocaleString("en-US")} new to import.`;
++     case "reviewing_assets":
++-      return `Rever ${state.data.mapping.activities.length.toLocaleString("en-US")} atividades · ajustar quoteCcy por ativo antes de importar.`;
+++      return `Review ${state.data.mapping.activities.length.toLocaleString("en-US")} activities · adjust quoteCcy per asset before importing.`;
++     case "importing":
++-      return `A importar ${state.current.toLocaleString("en-US")} de ${state.total.toLocaleString("en-US")} atividades…`;
+++      return `Importing ${state.current.toLocaleString("en-US")} of ${state.total.toLocaleString("en-US")} activities…`;
++     case "imported":
++-      return `Importadas ${state.activitiesCount.toLocaleString("en-US")} atividades em ${(state.durationMs / 1000).toFixed(1)}s.`;
+++      return `Imported ${state.activitiesCount.toLocaleString("en-US")} activities in ${(state.durationMs / 1000).toFixed(1)}s.`;
++     case "error":
++       return state.error.title;
++     default:
++-      return "Importa todas as transações da Trade Republic para o Donkeyfolio.";
+++      return "Import all your Trade Republic transactions into Wealthfolio.";
++   }
++ }
++ 
++@@ -1829,73 +1714,6 @@ function DistributionList({ items }: { items: Record<string, number> }): React.J
++   );
++ }
++ 
++-/* ────────────────────────  SDK test view  ──────────────────────── */
++-
++-function SdkTestView({
++-  results,
++-  durationMs,
++-  onClose,
++-}: {
++-  results: SdkTestResult[];
++-  durationMs: number;
++-  onClose: () => void;
++-}): React.JSX.Element {
++-  const passes = results.filter((r) => r.status === "pass").length;
++-  const fails = results.filter((r) => r.status === "fail").length;
++-  const allOk = fails === 0;
++-  return (
++-    <div className="space-y-4">
++-      <Card
++-        className={
++-          allOk ? "border-success/40 bg-success/5" : "border-destructive/40 bg-destructive/5"
++-        }
++-      >
++-        <CardHeader>
++-          <CardTitle className="flex items-center gap-2">
++-            {allOk ? (
++-              <Icons.CheckCircle className="h-5 w-5 text-emerald-500" />
++-            ) : (
++-              <Icons.AlertCircle className="text-destructive h-5 w-5" />
++-            )}
++-            {allOk ? "All SDK contracts passed" : `${fails} SDK contract(s) failed`}
++-          </CardTitle>
++-          <CardDescription>
++-            {passes}/{results.length} passed in {(durationMs / 1000).toFixed(1)}s. Test activities
++-            were deleted at the end — your account is unaffected.
++-          </CardDescription>
++-        </CardHeader>
++-        <CardContent className="space-y-1.5">
++-          {results.map((r, i) => (
++-            <div
++-              key={i}
++-              className={
++-                "flex items-start gap-3 rounded-md border p-2 text-sm " +
++-                (r.status === "pass"
++-                  ? "bg-success/5 border-success/20"
++-                  : "bg-destructive/5 border-destructive/30")
++-              }
++-            >
++-              {r.status === "pass" ? (
++-                <Icons.CheckCircle className="text-success mt-0.5 h-4 w-4 shrink-0" />
++-              ) : (
++-                <Icons.AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
++-              )}
++-              <div className="min-w-0 flex-1">
++-                <p className="font-medium">{r.label}</p>
++-                <p className="text-muted-foreground font-mono text-xs">{r.activityType}</p>
++-                {r.error && <p className="text-destructive mt-1 font-mono text-xs">{r.error}</p>}
++-              </div>
++-            </div>
++-          ))}
++-        </CardContent>
++-      </Card>
++-      <Button variant="outline" onClick={onClose}>
++-        Close
++-      </Button>
++-    </div>
++-  );
++-}
++-
++ /* ────────────────────────  Error view  ──────────────────────── */
++ 
++ function ErrorView({
++-- 
++2.54.0 (Apple Git-156)
++
+-- 
+2.54.0 (Apple Git-157)
+

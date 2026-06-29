@@ -1,7 +1,7 @@
-From a16e21b9a82a5670600eb96a4af8756e4092c698 Mon Sep 17 00:00:00 2001
+From 4babf2b408e711e77bea246196498eee816df4a9 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Wed, 17 Jun 2026 15:52:34 +0100
-Subject: [PATCH 13/15] Theme: uniform dark logo chips with auto-inverted mono
+Subject: [PATCH 14/24] Theme: uniform dark logo chips with auto-inverted mono
  marks
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -1553,5 +1553,5 @@ index 81536951..e9b2fe38 100644
          }}
        />
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 

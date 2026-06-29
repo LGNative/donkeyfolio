@@ -1,7 +1,7 @@
-From 432c6a3c255a1687a58c28978f88444fd0061b3c Mon Sep 17 00:00:00 2001
+From 175dc71001ea75c70fd24fcc328e13896aef6877 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 22:23:29 +0100
-Subject: [PATCH 10/12] Theme: derive all brand/chart colors from a generated
+Subject: [PATCH 10/24] Theme: derive all brand/chart colors from a generated
  brand scale
 
 Replace hand-picked HSL/hex values with a single --brand-50..950 scale
@@ -18,7 +18,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  2 files changed, 91 insertions(+), 48 deletions(-)
 
 diff --git a/apps/frontend/src/globals.css b/apps/frontend/src/globals.css
-index 346d3c67..c274984a 100644
+index 103499a7..e8fbafeb 100644
 --- a/apps/frontend/src/globals.css
 +++ b/apps/frontend/src/globals.css
 @@ -405,7 +405,24 @@
@@ -89,7 +89,7 @@ index 346d3c67..c274984a 100644
  
    /* Sidebar (full hsl colors) */
    --sidebar: hsl(var(--flexoki-bg));
-@@ -491,23 +509,23 @@
+@@ -493,23 +511,23 @@
    --flexoki-gr: 72 46% 41%;
    --flexoki-ye: 45 82% 45%;
  
@@ -207,5 +207,5 @@ index b14ff720..81536951 100644
      ? returnType === "daily"
        ? 0.025
 -- 
-2.54.0 (Apple Git-156)
+2.54.0 (Apple Git-157)
 
