@@ -576,15 +576,36 @@ function mapSpinOff(row: TrCsvRow, accountId: string): ActivityCreate[] {
 }
 
 function mapStockDividend(row: TrCsvRow, accountId: string): ActivityCreate[] {
-  // Bonus shares delivered cash-free (e.g. Enovix warrants, scrip dividends).
-  // These create a real position at zero cost basis, so they must be a
-  // lot-creating activity — NOT an income-only DIVIDEND. A DIVIDEND only
-  // touches cash (handle_income), leaving the shares un-held; any later
-  // disposal of them (e.g. a WORTHLESS expiry mapped to SELL) then has no
-  // cost-basis lot to match and trips the "Sale missing cost-basis match"
-  // health check. Treated exactly like SPIN_OFF / FREE_RECEIPT: a lone
-  // external TRANSFER_IN, quantity only, no cash impact.
+  // Bonus / scrip shares delivered cash-free (Enovix warrants, scrip dividends).
+  // With the FMV TR ships (row.price), book it as DIVIDEND + subtype
+  // DIVIDEND_IN_KIND: the core compiler expands that into a DIVIDEND income leg
+  // + a BUY at FMV, so the delivery is recognised as income AND the lot carries
+  // a real cost basis (same model as staking / FREE_RECEIPT). Without an FMV,
+  // fall back to a zero-cost external TRANSFER_IN — still lot-creating, so a
+  // later WORTHLESS-expiry SELL has a cost-basis lot to dispose (no
+  // "missing lot disposal" warning); asset-backed income is rejected at insert
+  // without an FMV, so the income path isn't available there.
   const shares = row.shares ?? 0;
+  const fmv = row.price ?? undefined;
+  if (fmv != null) {
+    return [
+      {
+        accountId,
+        activityType: "DIVIDEND",
+        subtype: "DIVIDEND_IN_KIND",
+        activityDate: activityDateOf(row),
+        symbol: resolveAsset(row),
+        quantity: shares,
+        unitPrice: fmv,
+        currency: row.currency || "EUR",
+        comment: row.description || `STOCK_DIVIDEND ${row.symbol}`,
+        metadata: buildMetadata(row, {
+          tr_corporate_action: "STOCK_DIVIDEND",
+          tr_fmv_at_receipt: fmv,
+        }),
+      },
+    ];
+  }
   return [
     {
       accountId,
@@ -594,13 +615,8 @@ function mapStockDividend(row: TrCsvRow, accountId: string): ActivityCreate[] {
       quantity: shares,
       currency: row.currency || "EUR",
       comment: row.description || `STOCK_DIVIDEND ${row.symbol}`,
-      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
-      // performance pipeline doesn't warn about a missing pair. Zero cost
-      // basis (TR ships no price for these); fair value at receipt is kept in
-      // metadata for a future income-in-kind / tax treatment.
       metadata: buildMetadata(row, {
         tr_corporate_action: "STOCK_DIVIDEND",
-        tr_fmv_at_receipt: row.price ?? undefined,
         flow: { is_external: true },
       }),
     },
@@ -938,9 +954,13 @@ export function resolveSplitRatios(
 
     if (prior <= 0) {
       unresolved++;
+      // Don't leave the raw delta as a bogus ratio — clear it so the backend
+      // rejects the unresolved split (and the note flags it for manual review)
+      // instead of silently corrupting the post-split quantity.
+      a.amount = undefined;
       notes.push({
         kind: "split_ratio",
-        message: `Could not resolve split ratio for ${symbol} on ${splitDate} — prior position computed as ${prior}`,
+        message: `Could not resolve split ratio for ${symbol} on ${splitDate} — prior position computed as ${prior}. Split left unresolved (set the ratio manually).`,
       });
       continue;
     }
