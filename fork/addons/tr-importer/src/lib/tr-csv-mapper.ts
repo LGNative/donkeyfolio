@@ -630,11 +630,13 @@ function mapWorthless(row: TrCsvRow, accountId: string): ActivityCreate[] {
 /* ─────────────────────────  Delivery (staking)  ───────────────────────── */
 
 function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
-  // TR Crypto Saveback: small SOL/ADA/etc. rewards delivered weekly.
-  // Per user decision: record qty only (no cost basis, no income event).
-  // If the user later sells these fractions, the gain shows as the full
-  // sale price — accepted trade-off (€0.40 per reward, fiscal impact
-  // negligible).
+  // TR Crypto Saveback / staking: small SOL/ADA/ETH rewards delivered weekly.
+  // Booked as an external TRANSFER_IN priced at the FMV TR ships with each
+  // reward (row.price) so the lot carries a real cost basis. Without it every
+  // reward's whole value later reads as gain and v3.5.3's data-health check
+  // flags the position as "incomplete cost basis" (unit_price drives that
+  // check — core/health/service.rs). External flow keeps the lone leg from
+  // tripping the missing-pair / unknown-boundary check.
   const shares = row.shares ?? 0;
   return [
     {
@@ -643,12 +645,9 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
       activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
+      unitPrice: row.price ?? undefined,
       currency: row.currency || "EUR",
       comment: row.description || `TR Staking reward (${row.symbol})`,
-      // Mark the lone TRANSFER_IN leg as an intentional external flow so the
-      // performance pipeline doesn't warn about a missing pair. (b) Reclassifying
-      // staking as INTEREST/STAKING_REWARD income — using tr_fmv_at_receipt as the
-      // value — remains a future option; impact is negligible (~€0.40/reward).
       metadata: buildMetadata(row, {
         tr_staking: true,
         tr_fmv_at_receipt: row.price ?? undefined,
