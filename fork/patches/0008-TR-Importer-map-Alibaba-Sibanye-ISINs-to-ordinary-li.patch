@@ -1,7 +1,7 @@
 From 22ee82d949e8b3011712daaf9d6c82116a0c55cb Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 22:23:22 +0100
-Subject: [PATCH 08/24] TR Importer: map Alibaba/Sibanye ISINs to ordinary
+Subject: [PATCH 08/26] TR Importer: map Alibaba/Sibanye ISINs to ordinary
  listings, not ADRs
 
 KYG017191142 is the HK ordinary share (9988.HK, HKD) but was mapped to

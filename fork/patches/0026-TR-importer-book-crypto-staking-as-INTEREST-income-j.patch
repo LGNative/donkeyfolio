@@ -1,0 +1,141 @@
+From 96f25e1c09037e384ec5e72b34b6101310321663 Mon Sep 17 00:00:00 2001
+From: LGNative <luis@nativestride.io>
+Date: Mon, 29 Jun 2026 20:02:32 +0100
+Subject: [PATCH 26/26] TR importer: book crypto staking as INTEREST income
+ (juros), not zero-cost transfer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The core compiler expands INTEREST+subtype=STAKING_REWARD (with an FMV
+unit_price) into INTEREST income (qty×FMV) + a BUY at FMV — so staking rewards
+show as real income AND the token lot gets a cost basis. mapFreeReceipt now
+emits that (falls back to zero-cost TRANSFER_IN only when TR ships no FMV). The
+backfill SQL re-types the 82 existing reward rows the same way; Rebuild History
+then expands them — no re-import.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../donkey-staking-cost-basis-backfill.sql    | 38 ++++++++++---------
+ .../tr-importer/src/lib/tr-csv-mapper.ts      | 37 +++++++++++++-----
+ 2 files changed, 49 insertions(+), 26 deletions(-)
+
+diff --git a/fork/_archive/donkey-staking-cost-basis-backfill.sql b/fork/_archive/donkey-staking-cost-basis-backfill.sql
+index 416ad484..01797d9a 100644
+--- a/fork/_archive/donkey-staking-cost-basis-backfill.sql
++++ b/fork/_archive/donkey-staking-cost-basis-backfill.sql
+@@ -1,30 +1,34 @@
+--- Donkeyfolio · backfill crypto staking-reward cost basis.
++-- Donkeyfolio · re-type existing crypto staking rewards to income (juros).
+ --
+--- TR ships the FMV of each Saveback / staking reward; the importer kept it in
+--- metadata (tr_fmv_at_receipt) but booked the reward as a zero-cost TRANSFER_IN.
+--- So each reward's whole value read as gain and v3.5.3's data-health check
+--- flags those positions (ADA / ETH / SOL) as "incomplete cost basis".
++-- TR Saveback / staking rewards ARE income paid in crypto. The importer had
++-- booked them as zero-cost TRANSFER_IN, so they read as 100% gain and v3.5.3
++-- flags the positions (ADA / ETH / SOL) as "incomplete cost basis".
+ --
+--- This sets unit_price = that stored FMV for the existing reward lots, giving
+--- each a real cost basis (~EUR 116 of phantom gain removed). The cost-basis
+--- check reads unit_price (core/health/service.rs).
++-- This re-types the existing reward rows to INTEREST + subtype STAKING_REWARD
++-- and sets unit_price = the FMV already kept in metadata (tr_fmv_at_receipt).
++-- On the next **Rebuild History**, the core compiler (compiler.rs
++-- compile_staking_reward) expands each into:
++--    • INTEREST  → the reward recognised as income (juros), amount = qty × FMV
++--    • BUY       → the token lot acquired at FMV (real cost basis)
++-- So the rewards finally show as income AND the crypto carries a correct cost
++-- basis — no re-import needed.
+ --
+--- Safe + re-runnable: only touches tr_staking rows that still have no price.
+--- Run with the Donkeyfolio app CLOSED, then run "Rebuild History" in the app:
++-- Safe + re-runnable (only touches tr_staking TRANSFER_IN rows). Run with the
++-- Donkeyfolio app CLOSED, then run "Rebuild History" in the app:
+ --   sqlite3 "~/Library/Application Support/com.luisgoncalves.donkeyfolio/app.db" \
+ --     < fork/_archive/donkey-staking-cost-basis-backfill.sql
+ --
+--- The importer itself is already fixed (mapFreeReceipt now sets unitPrice=FMV),
+--- so future imports won't need this.
++-- The importer (mapFreeReceipt) now books new staking rewards this way too.
+ 
+ UPDATE activities
+-SET unit_price = CAST(json_extract(metadata, '$.tr_fmv_at_receipt') AS TEXT),
+-    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
++SET activity_type = 'INTEREST',
++    subtype       = 'STAKING_REWARD',
++    unit_price    = CAST(json_extract(metadata, '$.tr_fmv_at_receipt') AS TEXT),
++    updated_at    = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+ WHERE json_extract(metadata, '$.tr_staking') = 1
+   AND json_extract(metadata, '$.tr_fmv_at_receipt') IS NOT NULL
+-  AND (unit_price IS NULL OR CAST(unit_price AS REAL) = 0);
++  AND activity_type = 'TRANSFER_IN';
+ 
+ -- Verify (optional): should report 0 rows after a successful run.
+ -- SELECT COUNT(*) FROM activities
+---  WHERE json_extract(metadata,'$.tr_staking')=1
+---    AND (unit_price IS NULL OR CAST(unit_price AS REAL)=0);
++--  WHERE json_extract(metadata,'$.tr_staking')=1 AND activity_type='TRANSFER_IN';
+diff --git a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+index 2cd6b7d5..c5beca15 100644
+--- a/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
++++ b/fork/addons/tr-importer/src/lib/tr-csv-mapper.ts
+@@ -630,14 +630,35 @@ function mapWorthless(row: TrCsvRow, accountId: string): ActivityCreate[] {
+ /* ─────────────────────────  Delivery (staking)  ───────────────────────── */
+ 
+ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
+-  // TR Crypto Saveback / staking: small SOL/ADA/ETH rewards delivered weekly.
+-  // Booked as an external TRANSFER_IN priced at the FMV TR ships with each
+-  // reward (row.price) so the lot carries a real cost basis. Without it every
+-  // reward's whole value later reads as gain and v3.5.3's data-health check
+-  // flags the position as "incomplete cost basis" (unit_price drives that
+-  // check — core/health/service.rs). External flow keeps the lone leg from
+-  // tripping the missing-pair / unknown-boundary check.
++  // TR Crypto Saveback / staking rewards = income (juros) paid in crypto.
++  // With the FMV TR ships per reward (row.price), book it as INTEREST + subtype
++  // STAKING_REWARD: the core compiler (compiler.rs compile_staking_reward) then
++  // expands each stored row into INTEREST income (qty×FMV) + a BUY at FMV — so
++  // the reward shows as real income AND the token lot carries a cost basis.
++  // (Accepted at insert because the FMV unit_price is present —
++  // validate_asset_backed_income_values.) No FMV → fall back to a zero-cost
++  // external TRANSFER_IN (asset-backed income is rejected without an FMV).
+   const shares = row.shares ?? 0;
++  const fmv = row.price ?? undefined;
++  if (fmv != null) {
++    return [
++      {
++        accountId,
++        activityType: "INTEREST",
++        subtype: "STAKING_REWARD",
++        activityDate: activityDateOf(row),
++        symbol: resolveAsset(row),
++        quantity: shares,
++        unitPrice: fmv,
++        currency: row.currency || "EUR",
++        comment: row.description || `TR Staking reward (${row.symbol})`,
++        metadata: buildMetadata(row, {
++          tr_staking: true,
++          tr_fmv_at_receipt: fmv,
++        }),
++      },
++    ];
++  }
+   return [
+     {
+       accountId,
+@@ -645,12 +666,10 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
+       activityDate: activityDateOf(row),
+       symbol: resolveAsset(row),
+       quantity: shares,
+-      unitPrice: row.price ?? undefined,
+       currency: row.currency || "EUR",
+       comment: row.description || `TR Staking reward (${row.symbol})`,
+       metadata: buildMetadata(row, {
+         tr_staking: true,
+-        tr_fmv_at_receipt: row.price ?? undefined,
+         flow: { is_external: true },
+       }),
+     },
+-- 
+2.54.0 (Apple Git-157)
+

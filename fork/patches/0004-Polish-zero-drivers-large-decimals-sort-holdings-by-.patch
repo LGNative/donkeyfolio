@@ -1,7 +1,7 @@
 From 41f251326266d17331aef881608437fd6b147baf Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 8 Jun 2026 21:00:54 +0100
-Subject: [PATCH 04/24] Polish: zero drivers, large-% decimals, sort holdings
+Subject: [PATCH 04/26] Polish: zero drivers, large-% decimals, sort holdings
  by return %
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
