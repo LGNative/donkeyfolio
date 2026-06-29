@@ -630,14 +630,35 @@ function mapWorthless(row: TrCsvRow, accountId: string): ActivityCreate[] {
 /* ─────────────────────────  Delivery (staking)  ───────────────────────── */
 
 function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
-  // TR Crypto Saveback / staking: small SOL/ADA/ETH rewards delivered weekly.
-  // Booked as an external TRANSFER_IN priced at the FMV TR ships with each
-  // reward (row.price) so the lot carries a real cost basis. Without it every
-  // reward's whole value later reads as gain and v3.5.3's data-health check
-  // flags the position as "incomplete cost basis" (unit_price drives that
-  // check — core/health/service.rs). External flow keeps the lone leg from
-  // tripping the missing-pair / unknown-boundary check.
+  // TR Crypto Saveback / staking rewards = income (juros) paid in crypto.
+  // With the FMV TR ships per reward (row.price), book it as INTEREST + subtype
+  // STAKING_REWARD: the core compiler (compiler.rs compile_staking_reward) then
+  // expands each stored row into INTEREST income (qty×FMV) + a BUY at FMV — so
+  // the reward shows as real income AND the token lot carries a cost basis.
+  // (Accepted at insert because the FMV unit_price is present —
+  // validate_asset_backed_income_values.) No FMV → fall back to a zero-cost
+  // external TRANSFER_IN (asset-backed income is rejected without an FMV).
   const shares = row.shares ?? 0;
+  const fmv = row.price ?? undefined;
+  if (fmv != null) {
+    return [
+      {
+        accountId,
+        activityType: "INTEREST",
+        subtype: "STAKING_REWARD",
+        activityDate: activityDateOf(row),
+        symbol: resolveAsset(row),
+        quantity: shares,
+        unitPrice: fmv,
+        currency: row.currency || "EUR",
+        comment: row.description || `TR Staking reward (${row.symbol})`,
+        metadata: buildMetadata(row, {
+          tr_staking: true,
+          tr_fmv_at_receipt: fmv,
+        }),
+      },
+    ];
+  }
   return [
     {
       accountId,
@@ -645,12 +666,10 @@ function mapFreeReceipt(row: TrCsvRow, accountId: string): ActivityCreate[] {
       activityDate: activityDateOf(row),
       symbol: resolveAsset(row),
       quantity: shares,
-      unitPrice: row.price ?? undefined,
       currency: row.currency || "EUR",
       comment: row.description || `TR Staking reward (${row.symbol})`,
       metadata: buildMetadata(row, {
         tr_staking: true,
-        tr_fmv_at_receipt: row.price ?? undefined,
         flow: { is_external: true },
       }),
     },
