@@ -1,7 +1,7 @@
 From e16fc575bb3644a0669b5def1f8362b31bc486c5 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Fri, 12 Jun 2026 16:18:22 +0100
-Subject: [PATCH 12/24] TR Importer: dynamic EUR resolution + fork preservation
+Subject: [PATCH 12/26] TR Importer: dynamic EUR resolution + fork preservation
  layer
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

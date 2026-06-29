@@ -1,7 +1,7 @@
 From 580a106529203051e0c2d395a0478d81cdd7b605 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Fri, 26 Jun 2026 22:23:12 +0100
-Subject: [PATCH 21/24] Logos: contrast-aware avatar, +17 stock logos, 5
+Subject: [PATCH 21/26] Logos: contrast-aware avatar, +17 stock logos, 5
  corrected; orphan-snapshot cleanup
 
 - ticker-avatar: uniform dark chip; dark logos auto-lightened to white so

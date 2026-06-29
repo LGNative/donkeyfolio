@@ -1,7 +1,7 @@
 From b83973dd83b86075cf7060e01d2b3d2c18a7d79d Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Sun, 21 Jun 2026 18:14:38 +0100
-Subject: [PATCH 18/24] TR Importer: EUR conversion fix + manual-cash-transfer
+Subject: [PATCH 18/26] TR Importer: EUR conversion fix + manual-cash-transfer
  mapping
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

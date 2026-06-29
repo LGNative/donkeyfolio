@@ -1,7 +1,7 @@
 From 9b035b207fb71d0c62a33e2e3d9615bd36ba3546 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Tue, 9 Jun 2026 09:53:04 +0100
-Subject: [PATCH 06/24] Disable in-app updater: point endpoint to the fork
+Subject: [PATCH 06/26] Disable in-app updater: point endpoint to the fork
 
 The upstream endpoint (wealthfolio.app/releases) + retained pubkey let the
 in-app 'Check for Update' install official Wealthfolio over the fork, switching
