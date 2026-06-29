@@ -6,7 +6,7 @@ This file + `fork/patches/` are the record of everything we changed, so nothing
 is lost when Wealthfolio releases a new version. Read this before any upstream
 update.
 
-Current base: **Wealthfolio v3.5.2** · fork branch: `donkeyfolio/v3.5.2`
+Current base: **Wealthfolio v3.5.3** · fork branch: `donkeyfolio/v3.5.3`
 Remotes: `origin` = LGNative/donkeyfolio · `upstream` = afadil/wealthfolio
 
 ---
@@ -184,12 +184,16 @@ DB/addons are reset.
 git fetch upstream --tags
 
 # 2. replay our layer onto it (rebase the fork branch)
-git checkout donkeyfolio/v3.5.2
-git rebase --onto vNEW v3.5.2          # vNEW = the new tag
+git checkout donkeyfolio/v3.5.3
+git rebase --onto vNEW v3.5.3          # vNEW = the new tag
 #   ↳ if a hook aborts: GIT_EDITOR=true git -c core.hooksPath=/dev/null rebase --continue
+#   ↳ proven on v3.5.2→v3.5.3 (21 commits, 3 conflicts); back up first:
+#     git branch backup/donkeyfolio-pre-vNEW
 #   conflicts to expect:
-#     tauri.conf.json  → keep Donkeyfolio / identifier / fork updater
+#     tauri.conf.json  → keep Donkeyfolio / identifier / fork updater; bump version
 #     globals.css      → keep the --brand-* scale + derived tokens
+#     reworked components (rebalance-tab, etc.) → take upstream logic + our tokens
+#   ↳ then: pnpm install (new deps), pnpm type-check before the app build
 
 # 3. rebuild shared package dists (else stale type errors)
 pnpm -r --filter "./packages/*" run build
