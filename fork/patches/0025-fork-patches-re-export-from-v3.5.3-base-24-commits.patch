@@ -1,7 +1,7 @@
 From ef45765f3e49c453b81cb85a8f90981f25b56205 Mon Sep 17 00:00:00 2001
 From: LGNative <luis@nativestride.io>
 Date: Mon, 29 Jun 2026 15:32:41 +0100
-Subject: [PATCH 25/26] fork/patches: re-export from v3.5.3 base (24 commits)
+Subject: [PATCH 25/28] fork/patches: re-export from v3.5.3 base (24 commits)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 ---
