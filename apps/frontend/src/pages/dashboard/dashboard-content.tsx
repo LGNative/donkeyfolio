@@ -27,6 +27,7 @@ import { AccountsSummary } from "./accounts-summary";
 import Balance from "./balance";
 import SavingGoals from "./goals";
 import TopHoldings from "./top-holdings";
+import { GainByTypeCard } from "./gain-by-type-card";
 
 const DEFAULT_INTERVAL: UITimePeriod = "3M";
 const INTERVAL_STORAGE_KEY = "dashboard-interval";
@@ -271,12 +272,17 @@ export function DashboardContent() {
 
         <div className="grow px-4 pb-[var(--mobile-nav-total-offset)] pt-14 md:px-6 md:pb-6 md:pt-12 lg:px-10 lg:pb-8 lg:pt-14">
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-20">
-            <div className="lg:col-span-2">
+            <div className="space-y-4 lg:col-span-2">
               <AccountsSummary
                 dateRange={dateRange}
                 isAllTime={isAllTime}
                 currentAccountValuations={portfolioCurrentValuation?.accounts}
                 isLoadingCurrentValuations={isCurrentValuationLoading}
+              />
+              <GainByTypeCard
+                holdings={allHoldings}
+                baseCurrency={baseCurrency}
+                isLoading={isHoldingsLoading}
               />
             </div>
             <div className="space-y-6 lg:col-span-1">
