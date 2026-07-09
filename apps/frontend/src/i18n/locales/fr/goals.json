@@ -511,7 +511,7 @@
     "italian": {
       "title": "Configuration retraite italienne (fondo pensione, TFR, INPS)",
       "portfolio_title": "Portefeuille d'investissement (Golden Butterfly, All-Weather…)",
-      "portfolio_desc": "Il s'agit de votre portefeuille principal — la valeur suivie par Wealthfolio. Définissez ici vos hypothèses de rendement, la charge des frais et la cotisation mensuelle. C'est le principal moteur d'accumulation de votre plan de retraite.",
+      "portfolio_desc": "Il s'agit de votre portefeuille principal — la valeur suivie par Donkeyfolio. Définissez ici vos hypothèses de rendement, la charge des frais et la cotisation mensuelle. C'est le principal moteur d'accumulation de votre plan de retraite.",
       "fondo_title": "Fondo pensione integrativo (fonds de pension complémentaire)",
       "fondo_desc": "Utilisez Ajouter un fonds de pension. Saisissez le solde actuel du fonds, la cotisation mensuelle, le rendement attendu du fonds et l'âge de début des versements. Le planificateur estime le solde futur et, si vous ne saisissez pas de versement mensuel, estime le versement à 3,5 %/an de ce solde projeté à partir de l'âge de début.",
       "inps_title": "Pensione INPS (pension d'État — previdenza obbligatoria)",

@@ -511,7 +511,7 @@
     "italian": {
       "title": "意大利退休设置（fondo pensione、TFR、INPS）",
       "portfolio_title": "投资组合（Golden Butterfly、All-Weather……）",
-      "portfolio_desc": "这是您的主投资组合——Wealthfolio 跟踪的价值。在此处设置您的收益率假设、费用拖累和每月供款。它是您退休计划的主要积累引擎。",
+      "portfolio_desc": "这是您的主投资组合——Donkeyfolio 跟踪的价值。在此处设置您的收益率假设、费用拖累和每月供款。它是您退休计划的主要积累引擎。",
       "fondo_title": "Fondo pensione integrativo（补充养老基金）",
       "fondo_desc": "使用“添加养老基金”。输入当前基金余额、每月供款、预期基金收益率和支付开始年龄。规划器会估算未来余额，如果您不输入每月支付额，则从起始年龄起按该预计余额的 3.5%/年估算支付额。",
       "inps_title": "Pensione INPS（国家养老金——强制性社保）",

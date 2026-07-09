@@ -179,7 +179,7 @@
     "retry": "Erneut versuchen"
   },
   "sheet": {
-    "groupedPriceMessage": "Wealthfolio verwendet für diese Daten fortgeschriebene Kurse. Aktualisieren Sie die Kurse oder fügen Sie Kurse für echte Handelstage hinzu; verwerfen Sie das Problem, wenn die Daten Feier- oder handelsfreie Tage waren.",
+    "groupedPriceMessage": "Donkeyfolio verwendet für diese Daten fortgeschriebene Kurse. Aktualisieren Sie die Kurse oder fügen Sie Kurse für echte Handelstage hinzu; verwerfen Sie das Problem, wenn die Daten Feier- oder handelsfreie Tage waren.",
     "pricesByInvestment": "Kurse nach Anlage",
     "pricesByInvestmentHint": "Öffnen Sie eine Anlage, um Kurse zu aktualisieren oder hinzuzufügen. Wenn die Daten Feier- oder handelsfreie Tage waren, verwerfen Sie das Problem.",
     "priceHistoryNeedsReview": "Kurshistorie muss überprüft werden",

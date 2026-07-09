@@ -1,5 +1,5 @@
 {
-  "app_name": "Wealthfolio",
+  "app_name": "Donkeyfolio",
   "welcome": "欢迎",
   "loading": "加载中...",
   "error": "错误",
@@ -293,7 +293,7 @@
     "calculation_note": "计算说明",
     "calculation_notes": "计算说明({{count}})",
     "backend_unavailable": "后端不可用",
-    "backend_load_error": "Wealthfolio 无法从后端加载设置。",
+    "backend_load_error": "Donkeyfolio 无法从后端加载设置。",
     "new_update_available": "有新更新可用",
     "close_dialog": "关闭对话框",
     "screenshot_alt": "截图 {{number}}",

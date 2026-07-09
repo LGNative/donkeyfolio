@@ -179,7 +179,7 @@
     "retry": "Réessayer"
   },
   "sheet": {
-    "groupedPriceMessage": "Wealthfolio utilise des cours reportés pour ces dates. Actualisez ou ajoutez les cours des jours de bourse réels ; ignorez le problème si ces dates étaient des jours fériés ou non ouvrés.",
+    "groupedPriceMessage": "Donkeyfolio utilise des cours reportés pour ces dates. Actualisez ou ajoutez les cours des jours de bourse réels ; ignorez le problème si ces dates étaient des jours fériés ou non ouvrés.",
     "pricesByInvestment": "Cours par investissement",
     "pricesByInvestmentHint": "Ouvrez un investissement pour actualiser ou ajouter des cours. Si ces dates étaient des jours fériés ou non ouvrés, ignorez le problème.",
     "priceHistoryNeedsReview": "L'historique des cours doit être vérifié",

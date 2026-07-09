@@ -179,7 +179,7 @@
     "retry": "Reintentar"
   },
   "sheet": {
-    "groupedPriceMessage": "Wealthfolio está usando precios arrastrados para estas fechas. Vuelve a obtener o añade precios para días de negociación reales; descarta el problema si las fechas eran festivos o días no hábiles.",
+    "groupedPriceMessage": "Donkeyfolio está usando precios arrastrados para estas fechas. Vuelve a obtener o añade precios para días de negociación reales; descarta el problema si las fechas eran festivos o días no hábiles.",
     "pricesByInvestment": "Precios por inversión",
     "pricesByInvestmentHint": "Abre una inversión para volver a obtener o añadir precios. Si las fechas eran festivos o días no hábiles, descarta el problema.",
     "priceHistoryNeedsReview": "El historial de precios necesita revisión",

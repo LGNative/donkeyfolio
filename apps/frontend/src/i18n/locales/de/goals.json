@@ -511,7 +511,7 @@
     "italian": {
       "title": "Italienische Ruhestandseinrichtung (fondo pensione, TFR, INPS)",
       "portfolio_title": "Anlageportfolio (Golden Butterfly, All-Weather…)",
-      "portfolio_desc": "Dies ist Ihr Hauptportfolio — der Wert, den Wealthfolio verfolgt. Legen Sie hier Ihre Renditeannahmen, die Gebührenlast und den monatlichen Beitrag fest. Es ist der primäre Ansparmotor Ihres Ruhestandsplans.",
+      "portfolio_desc": "Dies ist Ihr Hauptportfolio — der Wert, den Donkeyfolio verfolgt. Legen Sie hier Ihre Renditeannahmen, die Gebührenlast und den monatlichen Beitrag fest. Es ist der primäre Ansparmotor Ihres Ruhestandsplans.",
       "fondo_title": "Fondo pensione integrativo (zusätzlicher Pensionsfonds)",
       "fondo_desc": "Verwenden Sie Pensionsfonds hinzufügen. Geben Sie das aktuelle Fondsguthaben, den monatlichen Beitrag, die erwartete Fondsrendite und das Alter des Auszahlungsbeginns ein. Der Planer schätzt das künftige Guthaben und schätzt, falls Sie keine monatliche Auszahlung eingeben, die Auszahlung auf 3,5 %/Jahr dieses prognostizierten Guthabens ab dem Startalter.",
       "inps_title": "Pensione INPS (staatliche Rente — previdenza obbligatoria)",
