@@ -1,7 +1,7 @@
 {
   "id": "tr-importer-addon",
   "name": "TR Importer",
-  "version": "3.5.2",
+  "version": "3.6.1",
   "description": "Import your Trade Republic CSV. Trades, dividends, interest, deposits, withdrawals, staking rewards and corporate actions become Wealthfolio activities — with cost basis, FX and tax preserved. Safe to re-import.",
   "author": "Donkeyfolio",
   "main": "dist/addon.js",

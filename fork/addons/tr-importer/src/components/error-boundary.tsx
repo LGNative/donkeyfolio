@@ -68,8 +68,8 @@ export class ErrorBoundary extends Component<Props, State> {
               {this.props.addonName ?? "Addon"} encountered an error
             </CardTitle>
             <CardDescription>
-              The error has been logged. The rest of Wealthfolio is unaffected — you can keep using
-              the app. Click "Try again" to recover this addon, or restart Wealthfolio if the
+              The error has been logged. The rest of Donkeyfolio is unaffected — you can keep using
+              the app. Click "Try again" to recover this addon, or restart Donkeyfolio if the
               problem persists.
             </CardDescription>
           </CardHeader>
