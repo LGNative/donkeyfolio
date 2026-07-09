@@ -511,7 +511,7 @@
     "italian": {
       "title": "Italian retirement setup (fondo pensione, TFR, INPS)",
       "portfolio_title": "Investment portfolio (Golden Butterfly, All-Weather…)",
-      "portfolio_desc": "This is your main portfolio — the value Wealthfolio tracks. Set your return assumptions, fee drag, and monthly contribution here. It is the primary accumulation engine of your retirement plan.",
+      "portfolio_desc": "This is your main portfolio — the value Donkeyfolio tracks. Set your return assumptions, fee drag, and monthly contribution here. It is the primary accumulation engine of your retirement plan.",
       "fondo_title": "Fondo pensione integrativo (supplementary pension fund)",
       "fondo_desc": "Use Add pension fund. Enter the current fund balance, monthly contribution, expected fund return, and payout start age. The planner estimates the future balance and, if you do not enter a monthly payout, estimates payout as 3.5%/yr of that projected balance from the start age.",
       "inps_title": "Pensione INPS (state pension — previdenza obbligatoria)",
