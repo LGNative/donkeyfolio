@@ -185,7 +185,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
           <Icons.Spinner className="text-muted-foreground mb-4 h-10 w-10 animate-spin" />
           <p className="text-sm font-medium">Computing holdings in €…</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            Reads positions, activities and FX rates from the Wealthfolio DB.
+            Reads positions, activities and FX rates from the Donkeyfolio DB.
           </p>
         </CardContent>
       </Card>
@@ -234,7 +234,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
               EUR View — aligned with TR
             </CardTitle>
             <CardDescription className="mt-1">
-              Today's Price, Book Cost, Avg Cost and Total Value computed in € using Wealthfolio's
+              Today's Price, Book Cost, Avg Cost and Total Value computed in € using Donkeyfolio's
               internal FX rates. Computed at runtime, nothing is written back. Updated{" "}
               {fmtTime(fetchedAt)}.
             </CardDescription>
@@ -383,7 +383,7 @@ export function EurHoldingsView({ ctx, onClose }: Props): React.JSX.Element {
           <CardContent className="flex items-start gap-3 py-3 text-sm">
             <Icons.AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             <div className="space-y-2">
-              <p className="font-medium">FX rates missing in the Wealthfolio DB</p>
+              <p className="font-medium">FX rates missing in the Donkeyfolio DB</p>
               <p className="text-muted-foreground text-xs">
                 Could not convert: {missingRates.join(", ")}. Affected positions show "—" instead of
                 a EUR value. Create the missing pairs (source Yahoo, seeded live from the ECB —
