@@ -291,7 +291,7 @@
     "calculation_note": "Berechnungshinweis",
     "calculation_notes": "Berechnungshinweise ({{count}})",
     "backend_unavailable": "Backend nicht verfügbar",
-    "backend_load_error": "Wealthfolio konnte die Einstellungen nicht vom Backend laden.",
+    "backend_load_error": "Donkeyfolio konnte die Einstellungen nicht vom Backend laden.",
     "new_update_available": "Neue Aktualisierung verfügbar",
     "close_dialog": "Dialog schließen",
     "screenshot_alt": "Screenshot {{number}}",
@@ -309,7 +309,7 @@
     "try_open_changelog_manually": "Versuchen Sie, das Änderungsprotokoll manuell in Ihrem Browser zu öffnen.",
     "all_portfolio": "Gesamtes Portfolio"
   },
-  "app_name": "Wealthfolio",
+  "app_name": "Donkeyfolio",
   "deselect_all": "Alle abwählen",
   "notFound": {
     "title": "Seite nicht gefunden",

@@ -1,5 +1,5 @@
 {
-  "app_name": "Wealthfolio",
+  "app_name": "Donkeyfolio",
   "welcome": "Bienvenido",
   "loading": "Cargando...",
   "error": "Error",
@@ -293,7 +293,7 @@
     "calculation_note": "Nota de cálculo",
     "calculation_notes": "Notas de cálculo ({{count}})",
     "backend_unavailable": "Backend no disponible",
-    "backend_load_error": "Wealthfolio no pudo cargar los ajustes desde el backend.",
+    "backend_load_error": "Donkeyfolio no pudo cargar los ajustes desde el backend.",
     "new_update_available": "Nueva actualización disponible",
     "close_dialog": "Cerrar diálogo",
     "screenshot_alt": "Captura de pantalla {{number}}",
