@@ -16,7 +16,11 @@
  * (FIFO via insertion order). The user would re-confirm any older
  * imports manually if that ever happens — extremely unlikely.
  *
- * No external dependencies, no SDK calls — pure browser storage.
+ * Storage may be entirely unavailable: from Wealthfolio v3.6 add-ons run in a
+ * sandboxed, opaque-origin iframe where *touching* `localStorage` throws
+ * "The operation is insecure" (even `typeof localStorage`). We degrade
+ * gracefully to no client-side dedup — the backend still rejects duplicate
+ * transaction ids, so imports stay correct.
  */
 
 const STORAGE_KEY = "tr-importer:v1:imported-tx-ids";
@@ -27,12 +31,27 @@ export interface ImportHistory {
   raw: string[];
 }
 
-/** Load the set of already-imported transaction ids. Returns empty when
- *  storage is unavailable (e.g. SSR) or the value is malformed. */
-export function loadImportHistory(): ImportHistory {
-  if (typeof localStorage === "undefined") return { ids: new Set(), raw: [] };
+/**
+ * Resolve `localStorage`, or `null` when it is unavailable OR when merely
+ * accessing it throws. In the v3.6 add-on sandbox (opaque origin) the
+ * `localStorage` getter itself raises a SecurityError, so even the presence
+ * check must be wrapped — a bare `typeof localStorage` would throw.
+ */
+function safeLocalStorage(): Storage | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    return typeof localStorage !== "undefined" ? localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Load the set of already-imported transaction ids. Returns empty when
+ *  storage is unavailable (sandbox / SSR) or the value is malformed. */
+export function loadImportHistory(): ImportHistory {
+  const ls = safeLocalStorage();
+  if (!ls) return { ids: new Set(), raw: [] };
+  try {
+    const raw = ls.getItem(STORAGE_KEY);
     if (!raw) return { ids: new Set(), raw: [] };
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return { ids: new Set(), raw: [] };
@@ -45,9 +64,10 @@ export function loadImportHistory(): ImportHistory {
 
 /** Add new ids to the persisted set. Idempotent — duplicates are
  *  automatically de-duped. Trims to MAX_IDS keeping the most recently
- *  added entries. */
+ *  added entries. No-op when storage is unavailable. */
 export function recordImported(newIds: string[]): void {
-  if (typeof localStorage === "undefined") return;
+  const ls = safeLocalStorage();
+  if (!ls) return;
   if (newIds.length === 0) return;
   const { raw } = loadImportHistory();
   const seen = new Set(raw);
@@ -61,7 +81,7 @@ export function recordImported(newIds: string[]): void {
   // Trim oldest half if we ever blow the cap.
   const trimmed = out.length > MAX_IDS ? out.slice(out.length - Math.floor(MAX_IDS / 2)) : out;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    ls.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch {
     // Quota / privacy mode — fail silently. The import still succeeds; only
     // future incremental dedup will not skip this batch.
@@ -69,11 +89,12 @@ export function recordImported(newIds: string[]): void {
 }
 
 /** Clear all stored ids. Exposed for the UI's "Reset import history"
- *  action so the user can force a full re-import. */
+ *  action so the user can force a full re-import. No-op when unavailable. */
 export function clearImportHistory(): void {
-  if (typeof localStorage === "undefined") return;
+  const ls = safeLocalStorage();
+  if (!ls) return;
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    ls.removeItem(STORAGE_KEY);
   } catch {
     /* noop */
   }
