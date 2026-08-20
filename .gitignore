@@ -124,3 +124,6 @@ wealthfolio.db
 # Python bytecode (scripts/)
 __pycache__/
 *.pyc
+
+# Notas pessoais de portfólio (nao versionar)
+fork/notas-portfolio/
